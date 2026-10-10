@@ -22,6 +22,18 @@ export interface StoredApiConfig extends ApiConfig {
   _name: string;
   contextWindow: number; // 模型上下文窗口（token）
   userLookbackTokens: number; // 留给历史的预算（token）
+  /**
+   * 归属的"运营商/分组"。
+   *
+   * ★ 为什么不再按 baseUrl 推导分组：
+   *   中转站（newapi / one-api）同一个域名下可以挂**多个分组**，
+   *   不同分组背后是不同上游、不同价格、不同模型池 —— 逻辑完全不同。
+   *   按地址合并会导致改 A 分组连带改掉 B 分组。
+   *
+   *   现在：只有显式带上同一个 providerId 的配置才算"同一家"。
+   *   没带的（老数据、单独新建的）各自独立。
+   */
+  providerId?: string;
 }
 
 export interface ApiConfigState {
@@ -65,14 +77,18 @@ const DEFAULT_CONFIG: StoredApiConfig = {
 /**
  * 一条配置属于"哪一家"（运营商分组的键）。
  *
- * 为什么空地址要特殊处理：新建的运营商地址是空的（等用户填）。
- * 如果空地址都用空串当键，那么**两个都还没填地址的运营商会合并成一家** ——
- * 在其中一个填地址，另一个也跟着变；下拉里也只显示一条。实测可复现。
- * 所以地址为空时按 uid 各自成一家。
+ * ★ 2026-10 修正：以前这里按**地址**分组（同样的 baseUrl 就算一家）。
+ *   这是错的 —— 中转站（newapi / one-api 之类）同一个域名下可以挂**多个分组**，
+ *   不同分组背后是不同的上游厂商、不同价格、不同模型池，逻辑完全不一样。
+ *   按地址合并会导致：在 A 分组改密钥/温度，连带把 B 分组也改了。
+ *
+ * 现在改成：**一条配置自成一组**。
+ *   · 新建模型时如果是从某家"复制"出来的，会带上同一个 providerId，
+ *     这才是真正想共享的情况（用户主动表达的意图）
+ *   · 没有 providerId 的（老数据 / 单独新建的）各算各的
  */
-function providerKeyOf(c: { baseUrl?: string; _uid: string }): string {
-  const k = normalizeBaseUrl(c.baseUrl || '');
-  return k || `__blank__:${c._uid}`;
+function providerKeyOf(c: { baseUrl?: string; _uid: string; providerId?: string }): string {
+  return c.providerId || `__own__:${c._uid}`;
 }
 
 export const useApiConfigStore = defineStore('apiConfig', {
@@ -221,10 +237,14 @@ export const useApiConfigStore = defineStore('apiConfig', {
 
       const key = opts.groupKey ?? providerKeyOf(cur);
       /*
-       * 统一按 providerKeyOf 的结果分组，两种情况都对：
-       *   - 有地址：把这一家的所有模型一起改（这正是"填一次"的目的）
-       *   - 没地址：每个空地址运营商是独立的键（__blank__:uid），
-       *     所以只改自己那一条，不会串到另一家还没填地址的
+       * 按 providerKeyOf 分组，把这一家的所有模型一起改（"填一次"的目的）。
+       *
+       * ★ 关键：key 不再由地址算出来，而是配置自己的 providerId ——
+       *   所以同域名下的不同分组**不会**被合并，
+       *   改 A 分组的密钥不会碰到 B 分组。
+       *
+       * 用户想共享时，走「在这家下面加模型」，
+       * 新记录会带上同一个 providerId —— 那才是显式的共享。
        */
       const targets = this.configs.filter((c) => providerKeyOf(c) === key);
 
@@ -233,15 +253,15 @@ export const useApiConfigStore = defineStore('apiConfig', {
         if (patch.baseUrl !== undefined) c.baseUrl = patch.baseUrl;
       }
 
-      // 地址变了 → 备注要跟着搬到新键上，否则用户给这家起的名字会丢
-      if (patch.baseUrl !== undefined && !key.startsWith('__blank__')) {
-        const newKey = normalizeBaseUrl(patch.baseUrl);
-        if (newKey && newKey !== key && this.providerNotes[key]) {
-          const notes = { ...this.providerNotes };
-          notes[newKey] = notes[key];
-          delete notes[key];
-          this.providerNotes = notes;
-        }
+      /*
+       * 备注跟着这家走。
+       * key 不再随地址变化，所以地址改了也不用搬 —— 但为了兼容
+       * 早期按地址存的备注，这里仍然做一次搬迁。
+       */
+      if (patch.baseUrl !== undefined && this.providerNotes[key]) {
+        const notes = { ...this.providerNotes };
+        notes[key] = notes[key];
+        this.providerNotes = notes;
       }
 
       if (opts.persist !== false) await this.save();
@@ -261,10 +281,13 @@ export const useApiConfigStore = defineStore('apiConfig', {
       const cur = this.configs.find((c) => c._uid === uid);
       if (!cur) return;
 
-      const key = normalizeBaseUrl(cur.baseUrl || '');
-      const doomed = key
-        ? this.configs.filter((c) => normalizeBaseUrl(c.baseUrl || '') === key)
-        : [cur];
+      /*
+       * 按 providerKeyOf 定位同一家，**不再按地址删**。
+       * 按地址删的话，同一个中转域名下的其它分组会被连坐删掉 ——
+       * 那是用户完全没预期的（他只是删了其中一个分组）。
+       */
+      const key = providerKeyOf(cur);
+      const doomed = this.configs.filter((c) => providerKeyOf(c) === key);
       if (!doomed.length) return;
 
       const doomedUids = new Set(doomed.map((c) => c._uid));
@@ -326,6 +349,12 @@ export const useApiConfigStore = defineStore('apiConfig', {
               apiKey: sameProvider.apiKey,
               temperature: sameProvider.temperature,
               maxTokens: sameProvider.maxTokens,
+              /*
+               * ★ 带上同一个 providerId —— 这才是**真正想共享**的情况。
+               * 用户主动点"在这家下面加模型"，等于明确表达"这两条要一起改"。
+               * 同域名但不同分组的中转，不会走到这里（它们各自独立）。
+               */
+              providerId: key,
               // contextWindow / userLookbackTokens 故意不继承 —— 用 DEFAULT_CONFIG 的新默认值
             }
           : { baseUrl: anchor.baseUrl || '' }),
