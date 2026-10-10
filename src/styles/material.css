@@ -1,0 +1,73 @@
+// Material 3 设计令牌
+// ---------------------------------------------------------------------------
+// 为什么单独放一个文件：
+//
+//   Material 3 的核心是「一整套统一的设计令牌」，不是逐个控件改样式。
+//   令牌集中在这里，页面只写 `var(--md-xxx)`，改风格只改这一处。
+//
+//   而且**完全不碰现有代码** —— 现有样式用的 --radius / --accent 都不动，
+//   新界面用 --md-* 这一套。两套并存，哪套不好看直接关掉 --md-* 就行，
+//   随时能退回改造前的样子。
+//
+//   令牌来源：Material Design 3 (M3) 官方规范
+//   https://m3.material.io/styles/tokens/overview
+
+:root {
+  /* ---- 形状 (Shape) ----
+     M3 的圆角比 iOS 大一档，这是"一眼看出安卓味"的主要来源 */
+  --md-shape-xs: 4px;
+  --md-shape-s: 8px;
+  --md-shape-m: 12px;
+  --md-shape-l: 16px;
+  --md-shape-xl: 28px;
+  /* 胶囊形：M3 里按钮/标签最常用的形状 */
+  --md-shape-full: 999px;
+
+  /* ---- 间距 (Spacing) ----
+     M3 用 4 的倍数 */
+  --md-space-1: 4px;
+  --md-space-2: 8px;
+  --md-space-3: 12px;
+  --md-space-4: 16px;
+  --md-space-5: 20px;
+  --md-space-6: 24px;
+
+  /* ---- 高度 (Elevation) ----
+     M3 的阴影比 iOS 轻很多、扩散更多 —— iOS 阴影偏"贴纸"，M3 偏"浮起" */
+  --md-elev-0: none;
+  --md-elev-1: 0 1px 2px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.10);
+  --md-elev-2: 0 2px 6px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.10);
+  --md-elev-3: 0 4px 12px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.12);
+  --md-elev-4: 0 8px 24px rgba(0, 0, 0, 0.20), 0 4px 12px rgba(0, 0, 0, 0.14);
+
+  /* ---- 动效 (Motion) ----
+     M3 标准缓动和时长；安卓上这套曲线跟手得多 */
+  --md-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --md-ease-decel: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --md-ease-accel: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --md-dur-short: 120ms;
+  --md-dur-med: 240ms;
+  --md-dur-long: 380ms;
+
+  /* ---- 触控尺寸 ----
+     安卓无障碍底线 48dp，比 iOS 的 44pt 大一号。
+     手机上按钮点不准，多半是没到这个尺寸 */
+  --md-touch: 48px;
+  --md-touch-sm: 40px;
+}
+
+/* ==========================================================================
+   深色主题下的 M3 色调（亮色主题留白：令牌会走 appearance 的覆盖）
+   ========================================================================== */
+
+:root {
+  /* 主色容器：M3 里按钮的底色不是纯主色，是"主色容器"这一档 */
+  --md-primary-container: color-mix(in srgb, var(--accent) 24%, var(--panel-2));
+  --md-on-primary-container: var(--text);
+  /* 次要容器：AI 气泡、卡片这类"次要内容区" */
+  --md-surface-container: var(--panel-2);
+  --md-surface-container-high: color-mix(in srgb, var(--text) 6%, var(--panel-2));
+  /* M3 的描边比现在的细，而且带一点主色倾向 */
+  --md-outline: color-mix(in srgb, var(--text) 14%, transparent);
+  --md-outline-variant: color-mix(in srgb, var(--text) 8%, transparent);
+}

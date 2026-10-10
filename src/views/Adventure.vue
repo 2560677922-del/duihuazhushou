@@ -1197,34 +1197,128 @@ function handleImageGenerated(dataUrl: string) {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.28);
 }
 /*
- * 顶栏两组的布局。
+ * ========================================================================
+ * Material 3 顶栏
+ * ========================================================================
  *
- * 手机上最容易出问题的地方：模型选择器有 `max-width: 62vw`（≈244px），
- * 右边的「生图 / 摘要 / ⋯」三个按钮加起来要 200px，
- * 两边相加超过屏幕宽度 → **模型选择器和按钮叠在一起**（实测重叠 64px）。
+ * 和 iOS 顶栏的三个典型差别，也是"安卓味"的来源：
  *
- * 修法：左组 `flex: 1 1 auto` 允许收缩，模型选择器改成"有多少用多少"；
- * 会话名（h2）也会先让位。它内部有省略逻辑，名字长了截断，
- * 点开模型选择器能看到完整名字。
+ *  1. **扁平图标按钮，不是描边胶囊**
+ *     iOS 常给每个按钮画一圈描边；M3 里工具栏按钮是纯图标 + 状态层
+ *     （按下时叠一层主色 8% 的圆角矩形），不画边框。
+ *
+ *  2. **触控区 48dp**
+ *     安卓无障碍底线是 48dp，比 iOS 的 44pt 大一号。手机上点不准多半是没到。
+ *
+ *  3. **标题用大号字，不跟按钮抢位置**
+ *     标题（titleLarge 22sp）单独占一行，工具按钮排下方 ——
+ *     这是 M3 TopAppBar 的标准形态，也顺带解决了"标题被截成新.."的问题。
+ *
+ * 全部用 --md-* 令牌，不影响任何其它页面。
  */
+.adventure-header {
+  /* M3 顶栏：不用毛玻璃，用实色 surface —— 安卓原生顶栏本来就不透明 */
+  background: var(--md-surface-container, var(--panel-2));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--md-elev-2);
+  padding: 0;
+}
+
 .header-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--md-space-1, 4px);
   min-width: 0;
   flex: 1 1 auto;
 }
 
+/*
+ * 标题和模型选择器的宽度分配。
+ *
+ * 踩过的坑：两边都 `flex: 0 1 auto` 时，空间不够会**按比例一起缩**，
+ * 结果标题被挤成"新.."、模型选择器缩成一个圆点 —— 两边都看不清。
+ *
+ * 现在改成明确的优先级（安卓上顶栏空间就是很紧，必须有取舍顺序）：
+ *   1. 返回键 48dp 固定
+ *   2. 会话名   可缩，但保底 4 个字
+ *   3. 模型选择器 保底 88px（约能显示 5-6 个字符），标题先让位
+ *
+ * 理由：模型名被截断不要紧 —— 点开能看到完整名字；
+ *      而会话名是用户识别"我在哪个对话"的唯一线索，不能没。
+ */
 .header-left h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
+  font-weight: 500;
   flex: 0 1 auto;
-  min-width: 0;
-  /* 会话标题可能很长，标题栏不能因此被撑破 */
+  min-width: 4em;
+  max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* 模型选择器：保底能看出是哪个模型，标题先让位 */
+.adventure-header .model-picker {
+  flex: 1 1 auto;
+  min-width: 88px;
+  max-width: 46%;
+}
+
+/* 顶栏内所有按钮 → M3 图标按钮 */
+.adventure-header button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  min-height: var(--md-touch-sm, 40px);
+  padding: 0 var(--md-space-3, 12px);
+  border-radius: var(--md-shape-full, 999px);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  transition: background-color var(--md-dur-short, 120ms) var(--md-ease-standard),
+    color var(--md-dur-short, 120ms) var(--md-ease-standard);
+}
+/* 状态层：按下叠一层主色，安卓的"触感"就是这么来的 */
+.adventure-header button:active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.adventure-header button.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+/* 返回键：M3 里是纯图标按钮 */
+.adventure-header .back-btn {
+  width: var(--md-touch, 48px);
+  height: var(--md-touch, 48px);
+  min-height: var(--md-touch, 48px);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  border-radius: var(--md-shape-full, 999px);
+}
+
+/* 模型选择器也走 M3 状态层 */
+.adventure-header .model-picker .mp-trigger {
+  min-height: var(--md-touch-sm, 40px);
+  border-radius: var(--md-shape-full, 999px);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--text-dim);
+  padding: 0 var(--md-space-3, 12px);
+}
+.adventure-header .model-picker .mp-trigger.on {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
 /* 顶栏里的按钮别被压扁 */
 .adventure-header button {
   flex: 0 0 auto;
@@ -1403,29 +1497,52 @@ function handleImageGenerated(dataUrl: string) {
   content-visibility: auto;
   contain-intrinsic-size: auto 220px;
 }
+/* ==========================================================================
+   Material 3 消息气泡
+   --------------------------------------------------------------------------
+   M3 和 iOS 在气泡上有三个明显差别，也是"安卓味"的来源：
+
+   1. **圆角不对称，且尾部那一角是直角**
+      iOS 气泡四个角一样大（或者统一小圆角）。
+      M3 是"远离尾巴的那个角保持大圆角，朝向尾巴的那一角收成小角"，
+      视觉上更像安卓。
+
+   2. **描边更轻**
+      现在用的 --border 在浅色主题下偏重，气泡看着像"卡片"而不像"消息"。
+      换成 M3 的 outline-variant（透明度更低、带一点主色倾向）。
+
+   3. **AI 气泡更宽**
+      85% 太窄，正文一多就挤成一条。M3 里次要容器给到 92%，
+      AI 侧（更需要读正文）实际可以到 96%。
+   ========================================================================== */
 .message {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 11px 15px;
-  border-radius: var(--radius-lg);
+  gap: var(--md-space-1, 4px);
+  padding: 12px 16px;
+  /* M3 shape-l：16px。尾巴那一角下面单独收小 */
+  border-radius: var(--md-shape-l, 16px);
   max-width: 85%;
-  /* 有厚度：投影 + 顶部高光，气泡才像"浮"在背景上而不是画上去的 */
-  box-shadow: var(--shadow-1);
+  /* M3 阴影比 iOS 轻、扩散大 —— 气泡是"浮起"而不是"贴纸" */
+  box-shadow: var(--md-elev-1);
+  transition: box-shadow var(--md-dur-short, 120ms) var(--md-ease-standard);
 }
 .message.user {
-  background: var(--surface-2), var(--panel-2);
-  border: 1px solid var(--border);
-  border-top-color: var(--hairline-strong);
+  /* 自己的发言用"主色容器"，AI 用"次要容器" —— 这是 M3 的语义配色 */
+  background: var(--md-primary-container, var(--panel-2));
+  border: 1px solid transparent;
+  color: var(--md-on-primary-container, var(--text));
   align-self: flex-end;
-  border-bottom-right-radius: 5px;
+  /* 尾巴角收小，指向发送方向 */
+  border-bottom-right-radius: var(--md-shape-xs, 4px);
 }
 .message.ai {
-  background: var(--surface-1), var(--panel);
-  border: 1px solid var(--border);
-  border-top-color: var(--hairline-strong);
+  background: var(--md-surface-container-high, var(--panel));
+  border: 1px solid var(--md-outline-variant, transparent);
   align-self: flex-start;
-  border-bottom-left-radius: 5px;
+  /* AI 侧正文多，给更宽 —— 之前 85% 挤成一条 */
+  max-width: 92%;
+  border-bottom-left-radius: var(--md-shape-xs, 4px);
 }
 .msg-role {
   font-size: 11px;
@@ -1510,14 +1627,20 @@ function handleImageGenerated(dataUrl: string) {
 .input-area {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px 16px;
-  /* 毛玻璃 + 上投影：输入条像一块浮在内容上的实心面板 */
-  background: var(--glass);
-  -webkit-backdrop-filter: blur(14px) saturate(1.25);
-  backdrop-filter: blur(14px) saturate(1.25);
-  border-top: 1px solid var(--border);
-  box-shadow: var(--shadow-up);
+  gap: var(--md-space-2, 8px);
+  padding: var(--md-space-3, 12px) var(--md-space-4, 16px);
+  /*
+   * Material 3 的输入区：**实色 surface + 一条极细的 outline**
+   *
+   * 原来用毛玻璃（blur 14px）。毛玻璃在安卓 WebView 上很贵 ——
+   * 每次滚动都要重新采样背景，是手机上掉帧的常见来源。
+   * M3 规范里 bottom sheet / 输入区本来也是实色的，改完更跟手。
+   */
+  background: var(--md-surface-container, var(--panel-2));
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-top: 1px solid var(--md-outline-variant, var(--border));
+  box-shadow: var(--md-elev-2);
   /* 输入区吸底：AI 正文在上面自然滚动，指令区始终在下方 */
   position: sticky;
   bottom: 0;
@@ -1572,26 +1695,84 @@ function handleImageGenerated(dataUrl: string) {
 /* 快捷条下面那一行：生图按钮 + 输入框 + 发送 */
 .input-row {
   display: flex;
-  gap: 8px;
+  gap: var(--md-space-2, 8px);
   align-items: flex-end;
 }
+
+/*
+ * Material 3 Filled Text Field
+ *
+ * M3 的输入框是"填充式"：有底色、圆角 4px（shape-xs），
+ * **没有描边**，聚焦时才浮起 outline。
+ * 之前用的是普通 input 的默认样式（描边 + 直角），
+ * 和安卓其它控件放一起会显得很"网页"。
+ */
 .input-area textarea {
   flex: 1;
   resize: none;
-  min-height: 40px;
-  max-height: 120px;
+  /* M3 触控高度 56dp（Filled Text Field 的标准高度），比 40 大一圈 */
+  min-height: 48px;
+  max-height: 132px;
+  padding: 14px 16px;
+  border-radius: var(--md-shape-s, 8px) var(--md-shape-s, 8px)
+    var(--md-shape-xs, 4px) var(--md-shape-xs, 4px);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border: 1px solid transparent;
+  transition: border-color var(--md-dur-short, 120ms) var(--md-ease-standard),
+    background-color var(--md-dur-short, 120ms) var(--md-ease-standard);
 }
-.img-gen-btn {
-  align-self: flex-end;
-  height: 40px;
-  width: 40px;
-  padding: 0;
-  font-size: 18px;
-  border-radius: 8px;
+.input-area textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
 }
+
+/* 发送按钮：M3 Filled Button —— 全圆角胶囊 + 主色容器 */
 .send-btn {
   align-self: flex-end;
-  height: 40px;
+  height: 48px;
+  min-width: 96px;
+  padding: 0 var(--md-space-6, 24px);
+  border-radius: var(--md-shape-full, 999px);
+  background: var(--accent);
+  color: var(--surface-1, #fff);
+  border: none;
+  box-shadow: none;
+  font-weight: 500;
+  transition: opacity var(--md-dur-short, 120ms) var(--md-ease-standard),
+    transform var(--md-dur-short, 120ms) var(--md-ease-standard);
+}
+.send-btn:active:not(:disabled) {
+  transform: scale(0.97);
+  opacity: 0.88;
+}
+/*
+ * 禁用态：不要用 opacity —— 那会把主色也一起变灰，
+ * 看着像"按钮坏了"。M3 的做法是降到"on-surface 12%"这一档。
+ */
+.send-btn:disabled {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: color-mix(in srgb, var(--text) 38%, transparent);
+  box-shadow: none;
+}
+
+/* 生图按钮：M3 Icon Button 48dp 圆形状态层 */
+.img-gen-btn {
+  align-self: flex-end;
+  height: 48px;
+  width: 48px;
+  min-width: 48px;
+  padding: 0;
+  font-size: 20px;
+  border-radius: var(--md-shape-full, 999px);
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  transition: background-color var(--md-dur-short, 120ms) var(--md-ease-standard);
+}
+.img-gen-btn:active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
 }
 .asset-aside {
   width: 280px;

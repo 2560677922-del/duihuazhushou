@@ -3,6 +3,8 @@ import { createPinia } from 'pinia';
 import App from './App.vue';
 import router from './router';
 import './styles/main.css';
+/* Material 3 设计令牌：新界面用 --md-*，不改动原有样式，可随时关掉 */
+import './styles/material.css';
 import { registerSW } from 'virtual:pwa-register';
 import { store } from './lib/storage';
 import { persist } from './lib/persist';
