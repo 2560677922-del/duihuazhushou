@@ -1,0 +1,35 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.env
+.vite/
+
+# 本地持久化数据目录：包含 API Key 等敏感信息，开源/推送时不要提交
+data/
+
+# 编辑器与系统文件
+.vscode/
+.idea/
+Thumbs.db
+
+# 标签翻译脚本的密钥
+.env-translate
+
+# 安卓构建产物（几十 MB，APK 本身另存一份就够）
+dbpg/app/build/
+
+# Gradle 缓存
+dbpg/.gradle/
+
+# Gradle 中间产物
+dbpg/build/
+
+# Android SDK 路径（每台机器不同）
+dbpg/local.properties
+
+# 打出来的 APK（dbpg/app/build/outputs 已排除，这里兜底）
+*.apk
+
+# 测试截图（临时产物）
+shots/

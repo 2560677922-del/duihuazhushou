@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      viewport-fit=cover 是必须的：
+      不加它，env(safe-area-inset-*) 全是 0，手机底部（全面屏手势条、
+      虚拟导航栏）会把输入框和面板按钮压住，点不到。
+      加上之后 CSS 里那些 safe-area 内边距才真正生效。
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0d1018" />
+    <title>冒险模拟器</title>
+
+    <!--
+      启动画面（首屏骨架）。
+
+      为什么内联写在这里、而不是放在 Vue 组件里：
+        Vue 要等 JS 下载 + 解析 + 挂载之后才有内容。在那之前 body 是空的
+        —— 用户看到的就是**一片黑屏**（这是用户反馈过的问题）。
+        骨架直接写在 index.html 里，浏览器解析到就能画出来，比等 JS 快得多。
+        Vue 挂载后由 App.vue 负责淡出并移除它。
+
+      配色和 App 内保持一套（深蓝底 + 蓝点缀 + 粉发人物），
+      所以从启动画面切到真正的界面不会"跳色"。
+    -->
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      /*
+        启动画面的深色底只给 **body**，html 保持透明。
+
+        原因：应用里的主题背景是写在 html 上的（见 main.css），
+        靠"根元素背景传播到 canvas"来铺满整个可滚动区域。
+        如果这里也给 html 刷一层 #0d1018，就抢占了 canvas ——
+        浅色主题下滚到长页面底部会露出这层深色（实测过的 bug）。
+      */
+      body {
+        background: #0d1018;
+      }
+
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        background: radial-gradient(
+          900px 620px at 50% 34%,
+          #1e2740 0%,
+          #131824 52%,
+          #0d1018 100%
+        );
+        transition: opacity 0.42s ease, visibility 0.42s ease;
+      }
+      #boot-splash.splash-out {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      .bs-avatar {
+        position: relative;
+        width: 132px;
+        height: 132px;
+      }
+      /* 外圈光晕：用主题蓝，呼吸动画让它看起来"活着" */
+      .bs-avatar::after {
+        content: '';
+        position: absolute;
+        inset: -14px;
+        border-radius: 50%;
+        background: radial-gradient(
+          circle,
+          rgba(110, 168, 254, 0.34) 0%,
+          transparent 68%
+        );
+        animation: bs-glow 2.4s ease-in-out infinite;
+      }
+      .bs-avatar img {
+        position: relative;
+        z-index: 1;
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 3px solid rgba(110, 168, 254, 0.55);
+        box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+      }
+      @keyframes bs-glow {
+        0%,
+        100% {
+          opacity: 0.65;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 1;
+          transform: scale(1.06);
+        }
+      }
+
+      .bs-title {
+        font-size: 19px;
+        font-weight: 700;
+        letter-spacing: 2px;
+        color: #eef2fa;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+          'Microsoft YaHei', sans-serif;
+      }
+      .bs-sub {
+        margin-top: -14px;
+        font-size: 11.5px;
+        letter-spacing: 1.4px;
+        color: #7b869c;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+          'Microsoft YaHei', sans-serif;
+      }
+
+      /* 「加载中」固定在右下角 */
+      .bs-loading {
+        position: absolute;
+        right: max(20px, env(safe-area-inset-right, 0px));
+        bottom: max(24px, calc(env(safe-area-inset-bottom, 0px) + 18px));
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 12px;
+        color: #8b96ad;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+          'Microsoft YaHei', sans-serif;
+      }
+      .bs-spinner {
+        width: 15px;
+        height: 15px;
+        border-radius: 50%;
+        border: 2px solid rgba(110, 168, 254, 0.28);
+        border-top-color: #6ea8fe;
+        animation: bs-spin 0.8s linear infinite;
+      }
+      @keyframes bs-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* 加载久了给一句话，避免用户以为卡死直接退出 */
+      .bs-slow {
+        position: absolute;
+        left: 50%;
+        bottom: max(72px, calc(env(safe-area-inset-bottom, 0px) + 66px));
+        transform: translateX(-50%);
+        font-size: 11.5px;
+        color: #6b7488;
+        text-align: center;
+        padding: 0 24px;
+        opacity: 0;
+        transition: opacity 0.5s ease;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+          'Microsoft YaHei', sans-serif;
+      }
+      .bs-slow.show {
+        opacity: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="boot-splash">
+      <div class="bs-avatar">
+        <img src="/splash-girl.jpg" alt="" />
+      </div>
+      <div class="bs-title">冒险模拟器</div>
+      <div class="bs-sub">AI 写作 · 冒险平台</div>
+      <div class="bs-slow" id="bs-slow">首次加载需要下载资源，请稍候…</div>
+      <div class="bs-loading">
+        <span class="bs-spinner"></span>
+        <span>加载中</span>
+      </div>
+    </div>
+
+    <script>
+      /*
+       * 超时兜底：4 秒还没挂载就说一句"请稍候"。
+       * 资源真的慢时（首次打开 / 网络差），光一个转圈会让用户怀疑卡死然后退出去。
+       */
+      setTimeout(function () {
+        var el = document.getElementById('bs-slow');
+        if (el && document.getElementById('boot-splash')) el.classList.add('show');
+      }, 4000);
+    </script>
+
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

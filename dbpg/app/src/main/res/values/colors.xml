@@ -1,0 +1,5 @@
+<resources>
+    <!-- 与网页版启动画面 / 主题色一致（见 index.html 的 #boot-splash 背景） -->
+    <color name="app_bg">#FF0D1018</color>
+    <color name="ic_launcher_background">#FF1B2333</color>
+</resources>

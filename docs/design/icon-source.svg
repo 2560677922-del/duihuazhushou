@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  应用图标：萌系小女孩（矢量版）
+
+  为什么手绘 SVG 而不是生成位图：
+    图标要在 48px（通知栏）到 512px（商店）之间缩放。位图缩小会糊，
+    矢量在任何尺寸都锐利，而且文件只有几 KB。
+    （本机图像生成未配置，矢量也是更稳的选择。）
+
+  设计取舍：
+    · 深蓝底 + 蓝色点缀，和 App 内主题色（--accent #6ea8fe）一致
+    · 头大身小（chibi 比例），缩到 48px 也认得出是"一个可爱的女孩"
+    · 只在眼睛留高光，其余用平面色块 —— 小尺寸下细节会糊成一团
+    · 四周留足边距，Android 圆形/方形蒙版裁切都不会切到脸
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- 背景：深蓝渐变，比纯色更有质感 -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#1b2333"/>
+      <stop offset="1" stop-color="#0d1018"/>
+    </linearGradient>
+    <!-- 头发：粉紫渐变 -->
+    <linearGradient id="hair" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#ffc7dd"/>
+      <stop offset="0.55" stop-color="#ff9ec4"/>
+      <stop offset="1" stop-color="#ef7fae"/>
+    </linearGradient>
+    <!-- 头发暗部 -->
+    <linearGradient id="hairDark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e9789f"/>
+      <stop offset="1" stop-color="#c95d84"/>
+    </linearGradient>
+    <!-- 皮肤 -->
+    <linearGradient id="skin" x1="0.3" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#fff1e6"/>
+      <stop offset="1" stop-color="#ffdfcc"/>
+    </linearGradient>
+    <!-- 衣服：白 + 淡蓝 -->
+    <linearGradient id="cloth" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dfe8f7"/>
+    </linearGradient>
+    <!-- 眼睛：蓝紫渐变 -->
+    <linearGradient id="eye" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#3d5a9e"/>
+      <stop offset="0.55" stop-color="#2b3a6b"/>
+      <stop offset="1" stop-color="#1d2544"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ================= 背景 ================= -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- 背景点缀：几颗小星星，让画面不空 -->
+  <g fill="#6ea8fe" opacity="0.5">
+    <circle cx="88" cy="110" r="5"/>
+    <circle cx="430" cy="146" r="7"/>
+    <circle cx="404" cy="392" r="4.5"/>
+    <circle cx="104" cy="382" r="6"/>
+  </g>
+  <g fill="#ffffff" opacity="0.32">
+    <path d="M414 92l4.5 11 11 4.5-11 4.5-4.5 11-4.5-11-11-4.5 11-4.5z"/>
+    <path d="M96 300l3.5 8.5 8.5 3.5-8.5 3.5-3.5 8.5-3.5-8.5-8.5-3.5 8.5-3.5z"/>
+  </g>
+
+  <!-- ================= 双马尾（在头后面） ================= -->
+  <!--
+    位置要点：发圈要落在**耳朵上方偏后**，马尾往下垂。
+    之前把根部放太低（y≈268），看着像挂在耳朵上的两个球。
+    现在根部提到 y≈228、整体更贴头侧，垂坠感才对。
+  -->
+  <!-- 左马尾 -->
+  <path d="M164 232c-40 4-68 38-70 80-2 36 16 62 40 62 23 0 34-24 34-54 0-29 6-54 12-84z"
+        fill="url(#hairDark)"/>
+  <!-- 右马尾 -->
+  <path d="M348 232c40 4 68 38 70 80 2 36-16 62-40 62-23 0-34-24-34-54 0-29-6-54-12-84z"
+        fill="url(#hairDark)"/>
+  <!-- 马尾上的发圈（淡蓝，和主题色一致） -->
+  <g fill="#6ea8fe">
+    <rect x="130" y="222" width="38" height="18" rx="9" transform="rotate(-14 149 231)"/>
+    <rect x="344" y="222" width="38" height="18" rx="9" transform="rotate(14 363 231)"/>
+  </g>
+  <!-- 马尾高光，避免整块死色 -->
+  <path d="M150 268c-14 8-22 28-22 50" stroke="#ffd0e2" stroke-width="7"
+        stroke-linecap="round" fill="none" opacity="0.5"/>
+  <path d="M362 268c14 8 22 28 22 50" stroke="#ffd0e2" stroke-width="7"
+        stroke-linecap="round" fill="none" opacity="0.5"/>
+
+  <!-- ================= 脖子与肩膀 ================= -->
+  <path d="M232 344h48v34c0 12-48 12-48 0z" fill="#f0cdb9"/>
+  <!-- 衣服 -->
+  <path d="M256 372c-46 0-84 22-96 54-4 11 2 20 14 20h164c12 0 18-9 14-20-12-32-50-54-96-54z"
+        fill="url(#cloth)"/>
+  <!-- 衣领（淡蓝 V 字） -->
+  <path d="M256 374c-14 0-26 4-36 10l36 30 36-30c-10-6-22-10-36-10z" fill="#6ea8fe"/>
+  <circle cx="256" cy="424" r="7" fill="#6ea8fe"/>
+
+  <!-- ================= 头 ================= -->
+  <!-- 脸 -->
+  <ellipse cx="256" cy="238" rx="102" ry="108" fill="url(#skin)"/>
+
+  <!-- 耳朵 -->
+  <ellipse cx="156" cy="248" rx="13" ry="18" fill="#ffdfcc"/>
+  <ellipse cx="356" cy="248" rx="13" ry="18" fill="#ffdfcc"/>
+
+  <!-- ================= 刘海与头顶头发 ================= -->
+  <!-- 后脑一圈（让头发包住脸） -->
+  <path d="M256 118c-62 0-108 44-108 106 0 10 1 20 3 29 4-38 18-64 34-78 12 22 40 34 71 34s59-12 71-34c16 14 30 40 34 78 2-9 3-19 3-29 0-62-46-106-108-106z"
+        fill="url(#hair)"/>
+  <!--
+    中分刘海：左右各一簇、中间留一道缝。
+    之前两簇几乎连在一起，看不出是"分"的；
+    现在把内缘的收口做明显（中间那道 V 缝），额中线才立得住。
+  -->
+  <path d="M256 126c-46 0-80 32-86 78 10-30 32-50 56-56-10 14-12 30-8 42 12-30 26-50 44-60-2-2-4-4-6-4z"
+        fill="url(#hair)"/>
+  <path d="M256 126c46 0 80 32 86 78-10-30-32-50-56-56 10 14 12 30 8 42-12-30-26-50-44-60 2-2 4-4 6-4z"
+        fill="url(#hair)"/>
+  <!-- 头顶高光 -->
+  <ellipse cx="222" cy="150" rx="32" ry="14" fill="#ffffff" opacity="0.36" transform="rotate(-16 222 150)"/>
+
+  <!-- ================= 眼睛 ================= -->
+  <!-- 左眼 -->
+  <ellipse cx="212" cy="250" rx="25" ry="29" fill="url(#eye)"/>
+  <ellipse cx="212" cy="262" rx="15" ry="14" fill="#7ea9ff" opacity="0.55"/>
+  <circle cx="204" cy="238" r="9" fill="#ffffff"/>
+  <circle cx="220" cy="262" r="4.5" fill="#ffffff" opacity="0.9"/>
+  <!-- 右眼 -->
+  <ellipse cx="300" cy="250" rx="25" ry="29" fill="url(#eye)"/>
+  <ellipse cx="300" cy="262" rx="15" ry="14" fill="#7ea9ff" opacity="0.55"/>
+  <circle cx="292" cy="238" r="9" fill="#ffffff"/>
+  <circle cx="308" cy="262" r="4.5" fill="#ffffff" opacity="0.9"/>
+  <!-- 睫毛/上眼线 -->
+  <path d="M187 228c8-9 34-13 48-4" stroke="#1d2544" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <path d="M325 228c-8-9-34-13-48-4" stroke="#1d2544" stroke-width="7" stroke-linecap="round" fill="none"/>
+
+  <!-- ================= 腮红 ================= -->
+  <ellipse cx="176" cy="288" rx="21" ry="13" fill="#ff9bb5" opacity="0.5"/>
+  <ellipse cx="336" cy="288" rx="21" ry="13" fill="#ff9bb5" opacity="0.5"/>
+
+  <!-- ================= 嘴 ================= -->
+  <!-- 小小的微笑 -->
+  <path d="M243 300c5 9 21 9 26 0" stroke="#c2546f" stroke-width="6.5"
+        stroke-linecap="round" fill="none"/>
+</svg>

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标的前景层。Android 8.0+ 用；系统会把它裁成圆形/水滴形等形状。 -->
+<!-- width/height 是 108dp，但 viewport 用 512，好和 tools/make-icons.cjs 里的
+     设计稿共用同一套坐标。图案全部落在 108dp 的「安全圆」(直径 66dp) 内，
+     换算到 512 是半径 156.7，所以怎么裁都不会切到主体。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+
+    <path
+        android:fillColor="#6EA8FE"
+        android:pathData="M236,122 A20,20 0 1 0 276,122 A20,20 0 1 0 236,122 Z" />
+
+    <path
+        android:fillColor="#6EA8FE"
+        android:pathData="M256,136 H256 A8,8 0 0 1 264,144 V168 A8,8 0 0 1 256,176 H256 A8,8 0 0 1 248,168 V144 A8,8 0 0 1 256,136 Z" />
+
+    <path
+        android:fillColor="#EDF2FB"
+        android:pathData="M132,286 A124,124 0 1 0 380,286 A124,124 0 1 0 132,286 Z" />
+
+    <path
+        android:fillColor="#141826"
+        android:pathData="M168,272 A36,36 0 1 0 240,272 A36,36 0 1 0 168,272 Z M272,272 A36,36 0 1 0 344,272 A36,36 0 1 0 272,272 Z" />
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M205,258 A13,13 0 1 0 231,258 A13,13 0 1 0 205,258 Z M309,258 A13,13 0 1 0 335,258 A13,13 0 1 0 309,258 Z" />
+
+    <path
+        android:fillColor="#FF9DB8"
+        android:pathData="M154,322 A22,22 0 1 0 198,322 A22,22 0 1 0 154,322 Z M314,322 A22,22 0 1 0 358,322 A22,22 0 1 0 314,322 Z" />
+
+    <path
+        android:fillColor="#6EA8FE"
+        android:pathData="M232,330 H280 A10,10 0 0 1 290,340 V340 A10,10 0 0 1 280,350 H232 A10,10 0 0 1 222,340 V340 A10,10 0 0 1 232,330 Z" />
+
+</vector>

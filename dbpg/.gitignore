@@ -1,0 +1,22 @@
+# ---- Gradle ----
+.gradle/
+build/
+**/build/
+
+# ---- 本机配置（SDK 路径因人而异，不要提交）----
+local.properties
+
+# ---- 由 syncWeb 任务生成的 Web 资源，不要提交 ----
+app/src/main/assets/www/
+
+# ---- 构建产物 ----
+*.apk
+*.aab
+captures/
+
+# ---- 编辑器 ----
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db

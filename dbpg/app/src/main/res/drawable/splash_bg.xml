@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  冷启动时显示的画面（Android 原生层）。
+
+  WebView 创建 + 加载页面之前，屏幕上显示的就是这个。
+  做成"深色底 + 居中应用图标"，和 index.html 里的启动骨架同色，
+  所以从点图标到界面出来，看起来是一个连续的画面，不会黑一下再亮。
+
+  用 layer-list 而不是引入 androidx.core 的 SplashScreen：
+  这个项目刻意不引额外依赖（见 themes.xml 的说明），
+  layer-list 是系统自带的，够用且零风险。
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 底层：和网页版启动画面同色的深蓝 -->
+    <item android:drawable="@color/app_bg" />
+    <!-- 上层：居中的应用图标（尺寸靠 inset 控制，约屏宽 1/3） -->
+    <item android:gravity="center">
+        <bitmap
+            android:src="@mipmap/ic_launcher"
+            android:gravity="center"
+            android:filter="true" />
+    </item>
+</layer-list>
