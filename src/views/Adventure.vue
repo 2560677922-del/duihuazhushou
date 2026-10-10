@@ -210,6 +210,15 @@ async function regenerateWith(action: { id: string; user: string }) {
     await adventure.save();
   }
 
+  /*
+   * ★ 先清掉上一次没生成完的草稿。
+   *
+   * 不清的话：草稿块（"未完成的草稿"）还挂在正文下面，重新生成过程中
+   * 它会被新的流式内容覆盖 —— 用户看到的就是"刚点重新生成，
+   * 底下凭空多了一条一模一样的"，非常困惑。
+   */
+  if (session.draft) await adventure.clearDraft();
+
   userInput.value = action.user;
   regenerateTargetId.value = action.id;
   // 用输入框里可能存在的改写内容作为新的用户指令版本。
@@ -910,6 +919,32 @@ function handleImageGenerated(dataUrl: string) {
       <!-- 中间：场景 -->
       <div class="chat-area-wrapper">
         <div class="chat-area" id="chat-area" ref="chatEl">
+          <!--
+            ★ 未完成生成 —— 提示条放在正文**最上面**，而不是只在末尾渲染一个草稿块。
+
+            为什么：
+            之前草稿块渲染在正文最后面。用户退出对话再进来时，
+            store 是异步加载的，那一会儿里页面上什么都看不到，
+            要等加载完才突然冒出来一条"未完成的草稿" —— 用户根本不知道
+            刚才那次生成到底成没成，只会觉得"消息丢了"。
+
+            现在：进对话第一眼就能看到"上次没生成完"，附带三个明确动作。
+          -->
+          <div v-if="!streaming && currentSession?.draft?.ai" class="unfinished-bar">
+            <div class="ub-head">
+              <span class="ub-icon">⚠️</span>
+              <span class="ub-title">上次有一段生成没完成</span>
+            </div>
+            <p class="ub-sub">
+              已经写了一半：<b>{{ (currentSession.draft.ai || '').slice(0, 40) }}{{ (currentSession.draft.ai || '').length > 40 ? '…' : '' }}</b>
+            </p>
+            <div class="ub-acts">
+              <button class="ma primary" @click="adventure.commitDraft()">保留这条</button>
+              <button class="ma" @click="resumeDraft">继续生成</button>
+              <button class="ma danger" @click="adventure.clearDraft()">丢弃</button>
+            </div>
+          </div>
+
           <!-- 开场场景：可编辑、可清空。不预填任何剧情，
                由用户自己写（或交给世界书/角色卡） -->
           <div class="scene-card">
@@ -993,24 +1028,14 @@ function handleImageGenerated(dataUrl: string) {
             </div>
           </div>
 
-          <!-- 未完成的草稿：上次生成到一半被打断 -->
-          <div v-if="!streaming && currentSession?.draft?.ai" class="message-group draft-group">
-            <div class="message user">
-              <div class="msg-role">🧑 你</div>
-              <div class="msg-content">{{ currentSession.draft.user }}</div>
-            </div>
-            <div class="message ai">
-              <div class="msg-role">🤖 AI <span class="draft-tag">未完成的草稿</span></div>
-              <div class="msg-content">
-                <ContentWithImages :content="displayText(currentSession.draft.ai)" />
-              </div>
-              <div class="msg-actions">
-                <button class="ma primary" @click="adventure.commitDraft()">保留这条</button>
-                <button class="ma" @click="resumeDraft">继续生成</button>
-                <button class="ma danger" @click="adventure.clearDraft()">丢弃</button>
-              </div>
-            </div>
-          </div>
+          <!--
+            未完成草稿的提示条已挪到正文最上面（见 chat-area 开头）。
+            原来在这里渲染一整块"用户消息 + AI 消息"，问题是：
+              · 它在正文末尾，用户要滚到底才看得见
+              · 退出再进来时 store 异步加载，那一会儿页面空白，
+                用户以为消息丢了
+            顶部提示条 + 这里的流式块就够了。
+          -->
 
           <!-- 流式输出 -->
           <div v-if="streaming || streamOutput" class="message-group">
@@ -1427,6 +1452,55 @@ function handleImageGenerated(dataUrl: string) {
   flex-direction: column;
   gap: 12px;
 }
+/* ==========================================================================
+   未完成生成提示条
+   --------------------------------------------------------------------------
+   放在正文最上面而不是末尾 —— 用户退出再进来时一眼就能看到
+   "上次没生成完"，不用等 store 加载完才突然冒出来。
+   配色用警告色，和普通消息明显区分开。
+   ========================================================================== */
+.unfinished-bar {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: var(--md-shape-l, 16px);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.12);
+  box-shadow: var(--md-elev-1);
+}
+.ub-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ub-icon {
+  font-size: 15px;
+}
+.ub-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #f5a623;
+}
+.ub-sub {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  word-break: break-all;
+}
+.ub-sub b {
+  color: var(--text);
+  font-weight: 500;
+}
+.ub-acts {
+  display: flex;
+  gap: 8px;
+}
+.ub-acts .ma {
+  min-height: var(--md-touch-sm, 40px);
+  padding: 0 14px;
+  border-radius: var(--md-shape-full, 999px);
+}
+
 .scene-card {
   background: var(--surface-1), var(--panel);
   border: 1px solid var(--border);

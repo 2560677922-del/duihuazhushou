@@ -247,6 +247,28 @@ export const useAdventureStore = defineStore('adventure', {
       const gone = act.images.filter((a) => a.id === attachmentId);
       if (gone.length) await dropInlineImages(gone);
       act.images = act.images.filter((a) => a.id !== attachmentId);
+
+      /*
+       * ★ 连正文里的占位符一起删。
+       *
+       * 图片在正文里是靠 `[[IMG: 画面描述]]` 这一行占位的。
+       * 只删附件、留着占位符的话，正文里就会剩一行 `[[IMG: ...]]` 的裸文本，
+       * 界面上看起来像"删了图却留下一个奇怪的括号块"。
+       */
+      for (const img of gone) {
+        if (!img.description) continue;
+        const esc = String(img.description).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(`^\\s*\\[\\[IMG:\\s*${esc}\\s*\\]\\]\\s*$`, 'gm');
+        if (act.user) act.user = act.user.replace(re, '');
+        if (act.ai) act.ai = act.ai.replace(re, '');
+      }
+      /* 整行删掉后可能留下连续空行，顺手收敛一下 */
+      for (const key of ['user', 'ai'] as const) {
+        if (typeof act[key] === 'string') {
+          act[key] = (act[key] as string).replace(/\n{3,}/g, '\n\n').trim();
+        }
+      }
+
       session.updatedAt = Date.now();
       await this.save();
     },

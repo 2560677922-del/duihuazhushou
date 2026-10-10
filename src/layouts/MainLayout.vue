@@ -1,8 +1,23 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 const route = useRoute();
+const router = useRouter();
+
+/**
+ * 切一级页面：**替换**当前历史条目，不新增。
+ *
+ * 配合安卓返回手势的效果（和原生 App 一致）：
+ *   · 在二级页（聊天/小说编辑）→ 返回 = 回它所属的一级页
+ *   · 在一级页（列表）        → 返回 = 退出应用
+ * 如果一级页面之间用 push 互相堆栈，返回键就永远在几个 tab 之间打转，
+ * 用户按到没反应为止 —— 这是"退不出去"的根因。
+ */
+function goTab(path: string) {
+  if (route.path === path) return;
+  void router.replace(path);
+}
 /**
  * 底部标签栏顺序（按用户要求定的）：
  *   冒险 → 小说 → 资产 → 设置 → 生图
@@ -67,16 +82,25 @@ const isChatView = computed(() => {
         <p class="subtitle">AI 写作 + 冒险平台</p>
       </div>
       <nav class="sidebar-nav">
-        <router-link
+        <!--
+          切一级页面用 **replace** 而不是 push。
+          为什么：RouterLink 默认 push，会在浏览器历史里一层层堆 ——
+          "小说 → 冒险"，按返回键又回到「小说」，用户以为退不出去。
+          改成 replace 之后，几个一级页面在历史里**互相替换**，
+          返回手势/返回键只会有两种结果：回到上一个二级页面（如果在），
+          或者直接退出应用（在一级页面时）—— 这才是安卓的预期行为。
+        -->
+        <a
           v-for="item in navItems"
           :key="item.name"
-          :to="item.path"
+          href="#"
           class="nav-item"
           :class="{ active: activeName === item.name }"
+          @click.prevent="goTab(item.path)"
         >
           <span class="nav-icon">{{ item.icon }}</span>
           <span class="nav-label">{{ item.label }}</span>
-        </router-link>
+        </a>
       </nav>
       <div class="sidebar-footer">
         <span class="hint">SillyTavern 预设兼容</span>
