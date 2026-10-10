@@ -5,6 +5,9 @@ import router from './router';
 import './styles/main.css';
 /* Material 3 设计令牌：新界面用 --md-*，不改动原有样式，可随时关掉 */
 import './styles/material.css';
+
+/* 按键音效：WebAudio 现场合成，不打包音频文件。挂一次全局代理，新按钮自动有音效 */
+import { installSoundFeedback } from './lib/sound';
 import { registerSW } from 'virtual:pwa-register';
 import { store } from './lib/storage';
 import { persist } from './lib/persist';
@@ -69,6 +72,9 @@ async function boot() {
   }
 
   app.mount('#app');
+
+  /* 按键音效：全局代理，一次挂上，以后新加的按钮自动有声音 */
+  installSoundFeedback();
 
   // 外观（背景/主色）单独加载并立即应用，避免先闪一下默认配色
   try {

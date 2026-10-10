@@ -24,6 +24,14 @@ import {
 } from '../engine/novelai';
 import ImageParamsPanel from '../components/ImageParamsPanel.vue';
 
+/* ===== 按键音效 ===== */
+import { soundPrefs, playSound } from '../lib/sound';
+const soundEnabled = ref(soundPrefs.enabled);
+const soundVolume = ref(soundPrefs.volume);
+function setSoundEnabled(v: boolean) { soundEnabled.value = v; soundPrefs.enabled = v; }
+function setSoundVolume(v: number) { soundVolume.value = v; soundPrefs.volume = v; }
+function previewSound() { playSound('send'); }
+
 const assets = useAssetsStore();
 const api = useApiConfigStore();
 const imageStore = useImageStore();
@@ -1508,6 +1516,28 @@ function toggleApiKey() {
     <!-- 界面外观 -->
     <section class="section" v-if="activeSection === 'appearance'">
       <div>
+        <!--
+          按键音效。
+
+          默认开着但音量压得很低（0.6 × 0.045 增益）——
+          音效的作用是"确认点到了"，不是让人听见。
+          不喜欢的人可以在这里直接关掉。
+        -->
+        <div class="subsection-title">按键音效</div>
+        <label class="switch">
+          <input type="checkbox" :checked="soundEnabled" @change="setSoundEnabled(($event.target as HTMLInputElement).checked)" />
+          <span>点击按钮时播放提示音</span>
+        </label>
+        <div v-if="soundEnabled" class="row" style="margin-top: 8px;">
+          <div class="col">
+            <label>音量<em class="hint-inline">{{ Math.round(soundVolume * 100) }}%</em></label>
+            <input type="range" min="0" max="100" :value="Math.round(soundVolume * 100)"
+              @input="setSoundVolume(Number(($event.target as HTMLInputElement).value) / 100)" />
+          </div>
+          <div class="col" style="flex: 0 0 auto;">
+            <button class="mini" @click="previewSound">试听</button>
+          </div>
+        </div>
         <!--
           整套外观预设：一次换掉「背景 + 主色 + 面板透明度」。
           
