@@ -89,11 +89,16 @@ const isChatView = computed(() => {
           改成 replace 之后，几个一级页面在历史里**互相替换**，
           返回手势/返回键只会有两种结果：回到上一个二级页面（如果在），
           或者直接退出应用（在一级页面时）—— 这才是安卓的预期行为。
+
+          href 写成真实的 hash 地址（不是 "#"）：
+          href="#" 的锚点会让"长按 → 在新标签页打开"变成打开空页，
+          无 JS 时点击也只会跳到页顶。给真实地址这些行为才正常，
+          点击仍由 goTab 接管（用 replace，不污染历史）。
         -->
         <a
           v-for="item in navItems"
           :key="item.name"
-          href="#"
+          :href="'#' + item.path"
           class="nav-item"
           :class="{ active: activeName === item.name }"
           @click.prevent="goTab(item.path)"

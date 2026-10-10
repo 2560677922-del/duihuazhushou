@@ -10,10 +10,19 @@ import { store } from '../lib/storage';
 export interface BackgroundPreset {
   id: string;
   name: string;
-  /** CSS 背景值（渐变/纯色） */
+  /** CSS 背景值（渐变/纯色）。图片背景时这里是兜底色 */
   css: string;
   /** 缩略图预览用的 CSS */
   preview: string;
+  /**
+   * 内置插画的地址（相对路径）。
+   *
+   * 有这个值时走图片背景：url() + cover + 一层压暗遮罩，
+   * 这样正文压在图上依然清楚。来源见「来源与授权.md」。
+   */
+  image?: string;
+  /** 图片背景的压暗程度（0~0.8），越大越暗 */
+  dim?: number;
 }
 
 /**
@@ -112,6 +121,47 @@ export const BACKGROUND_PRESETS: BackgroundPreset[] = [
     name: '纯色',
     css: '#f6f7f9',
     preview: '#f6f7f9',
+  },
+
+  /* ------------------------------------------------------------------
+   ★ 二次元插画背景（1080×1920 竖屏，JPEG q80，每张约 130~540 KB）
+
+   来源：wallhaven.cc（CC0，检索时限定 purity=100 只取 SFW）
+   具体文件 / 作者 / 来源页见「来源与授权.md」和
+   public/bg-candidates/meta.json。
+   ------------------------------------------------------------------ */
+  {
+    id: 'art-citynight',
+    name: '雨夜都市',
+    css: '#0a1018',
+    preview: 'linear-gradient(160deg, #1a3550, #060a10)',
+    image: '/bg/citynight-ogjkm9.jpg',
+    dim: 0.42,
+  },
+  {
+    id: 'art-moonlight',
+    name: '月夜提灯',
+    css: '#0b1020',
+    preview: 'linear-gradient(160deg, #2a3a66, #080c18)',
+    image: '/bg/starry-6lwmy7.jpg',
+    // 这张整体偏亮（有大月亮），压得暗一点才看得清正文
+    dim: 0.5,
+  },
+  {
+    id: 'art-rooftop',
+    name: '天台少女',
+    css: '#0a0e14',
+    preview: 'linear-gradient(160deg, #2b3648, #06090e)',
+    image: '/bg/citynight-pomg5p.jpg',
+    dim: 0.4,
+  },
+  {
+    id: 'art-sakura',
+    name: '樱花巫女',
+    css: '#160f18',
+    preview: 'linear-gradient(160deg, #5a3a5e, #140d16)',
+    image: '/bg/sakura-gwdjdl.jpg',
+    dim: 0.44,
   },
 ];
 
@@ -228,6 +278,14 @@ export const useAppearanceStore = defineStore('appearance', () => {
     const preset = BACKGROUND_PRESETS.find((p) => p.id === background.value);
 
     // 1. 背景
+    /*
+     * 两种背景形态：
+     *   custom   → 用户自己传的图片（存 dataURL）
+     *   预设     → preset.css，可能是一段渐变，也可能是 url(...) 指到内置插画
+     *
+     * 插画背景要盖一层压暗遮罩，否则正文压在亮部上会看不清 ——
+     * 用户还能自己调深浅（customImageDim）。
+     */
     if (background.value === 'custom' && customImage.value) {
       root.style.setProperty('--app-bg', `url("${customImage.value}")`);
       root.style.setProperty('--app-bg-size', 'cover');
@@ -237,6 +295,18 @@ export const useAppearanceStore = defineStore('appearance', () => {
       root.style.setProperty(
         '--app-bg-overlay',
         `linear-gradient(rgba(8,10,16,${customImageDim.value}), rgba(8,10,16,${Math.min(0.9, customImageDim.value + 0.12)}))`,
+      );
+    } else if (preset && preset.image) {
+      /* 内置插画背景 */
+      root.style.setProperty('--app-bg', `url("${preset.image}")`);
+      root.style.setProperty('--app-bg-size', 'cover');
+      root.style.setProperty('--app-bg-repeat', 'no-repeat');
+      root.style.setProperty('--app-bg-position', 'center center');
+      /* 竖屏图当背景：底部正文区要更暗才好读 */
+      const d = preset.dim ?? 0.4;
+      root.style.setProperty(
+        '--app-bg-overlay',
+        `linear-gradient(rgba(8,10,16,${d}), rgba(8,10,16,${Math.min(0.92, d + 0.14)}))`,
       );
     } else {
       root.style.setProperty('--app-bg', preset?.css || '#0f1115');

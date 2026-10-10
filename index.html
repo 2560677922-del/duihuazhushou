@@ -57,12 +57,20 @@
         align-items: center;
         justify-content: center;
         gap: 22px;
-        background: radial-gradient(
-          900px 620px at 50% 34%,
-          #1e2740 0%,
-          #131824 52%,
-          #0d1018 100%
-        );
+        /*
+         * 启动页用整屏插画 + 一层压暗。
+         * 插画当满屏背景时中间偏亮，直接放文字会看不清，
+         * 所以上面盖一层竖向渐变（顶部略透能看到画，底部压暗放字）。
+         */
+        background:
+          linear-gradient(
+            180deg,
+            rgba(10, 14, 24, 0.25) 0%,
+            rgba(10, 14, 24, 0.55) 45%,
+            rgba(10, 14, 24, 0.88) 100%
+          ),
+          url('/bg/sakura-gwdjdl.jpg') center 22% / cover no-repeat,
+          #0d1018;
         transition: opacity 0.42s ease, visibility 0.42s ease;
       }
       #boot-splash.splash-out {
@@ -177,9 +185,10 @@
   </head>
   <body>
     <div id="boot-splash">
-      <div class="bs-avatar">
-        <img src="/splash-girl.jpg" alt="" />
-      </div>
+      <!--
+        原来这里还有个 bs-avatar 小头像（splash-girl.jpg）。
+        换成整屏插画之后那个小图反而多余且挡画面，去掉了。
+      -->
       <div class="bs-title">冒险模拟器</div>
       <div class="bs-sub">AI 写作 · 冒险平台</div>
       <div class="bs-slow" id="bs-slow">首次加载需要下载资源，请稍候…</div>
