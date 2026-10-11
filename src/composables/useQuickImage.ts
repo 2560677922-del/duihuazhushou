@@ -123,17 +123,27 @@ export function useQuickImage() {
        * 里面塞图片的话，体积随图量一路涨，聊天页越来越慢 ——
        * 这正是"越用越卡"的一半原因。
        */
-      const assetId = await addAsset(result.dataUrl, {
-        prompt: result.prompt,
-        negativePrompt: result.negativePrompt,
-        provider: result.provider,
-        model: result.model,
-        seed: result.seed,
+      /*
+       * 存图片资产库。**失败不能抛** ——
+       * 图已经生成出来了，存不进去也该让用户看到图（退回存 dataUrl 兜底）。
+       * 之前是裸 await，存库一失败整次配图就报错，用户以为生成失败。
+       */
+      let assetId = '';
+      try {
+        assetId = await addAsset(result.dataUrl, {
+          prompt: result.prompt,
+          negativePrompt: result.negativePrompt,
+          provider: result.provider,
+          model: result.model,
+          seed: result.seed,
         description: result.prompt.slice(0, 120),
-        origin: 'auto',
-        scene: 'adventure',
-        entityId: 'manual',
-      });
+          origin: 'auto',
+          scene: 'adventure',
+          entityId: 'manual',
+        });
+      } catch (e) {
+        console.warn('[配图] 存图片库失败，退回内联方式：', e);
+      }
 
       const attachment: ImageAttachment = {
         // 重新生图时复用原 id，updater 就能原地替换而不是多插一张
@@ -143,7 +153,9 @@ export function useQuickImage() {
         description: result.prompt.slice(0, 120),
         prompt: result.prompt,
         // ★ 会话里只存引用，不存图片本体
-        assetId,
+        // 存库失败（assetId 为空）就退回内联 dataUrl，至少这轮能显示
+        assetId: assetId || undefined,
+        dataUrl: assetId ? undefined : stored.displayUrl || result.dataUrl,
         remotePath: stored.remotePath,
         remoteUrl: stored.remoteUrl,
         storage: stored.uploaded ? 'github' : 'browser',

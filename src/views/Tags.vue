@@ -180,19 +180,34 @@ async function doGenerate() {
      *   · 生图工具（本页）→ 图片资产库，origin = tagtool
      *   · 对话/小说配图   → 图片资产库，origin = auto，聊天里只留 assetId 引用
      *   · 会话数据本身    → 不含任何图片本体
+     /*
+     * 存进图片资产库（图片库页能看到、能管理）。
+     *
+     * ★ 这里必须 try/catch：
+     *   存库失败（比如原生文件系统出错）不应该让整次生图"白跑" ——
+     *   图已经生成出来了，用户要的是这张图。存不进去就退回旧路径
+     *   （留在组件内存里，至少这一屏还能看到），并提示一句。
+     *   之前这里是裸 await，一旦抛错整个 catch 会把错误显示成红色，
+     *   用户以为生成失败，实际图就在上面。
      */
-    await addAsset(result.dataUrl, {
-      prompt,
-      negativePrompt: item.negativePrompt,
-      provider: item.provider,
-      model: item.model,
-      seed: item.seed,
-      description: prompt.slice(0, 120),
-      timestamp: item.timestamp,
-      origin: 'tagtool',
-      scene: 'novel',
-      entityId: 'tags',
-    });
+    try {
+      await addAsset(result.dataUrl, {
+        prompt,
+        negativePrompt: item.negativePrompt,
+        provider: item.provider,
+        model: item.model,
+        seed: item.seed,
+        description: prompt.slice(0, 120),
+        timestamp: item.timestamp,
+        origin: 'tagtool',
+        scene: 'novel',
+        entityId: 'tags',
+      });
+    } catch (e) {
+      console.warn('[标签生图] 存图片库失败，图仍保留在本次结果里：', e);
+      genWarn.value = '⚠ 图已生成，但没能存进图片库（本次结果里能看到）';
+      setTimeout(() => (genWarn.value = ''), 5000);
+    }
     if (result.dataUrl && result.dataUrl.startsWith('data:')) {
       // 顺手把图从"只读到就丢"变成可复用的资产
       genSaved.value = true;
@@ -211,6 +226,8 @@ const viewerItem = computed(() =>
   viewerIndex.value === null ? null : genResults.value[viewerIndex.value] ?? null,
 );
 const genSaved = ref(false);
+/** 存库失败的提示（和 genSaved 分开，它是字符串提示不是布尔） */
+const genWarn = ref('');
 
 // ---------------- 生图设置（就地改，写回配置） ----------------
 const showGenSettings = ref(false);
@@ -659,6 +676,8 @@ function clearPicked() {
         </div>
       </div>
       <p v-if="genSaved" class="gen-saved">✓ 已存入「图片库」，可在左侧导航查看</p>
+      <!-- 存库失败的提示：图还在（本次结果里能看到），只是没进图片库。-->
+      <p v-if="genWarn" class="gen-warn">{{ genWarn }}</p>
 
       <!-- 大图查看 -->
       <div v-if="viewerItem" class="gen-viewer" @click.self="viewerIndex = null">
