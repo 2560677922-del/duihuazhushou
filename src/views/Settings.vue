@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed } from 'vue';
+import { onMounted, onUnmounted, ref, computed, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useAssetsStore } from '../stores/assets';
 import { useApiConfigStore } from '../stores/apiConfig';
 import ModelPicker from '../components/ModelPicker.vue';
@@ -75,9 +76,45 @@ async function doCheckUpdate() {
  * 现在：进设置先看到一屏方块（每块一个功能），点进去是那一块的详情页。
  * 这是主流做法（iOS/Android/Notion 设置都一样），分区越多越明显。
  *
- * activeSection 为 null 表示"在索引页"。
+ * ★ 子项状态要和 URL 同步（这是安卓返回手势能正常工作的前提）。
+ *
+ * 之前 activeSection 只是个内存里的 ref，URL 一直是 /#/settings ——
+ * 于是「进子项」在浏览器历史里**不留任何记录**，返回手势直接穿透，
+ * 表现为"在子项里滑两次退出，而不是退回设置首页"。
+ * （对比：冒险页的二级是 /adventure/:id，真路由，所以能正常退回。）
+ *
+ * 改法：进子项时把 sec 写进 query，用 **replace** 而不是 push ——
+ *   · replace 保证一级页面之间不堆栈（和底部标签栏一个道理）
+ *   · query 变了历史里就有一条记录，返回手势自然回到 /#/settings
+ *   · 再滑一次才退出应用 —— 这才是安卓该有的行为
  */
-const activeSection = ref<string | null>(null);
+const route = useRoute();
+const router = useRouter();
+
+function normalizeSec(v: unknown): string | null {
+  const s = typeof v === 'string' ? v : '';
+  return s && cards.some((c) => c.key === s) ? s : null;
+}
+
+const activeSection = ref<string | null>(normalizeSec(route.query.sec));
+
+/** 进入某个子项（URL 同步，replace 不堆栈） */
+function openSection(key: string) {
+  activeSection.value = key;
+  void router.replace({ path: '/settings', query: { sec: key } });
+}
+
+/** 回到设置首页 */
+function closeSection() {
+  activeSection.value = null;
+  void router.replace({ path: '/settings', query: {} });
+}
+
+/* 浏览器/安卓返回手势、浏览器前进后退，都同步回界面状态 */
+watch(
+  () => route.query.sec,
+  (v) => { activeSection.value = normalizeSec(v); },
+);
 
 /** 卡片索引的数据 */
 const cards = [
@@ -819,12 +856,12 @@ function toggleApiKey() {
 <template>
   <div class="settings-page" v-if="loaded">
     <div class="settings-head">
-      <button v-if="activeSection" class="back-btn" @click="activeSection = null" title="返回设置">‹</button>
+      <button v-if="activeSection" class="back-btn" @click="closeSection" title="返回设置">‹</button>
       <h2>{{ activeSection ? titleOf(activeSection) : '⚙️ 设置' }}</h2>
     </div>
 
     <!-- 卡片索引：一屏看全部功能分区 -->
-    <SettingsGrid v-if="!activeSection" :cards="cards" @open="(k) => (activeSection = k)" />
+    <SettingsGrid v-if="!activeSection" :cards="cards" @open="openSection" />
 
     <!-- API 配置 -->
     <section class="section" v-if="activeSection === 'api'">
