@@ -374,17 +374,30 @@ pre {
   /*
    * 吸顶顶栏：粘在安全区**下沿**，而不是视口最顶上（否则被刘海压住）。
    *
+   * ⚠️ 为什么必须 !important（踩过，别删）：
+   *   这些类在各自的 .vue 里是 <style scoped> 写的，编译成
+   *   `.app-bar[data-v-xxx] { top: 0 }`，特异性(0,2,0) 高于这里的
+   *   `.app-bar`(0,1,0) —— 不加 !important 这条规则**完全无效**，
+   *   顶栏照样粘在视口 y=0。
+   *   注意 .main-content 的 padding-top 只解决"初始位置"：
+   *   一旦开始滚动，sticky 就把顶栏拉到视口 y=0 = 状态栏/刘海那一条，
+   *   表现就是"往下翻顶栏往上跑"，全面屏开启"隐藏刘海"（安全区变大）
+   *   之后顶栏整个看不见。手机上系统栏是叠在页面上的（edge-to-edge），
+   *   env(safe-area-inset-top) 就是状态栏那条的高度。
+   *
    * 为什么要那个 ::before：
    *   栏粘在 y = 安全区高度 处，滚动时 y∈[0, 安全区) 那条会露出
    *   下面滚过的内容（很难看）。用伪元素往上把它补满，
    *   背景用 inherit 跟栏一致，看起来就是一条完整的栏。
    */
   .app-bar,
-  .list-header {
-    top: var(--safe-top);
+  .list-header,
+  .adventure-header {
+    top: var(--safe-top) !important;
   }
   .app-bar::before,
-  .list-header::before {
+  .list-header::before,
+  .adventure-header::before {
     content: '';
     position: absolute;
     left: 0;

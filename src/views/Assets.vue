@@ -810,6 +810,24 @@ async function onCharFieldChange(c: any, f: any) {
   position: sticky;
   top: 0;
   z-index: 20;
+  /*
+   * ⚠ 这条 top 必须压过全局的 `top: var(--safe-top) !important`。
+   *
+   * 起因（实测数据，别删这段说明）：
+   *   全局 main.css（手机端）做了两件互相叠加的事：
+   *     ① .main-content { padding-top: var(--safe-top) }  → 内容整体下移 24px
+   *     ② .app-bar { top: var(--safe-top) !important }    → 吸顶位置再下移 24px
+   *   于是应用栏在 y=48，而紧跟其后的分类标签栏还在文档流 y=87 ——
+   *   两者重叠 24px，分类栏被压掉一半（用户反馈"顶部 ui 把选项给遮挡了"）。
+   *
+   *   把 top 归零后：应用栏回到 y=24（= .main-content 的内边距下沿，正是
+   *   安全区之后），分类栏紧随其后 y=87 —— 实测 gap 从 -24 变成 0，严丝合缝。
+   *   滚动时的吸顶位置也一起对齐了，不会再出现"翻两下就叠上去"。
+   *
+   * 为什么在这里而不是改全局：别的页面顶栏是普通流内元素，没这个双重计算，
+   * 全局那条 top 对它们是对的。只修这一页。
+   */
+  top: 0 !important;
   display: flex;
   align-items: center;
   justify-content: space-between;

@@ -379,6 +379,31 @@ export const useImageStore = defineStore('image', () => {
   /** 图生图重绘强度 */
   const quickReferenceStrength = ref(0.6);
 
+  /**
+   * 生图弹窗的「取材范围」—— 取最近几条消息。
+   *
+   * 为什么要单独存：这是**用户习惯**，不是单次输入。
+   * 以前它是弹窗里的局部 ref（`ref(props.defaultWindow ?? 5)`），
+   * 关掉弹窗就丢了，下次又回到默认值 —— 用户反馈
+   * "那个带多少上文也是要有保存功能的"。
+   *
+   * 存在 store 层（跟着 save() 一起落盘），不塞进任何单个配置：
+   * 换个画风不该把"我习惯取几条"也换掉。
+   */
+  const quickContextWindow = ref(5);
+
+  /**
+   * 取材时是否**只取 AI 消息**。
+   *
+   * 用户的诉求："点一下倒数第二条消息，他只会携带 ai 消息的
+   * 倒数第二条 + 之前的 ai 消息" —— 按 AI 回合数取材，
+   * 而不是把用户那句"我向前走一步"也算一条。
+   *
+   * 默认 true：配图要的是**画面**，AI 的叙述才是画面来源；
+   * 用户发言多是动作指令（"我打开门"），对画面帮助小，还会稀释注意力。
+   */
+  const quickAiOnly = ref(true);
+
   const currentApi = computed(() =>
     apiConfigs.value.find((c) => c._uid === currentApiId.value),
   );
@@ -455,6 +480,8 @@ export const useImageStore = defineStore('image', () => {
       storedAuto,
       quickRef,
       quickStrength,
+      storedContextWindow,
+      storedAiOnly,
     ] = await Promise.all([
       store.getItem<Partial<ImageApiEntry>[]>('imageApiConfigs'),
       store.getItem<Partial<ImageStyleEntry>[]>('imageStyleConfigs'),
@@ -468,6 +495,8 @@ export const useImageStore = defineStore('image', () => {
       store.getItem<Partial<AutoImageSettings>>('autoImageSettings'),
       store.getItem<string>('quickReferenceImage'),
       store.getItem<number>('quickReferenceStrength'),
+      store.getItem<number>('quickContextWindow'),
+      store.getItem<boolean>('quickAiOnly'),
     ]);
 
     let apis = (storedApis ?? []).map(migrateApi);
@@ -506,6 +535,12 @@ export const useImageStore = defineStore('image', () => {
     autoImage.value = { ...DEFAULT_AUTO_IMAGE, ...(storedAuto ?? {}) };
     quickReferenceImage.value = quickRef ?? '';
     quickReferenceStrength.value = quickStrength ?? 0.6;
+    // 取材范围：没存过就用默认（5 条 / 只取 AI 消息）
+    quickContextWindow.value =
+      typeof storedContextWindow === 'number' && storedContextWindow > 0
+        ? Math.max(1, Math.min(20, storedContextWindow))
+        : 5;
+    quickAiOnly.value = storedAiOnly !== false;
 
     // 一份都没有就建一套默认的，保证界面和生图都能用
     let needSave = false;
@@ -543,7 +578,18 @@ export const useImageStore = defineStore('image', () => {
       store.setItem('autoImageSettings', autoImage.value),
       store.setItem('quickReferenceImage', quickReferenceImage.value),
       store.setItem('quickReferenceStrength', quickReferenceStrength.value),
+      store.setItem('quickContextWindow', quickContextWindow.value),
+      store.setItem('quickAiOnly', quickAiOnly.value),
     ]);
+  }
+
+  /** 改「取材范围」，立刻落盘（用户明确要求要能记住） */
+  async function updateQuickContext(windowSize?: number, aiOnly?: boolean) {
+    if (typeof windowSize === 'number' && Number.isFinite(windowSize)) {
+      quickContextWindow.value = Math.max(1, Math.min(20, Math.round(windowSize)));
+    }
+    if (typeof aiOnly === 'boolean') quickAiOnly.value = aiOnly;
+    await save();
   }
 
   async function updateAutoImage(patch: Partial<AutoImageSettings>) {
@@ -720,6 +766,9 @@ export const useImageStore = defineStore('image', () => {
     autoImage,
     quickReferenceImage,
     quickReferenceStrength,
+    quickContextWindow,
+    quickAiOnly,
+    updateQuickContext,
     currentConfig,
     imagesForEntity,
     load,

@@ -30,8 +30,30 @@ const DEFAULT_GITHUB: Omit<GithubEntry, '_uid' | 'name'> = {
   commitPrefix: 'chore(images):',
 };
 
-export const useStorageSettingsStore = defineStore('storageSettings', () => {
-  const backend = ref<ImageStorageBackend>('browser');
+/**
+ * 老分类 id 的迁移。
+ *
+ * 「发色发型与瞳色」原来是一个分类（id = hair_eyes），现在拆成了
+ * 发型 / 发色 / 瞳色 / 眼睛特征 四个。用户本地存的勾选里如果还留着
+ * hair_eyes，新分类一个都不会被选中 —— 表现为"更新完标签参考突然空了"。
+ * 所以在这里把它展开成四个新 id。
+ */
+const CATEGORY_SPLITS: Record<string, string[]> = {
+  hair_eyes: ['hair_style', 'hair_color', 'eye_color', 'eye_feature'],
+};
+
+function migrateTagCategories(list: string[]): string[] {
+  const valid = new Set(TAG_CATEGORIES.map((c) => c.id));
+  const out = new Set<string>();
+  for (const id of list) {
+    const split = CATEGORY_SPLITS[id];
+    if (split) for (const s of split) out.add(s);
+    else if (valid.has(id)) out.add(id);
+  }
+  return [...out];
+}
+
+export const useStorageSettingsStore = defineStore('storageSettings', () => {  const backend = ref<ImageStorageBackend>('browser');
   const githubConfigs = ref<GithubEntry[]>([]);
   const currentGithubId = ref<string | undefined>(undefined);
   /** 是否再保留一份 dataURL 到本地（离线也能看） */
@@ -52,6 +74,18 @@ export const useStorageSettingsStore = defineStore('storageSettings', () => {
   const importedTagLib = ref<ImportedTagLibrary | null>(null);
   /** 用户在标签库里手挑的标签，会一起附加到参考块 */
   const pickedTags = ref<string[]>([]);
+
+  /**
+   * 用户**自己写**的标签（生图时一起带给模型）。
+   *
+   * 为什么要和 pickedTags 分开：
+   *   pickedTags 是"从标签库里点出来的"，有中英对照、可以清空重选；
+   *   这个是"我自己敲的" —— 比如 `my own character, scar on left eye`，
+   *   标签库里根本没有，但它是我这套设定的一部分，每次出图都该带上。
+   *
+   *   混在一起会互相干扰：清空"已选标签"时不该把我手写的也清掉。
+   */
+  const customTags = ref<string[]>([]);
 
   // ---- 思维链处理 ----
   /**
@@ -97,12 +131,44 @@ export const useStorageSettingsStore = defineStore('storageSettings', () => {
 
   /** 手挑标签组成的参考片断 */
   function pickedTagReferenceText(): string {
-    if (pickedTags.value.length === 0) return '';
-    return (
-      '【我挑好的标签】' +
-      pickedTags.value.join(', ') +
-      '\n\n写提示词时请优先从上面这些标签里选，保持写法完全一致。'
-    );
+    const parts: string[] = [];
+    if (pickedTags.value.length) {
+      parts.push('【我挑好的标签】' + pickedTags.value.join(', '));
+    }
+    /*
+     * 自定义标签也一起给模型。
+     *
+     * 单独写一段而不是并到上面：措辞不同 ——
+     * 手挑的是"从这些里选"，手写的是"这些必须带上"
+     * （比如角色设定里的疤痕、专属配色，漏了就不是这个角色了）。
+     */
+    if (customTags.value.length) {
+      parts.push('【必须带上的自定义标签】' + customTags.value.join(', '));
+    }
+    if (!parts.length) return '';
+    return parts.join('\n\n') + '\n\n写提示词时请优先从上面这些标签里选，保持写法完全一致。';
+  }
+
+  /** 增删自定义标签（去重、去空白） */
+  async function addCustomTag(tag: string) {
+    const t = String(tag || '').trim();
+    if (!t) return;
+    // 支持一次贴一串（逗号分隔）
+    const incoming = t
+      .split(',')
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const next = [...customTags.value];
+    for (const x of incoming) {
+      if (!next.some((y) => y.toLowerCase() === x.toLowerCase())) next.push(x);
+    }
+    customTags.value = next;
+    await save();
+  }
+
+  async function removeCustomTag(tag: string) {
+    customTags.value = customTags.value.filter((x) => x !== tag);
+    await save();
   }
 
   const currentGithub = () => githubConfigs.value.find((c) => c._uid === currentGithubId.value);
@@ -117,7 +183,7 @@ export const useStorageSettingsStore = defineStore('storageSettings', () => {
   }
 
   async function load() {
-    const [b, cfgs, cur, fallback, tagOn, tagCats, tagPer, tagLib, picked, hideRea, cutMark, lcRaw, expRaw] =
+    const [b, cfgs, cur, fallback, tagOn, tagCats, tagPer, tagLib, picked, hideRea, cutMark, lcRaw, expRaw, customs] =
       await Promise.all([
         store.getItem<ImageStorageBackend>('imageStorageBackend'),
         store.getItem<GithubEntry[]>('githubStorageConfigs'),
@@ -132,8 +198,10 @@ export const useStorageSettingsStore = defineStore('storageSettings', () => {
         store.getItem<string>('reasoningCutMarker'),
         store.getItem<boolean>('llmContextRaw'),
         store.getItem<boolean>('exportRaw'),
+        store.getItem<string[]>('customTags'),
       ]);
     pickedTags.value = picked ?? [];
+    customTags.value = customs ?? [];
     hideReasoning.value = hideRea ?? true;
     reasoningCutMarker.value = cutMark ?? '';
     llmContextRaw.value = lcRaw ?? false;
@@ -144,10 +212,11 @@ export const useStorageSettingsStore = defineStore('storageSettings', () => {
     keepLocalCopy.value = true;
     fallbackToLocal.value = fallback ?? true;
     tagReferenceEnabled.value = tagOn ?? true;
-    tagCategories.value =
+    tagCategories.value = migrateTagCategories(
       tagCats && tagCats.length
         ? tagCats
-        : TAG_CATEGORIES.filter((c) => c.defaultOn).map((c) => c.id);
+        : TAG_CATEGORIES.filter((c) => c.defaultOn).map((c) => c.id),
+    );
     tagPerCategory.value = tagPer ?? 24;
     importedTagLib.value = tagLib ?? null;
 
@@ -179,6 +248,7 @@ export const useStorageSettingsStore = defineStore('storageSettings', () => {
       store.setItem('tagPerCategory', tagPerCategory.value),
       store.setItem('importedTagLibrary', importedTagLib.value),
       store.setItem('pickedTags', pickedTags.value),
+      store.setItem('customTags', customTags.value),
     store.setItem('hideReasoning', hideReasoning.value),
     store.setItem('reasoningCutMarker', reasoningCutMarker.value),
     store.setItem('llmContextRaw', llmContextRaw.value),
@@ -243,6 +313,9 @@ export const useStorageSettingsStore = defineStore('storageSettings', () => {
     tagPerCategory,
     importedTagLib,
     pickedTags,
+    customTags,
+    addCustomTag,
+    removeCustomTag,
     hideReasoning,
     reasoningCutMarker,
     llmContextRaw,

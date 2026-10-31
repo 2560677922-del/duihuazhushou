@@ -9,7 +9,7 @@ const router = useRouter();
  * 切一级页面：**替换**当前历史条目，不新增。
  *
  * 配合安卓返回手势的效果（和原生 App 一致）：
- *   · 在二级页（聊天/小说编辑）→ 返回 = 回它所属的一级页
+ *   · 在二级页（聊天）→ 返回 = 回它所属的一级页
  *   · 在一级页（列表）        → 返回 = 退出应用
  * 如果一级页面之间用 push 互相堆栈，返回键就永远在几个 tab 之间打转，
  * 用户按到没反应为止 —— 这是"退不出去"的根因。
@@ -19,18 +19,17 @@ function goTab(path: string) {
   void router.replace(path);
 }
 /**
- * 底部标签栏顺序（按用户要求定的）：
- *   冒险 → 小说 → 资产 → 设置 → 生图
+ * 底部标签栏顺序：
+ *   冒险 → 资产 → 设置 → 生图
  *
  * 说明：
  *  - 「图片库」不单独占一格：它是"看结果"的地方，放进设置里当子页，
- *    标签栏只留每天都要用的入口。手机上 5 格是拇指友好上限
- *    （7 格会挤到 55px 以下、文字显示不全）。
+ *    标签栏只留每天都要用的入口。
+ *  - 「小说」已按需求整体移除（只做冒险主线），所以现在是 4 格。
  *  - 设置那一格的命名见下面 navItems 里的注释。
  */
 const navItems = [
   { path: '/adventure', name: 'adventure', label: '冒险', icon: '🎭' },
-  { path: '/novel', name: 'novel', label: '小说', icon: '📝' },
   { path: '/assets', name: 'assets', label: '资产', icon: '📦' },
   /*
    * 标签叫「设置」而不是「API」。
@@ -48,28 +47,27 @@ const navItems = [
 /**
  * 当前激活哪个 tab。
  *
- * 二级页面（/adventure/xxx、/novel/xxx）也要让对应的一级 tab 保持高亮 ——
+ * 二级页面（/adventure/xxx）也要让对应的一级 tab 保持高亮 ——
  * 用户在对话界面时，底部"冒险"应该是选中态，否则会以为跳出去了。
  */
 const activeName = computed(() => {
   const n = String(route.name || '');
   if (n.startsWith('adventure')) return 'adventure';
-  if (n.startsWith('novel')) return 'novel';
   if (n === 'gallery') return 'assets';
   return n;
 });
 
 /**
- * 是否在"已经进到具体内容里"的界面（冒险对话 / 小说编辑器）。
+ * 是否在"已经进到具体内容里"的界面（冒险对话）。
  *
  * 这些界面要**收起底部标签栏**：
- *  1. 那五个大按钮是"选大类"用的，人已经进到会话里了，不需要它们；
+ *  1. 那几个大按钮是"选大类"用的，人已经进到会话里了，不需要它们；
  *  2. 手机上标签栏占 63px，正好是对话窗口最缺的高度。
  * 返回上一级靠页面自己的返回键。
  */
 const isChatView = computed(() => {
   const n = String(route.name || '');
-  return n === 'adventure-detail' || n === 'novel-detail';
+  return n === 'adventure-detail';
 });
 </script>
 
@@ -85,7 +83,7 @@ const isChatView = computed(() => {
         <!--
           切一级页面用 **replace** 而不是 push。
           为什么：RouterLink 默认 push，会在浏览器历史里一层层堆 ——
-          "小说 → 冒险"，按返回键又回到「小说」，用户以为退不出去。
+          "资产 → 冒险"，按返回键又回到「资产」，用户以为退不出去。
           改成 replace 之后，几个一级页面在历史里**互相替换**，
           返回手势/返回键只会有两种结果：回到上一个二级页面（如果在），
           或者直接退出应用（在一级页面时）—— 这才是安卓的预期行为。
@@ -318,7 +316,7 @@ const isChatView = computed(() => {
     font-size: 9.5px;
     line-height: 1.2;
     white-space: nowrap;
-    /* 名字长的（比如"小说编辑器"）宁可省略，也不许把标签栏撑宽 */
+    /* 名字长的宁可省略，也不许把标签栏撑宽 */
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -205,6 +205,16 @@ function groupOnCount(g: any): number {
         <span class="hint-sm">（勾选要锚定的外观）</span>
       </label>
       <div class="asset-checkboxes">
+        <!--
+          ★ 去掉了原来那个五角星按钮。
+          用户的反馈："我都有点看不懂哪个是开启了，已经有勾选了，
+          就不要搞那个五角星了。"
+          原因：勾选框和星号挨在一起，看起来像"两个开关"，分不清哪个是启用。
+          星号其实是另一个语义（常驻 = 自动配图也带上），但它太像状态标记了。
+
+          现在：**启用只看勾选框**；常驻状态用尾巴上一行小字表达，
+          切换入口放在勾选框右侧一个明确的文字按钮上（不抢状态视觉）。
+        -->
         <label v-for="d in dna.items" :key="d._uid" class="checkbox-row">
           <input
             type="checkbox"
@@ -212,12 +222,12 @@ function groupOnCount(g: any): number {
             @change="(e) => dna.toggleSelected(d._uid, (e.target as HTMLInputElement).checked)"
           />
           <span class="truncate" :title="d.dna || '(未填写描述)'">{{ d.name }}</span>
+          <span v-if="dna.pinnedId === d._uid" class="pin-tag">常驻</span>
           <button
-            class="pin-btn"
-            :class="{ on: dna.pinnedId === d._uid }"
-            :title="dna.pinnedId === d._uid ? '取消常驻（自动配图也会带上）' : '设为常驻：自动配图也会带上这条'"
+            class="pin-text"
+            :title="dna.pinnedId === d._uid ? '取消常驻（自动配图也会带上这条）' : '设为常驻：自动配图也会带上这条'"
             @click.prevent="dna.setPinned(dna.pinnedId === d._uid ? undefined : d._uid)"
-          >★</button>
+          >{{ dna.pinnedId === d._uid ? '取消常驻' : '设为常驻' }}</button>
         </label>
       </div>
     </div>
@@ -277,25 +287,33 @@ function groupOnCount(g: any): number {
   text-transform: none;
   letter-spacing: 0;
 }
-/* 常驻开关：小星号，点一下切换 */
-.pin-btn {
-  border: none;
-  background: none;
-  padding: 0 2px;
-  font-size: 12px;
-  line-height: 1;
+/* 常驻：用文字按钮 + 标签，不再用星号（星号会被误读成"启用状态"） */
+.pin-text {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 9.5px;
+  line-height: 1.5;
   color: var(--text-dim);
-  opacity: 0.45;
   cursor: pointer;
   flex-shrink: 0;
+  white-space: nowrap;
 }
-.pin-btn:hover {
-  opacity: 1;
+.pin-text:hover {
   color: var(--accent);
+  border-color: var(--accent);
 }
-.pin-btn.on {
-  opacity: 1;
+/* 已常驻的标记：一眼能看出"这条会跟着自动配图走" */
+.pin-tag {
+  font-size: 9.5px;
+  line-height: 1.5;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
   color: var(--warn);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .asset-select {
   font-size: 12px;

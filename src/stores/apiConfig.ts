@@ -61,13 +61,20 @@ export interface ApiConfigState {
  *
  * 历史预算同样放宽到 20 万：写作场景对话很长，2000 太小会频繁丢历史。
  * 单次生成长度 2000：小说正文一次输出的合理量。
+ *
+ * ★ baseUrl / model 留空，**不预填任何厂商的地址或模型名**。
+ *   用户明确要求："运营商不要硬编码地址，我自己会加"。
+ *   以前默认填 https://api.openai.com/v1 + gpt-4o-mini，后果有两个：
+ *     1. 新建一家时它自带一个 openai 地址，用户得先删掉再填自己的；
+ *     2. 忘了改的话请求会真的发到 openai 去（报 401，很难看出是"没填地址"）。
+ *   现在空着，界面上会明确提示"请先填写请求地址"。
  */
 const DEFAULT_CONFIG: StoredApiConfig = {
   _uid: '',
   _name: '默认配置',
-  baseUrl: 'https://api.openai.com/v1',
+  baseUrl: '',
   apiKey: '',
-  model: 'gpt-4o-mini',
+  model: '',
   temperature: 0.8,
   maxTokens: 2000,
   contextWindow: 1000000,
@@ -303,6 +310,75 @@ export const useApiConfigStore = defineStore('apiConfig', {
         this.currentConfigId = this.configs[0]?._uid;
       }
       await this.save();
+    },
+
+    /**
+     * 在某个运营商下面**一次加多个**模型（从"拉取模型列表"里多选后调用）。
+     *
+     * 为什么需要它：拉取一次动辄返回上百个模型，用户想挑五六个常用的。
+     * 以前只能一个一个点（点一个就切换当前模型、面板还关掉），
+     * 挑 6 个要重复 6 遍"拉取 → 找到它 → 点一下"。
+     *
+     * 规则：
+     *   · 已经在这一家里的模型**跳过**（不重复添加，避免出现两条一样的）
+     *   · 新记录共用同一个 providerId（= 和"在这家下面加模型"一样，
+     *     baseUrl / apiKey 自动继承，改一次全改）
+     *   · 当前选中的模型不变（除非它不在这一家里了）；一个都没选中过时
+     *     才把当前切到第一个新加的
+     *
+     * @returns added 新加了几条，skipped 因为已存在而跳过几条
+     */
+    async addModelsToProvider(
+      uid: string,
+      models: string[],
+    ): Promise<{ added: number; skipped: number }> {
+      const anchor = this.configs.find((c) => c._uid === uid);
+      if (!anchor) return { added: 0, skipped: 0 };
+
+      const key = providerKeyOf(anchor);
+      const existing = this.configs.filter((c) => providerKeyOf(c) === key);
+      const have = new Set(existing.map((c) => (c.model || '').trim()).filter(Boolean));
+      const seed = existing[0] ?? anchor;
+
+      let added = 0;
+      let skipped = 0;
+      let firstNew: StoredApiConfig | undefined;
+
+      for (const raw of models) {
+        const model = (raw || '').trim();
+        if (!model) continue;
+        if (have.has(model)) {
+          skipped++;
+          continue;
+        }
+        have.add(model);
+        const cfg: StoredApiConfig = {
+          ...DEFAULT_CONFIG,
+          baseUrl: seed.baseUrl,
+          apiKey: seed.apiKey,
+          temperature: seed.temperature,
+          maxTokens: seed.maxTokens,
+          providerId: key,
+          // contextWindow / userLookbackTokens 故意不继承 —— 跟"模型本身"绑定
+          _uid: genId('api'),
+          _name: model,
+          model,
+        };
+        this.configs.push(cfg);
+        firstNew = firstNew ?? cfg;
+        added++;
+      }
+
+      if (added > 0) {
+        // 当前选中那条如果已经不在这一家里（比如从"新运营商"进来），
+        // 就切到第一个新加的，用户马上能用
+        const curOk = this.configs.some(
+          (c) => c._uid === this.currentConfigId && providerKeyOf(c) === key,
+        );
+        if (!curOk && firstNew) this.currentConfigId = firstNew._uid;
+        await this.save();
+      }
+      return { added, skipped };
     },
 
     /**

@@ -21,6 +21,7 @@ import ImageQuickBar from '../components/ImageQuickBar.vue';
 import ImageGenModal from '../components/ImageGenModal.vue';
 import { useImageStore } from '../stores/image';
 import { useAutoImage } from '../composables/useAutoImage';
+import { useChatGeneration } from '../composables/useChatGeneration';
 import {
   imageMarkerInstruction,
   pushImageVersion,
@@ -45,13 +46,10 @@ const { pending: autoImgPending, status: autoImgStatus, error: autoImgError } = 
 const showImageGen = ref(false);
 const generatedImages = ref<string[]>([]);
 
-/**
- * 生成中显示用的用户指令。
- *
- * 原先模板里用的是 userInput，但 userInput 在发出去时就清空了，
- * 所以流式输出期间上方显示的"你"是空的。用一个独立变量记住这次发了什么。
- */
-const streamUser = ref('');
+// 生成中显示用的用户指令（streamUser）现在来自 useChatGeneration 的全局状态 ——
+// 理由和 streaming 一样：退出页面再回来，它得还在。
+// 原先模板里用的是 userInput，但 userInput 发出去时就清空了，
+// 所以流式期间上方显示的"你"是空的，才单独留了这个变量。
 
 /**
  * 显示时的正则处理。
@@ -158,6 +156,8 @@ async function regenImageInPlace(actionId: string, att?: ImageAttachment) {
    */
   const merged = pushImageVersion(att, {
     id: `${att.id}-v${Date.now()}`,
+    // ★ 新图在资产库里的 id 必须带上，否则切回这一版取不到图
+    assetId: fresh.assetId,
     dataUrl: fresh.dataUrl,
     remotePath: fresh.remotePath,
     remoteUrl: fresh.remoteUrl,
@@ -323,8 +323,80 @@ async function resumeDraft() {
 }
 
 const userInput = ref('');
-const streaming = ref(false);
-const streamOutput = ref('');
+/*
+ * 生成状态**放在模块级**（见 composables/useChatGeneration.ts）。
+ *
+ * 这里故意重命名成 streaming / streamOutput / streamUser 三个局部名字：
+ * 模板和下面所有逻辑都照旧用它们，改动只集中在这一行。
+ * 但底层是全局单例 —— 所以「退出聊天页再回来」时状态还在，
+ * 看起来就是"生成没断"，而不是一片空白。
+ */
+const {
+  streaming,
+  output: streamOutput,
+  userText: streamUser,
+  sessionId: generationSessionId,
+  startedAt: genStartedAt,
+  stopped: genStopped,
+  begin: beginGeneration,
+  stop: stopGeneration,
+  finish: finishGeneration,
+} = useChatGeneration();
+/** 这次生成是不是"从别的页面切回来才看到的"（用来多给一句提示） */
+const resumedWhileStreaming = ref(false);
+/** 「已经等了多久」，每秒刷新一次，只在这个会话正在生成时有意义 */
+const genElapsed = ref(0);
+let genClock: ReturnType<typeof setInterval> | null = null;
+watch(
+  [streaming, genStartedAt],
+  ([on, t]) => {
+    if (genClock) {
+      clearInterval(genClock);
+      genClock = null;
+    }
+    if (!on || !t) {
+      genElapsed.value = 0;
+      return;
+    }
+    const tick = () => (genElapsed.value = Math.round((Date.now() - t) / 1000));
+    tick();
+    genClock = setInterval(tick, 1000);
+  },
+  { immediate: true },
+);
+onUnmounted(() => {
+  if (genClock) clearInterval(genClock);
+});
+/** 当前会话正在生成（别的会话在跑时不显示） */
+const generatingHere = computed(
+  () => streaming.value && generationSessionId.value === adventure.currentSessionId,
+);
+
+/**
+ * 正在被「原地替换」的那条消息 id。
+ *
+ * 为什么需要它：
+ *   重新生成以前是"原消息原地不动 + 底下又流出来一块一模一样的"，
+ *   连用户文字都重复一遍 —— 看起来就像出了 bug（用户原话：
+ *   "总以为是出bug在底下又来一套一摸一样的"）。
+ *
+ *   正确做法是**在原来的位置替换**：旧内容先让位，新内容直接长在那儿。
+ *   因为 regenerateWith 已经把这一步之后的消息都截掉了，
+ *   被替换的那条永远是最后一条，所以"位置"天然就对得上。
+ *
+ * 只有这一条本来就有 AI 正文才谈得上替换；
+ * 如果 ai 是空的（比如回复被删了），替换下来没有落脚点，
+ * 就退回下面那块常规流式区域 —— 否则新内容会整个看不见。
+ */
+const inPlaceRegenId = computed<string | null>(() => {
+  const id = regenerateTargetId.value;
+  if (!id) return null;
+  const a = currentSession.value?.actions.find((x) => x.id === id);
+  return a?.ai ? id : null;
+});
+/** 这一条是不是正在被原地重新生成 */
+const isRegenerating = (id: string) => inPlaceRegenId.value === id;
+
 const errorMessage = ref('');
 const showAssetPanel = ref(true);
 /** 手机上头部「⋯」展开状态（桌面端按钮本来就都显示，不影响） */
@@ -450,6 +522,18 @@ onMounted(async () => {
    * 抽屉是开着的、还盖着一层遮罩 —— 正文根本看不见。
    */
   if (isMobile()) closeAllPanels();
+
+  /*
+   * 「我离开的时候有个请求还在跑」—— 回来要明确告诉用户。
+   *
+   * 生成状态是模块级的（见 useChatGeneration），所以切走再回来它还在。
+   * 但如果什么都不提示，用户看到的是"正文自己在长"，会以为是错乱。
+   * 这里在**当前会话正好是那个在生成的会话**时给一句提示，
+   * 并顺手把已经流出来的内容显示出来（模板里的流式块会接上）。
+   */
+  if (streaming.value && generationSessionId.value === adventure.currentSessionId) {
+    resumedWhileStreaming.value = true;
+  }
 });
 
 async function loadSampleAssets() {
@@ -465,6 +549,32 @@ async function loadSampleAssets() {
 }
 
 const currentSession = computed(() => adventure.currentSession);
+
+/**
+ * 生图弹窗要用的「上下文消息」——**按真实角色**展开。
+ *
+ * 以前是这么拼的：
+ *   actions.map(a => ({ role: 'user', content: a.user }))
+ *     .concat([{ role: 'assistant', content: 最后一条的 ai }])
+ * 也就是所有轮次的 AI 正文都被贴上了 user 标签，只在末尾补了一条 assistant。
+ * 后果（用户反馈"写着 5 条，预览只看到一条"）：
+ *   弹窗里按"只取 AI 消息"筛选时只能命中末尾那一条，
+ *   前面几十轮的 AI 叙述全被当成用户发言，筛不出来。
+ *
+ * 现在逐轮展开成 user / assistant 两条，角色真实对应。
+ * 语义上 openAiMessages 已经是这个形状了，直接复用它的内容，
+ * 但只保留 user/assistant（系统提示、场景描述不属于"过往消息"）。
+ */
+const imageContextMessages = computed<{ role: string; content: string }[]>(() => {
+  const session = currentSession.value;
+  if (!session) return [];
+  const out: { role: string; content: string }[] = [];
+  for (const a of session.actions) {
+    if (a.user?.trim()) out.push({ role: 'user', content: a.user });
+    if (a.ai?.trim()) out.push({ role: 'assistant', content: a.ai });
+  }
+  return out;
+});
 
 /**
  * 送给大模型的历史。
@@ -489,21 +599,83 @@ const history = computed<ChatMessage[]>(() => {
 });
 
 async function sendAction() {
-  if (!userInput.value.trim()) return;
-  if (!currentSession.value) return;
+  /*
+   * 早退也必须清掉「正在替换哪一条」。
+   *
+   * regenerateWith 是**先设好 target 再调这里**的；如果这里直接 return
+   * （输入为空、没有会话），下面的 finally 不会执行 ——
+   * 那条消息就会一直被当成"正在重新生成"而隐藏起来，再也回不来。
+   */
+  if (!userInput.value.trim() || !currentSession.value) {
+    regenerateTargetId.value = null;
+    return;
+  }
 
-  streaming.value = true;
-  streamOutput.value = '';
   errorMessage.value = '';
+  resumedWhileStreaming.value = false;
 
   const action = userInput.value;
   // 记住这次发的是什么，流式输出期间界面上要显示
-  streamUser.value = action;
+  // （userInput 下面会被清空，所以必须用独立的变量记）
   userInput.value = '';
+
+  /*
+   * 开始一次生成：拿一个 AbortSignal，「停止」按钮就靠它。
+   * 状态存在模块级，所以中途切页面回来，signal 和状态都还在。
+   */
+  const signal = beginGeneration(currentSession.value.id, action);
 
   // 重新生成：历史里要排除掉将被替换的那一条，否则模型会看到
   // "自己的旧答案" 然后倾向重复它
   const replaceId = regenerateTargetId.value;
+
+  /*
+   * 把这一轮的流式结果落进会话。
+   *
+   * 抽成函数是因为**正常完成和用户按「停止」都要走它**：
+   * 停止时已经流出来的正文不该白丢，得照样存成一条 AI 回复。
+   *
+   * 定义在 try 外面 —— catch 里处理"被停止"时也要调用它，
+   * 写在 try 里面 catch 就看不见了（作用域）。
+   */
+  const commitStreamResult = async (raw: string) => {
+    flushDraftSave(action, raw);
+    if (!raw.trim()) {
+      await adventure.clearDraft();
+      return;
+    }
+
+    let act;
+    if (replaceId) {
+      // 重新生成：覆盖原来那一条，不留草稿
+      await adventure.replaceActionAi(replaceId, raw);
+      await adventure.clearDraft();
+      const s = currentSession.value;
+      act = s?.actions.find((a) => a.id === replaceId);
+      // 覆盖时旧配图已经不匹配新正文了，清掉重新配
+      if (act?.images?.length) {
+        for (const im of [...act.images]) {
+          await adventure.removeActionImage(act.id, im.id);
+        }
+      }
+    } else {
+      act = await adventure.commitDraft(raw);
+    }
+
+    // 消息已经落库，立刻清掉流式文本，避免它和正式消息同帧渲染（看起来像重复）
+    streamOutput.value = '';
+
+    void maybeAutoSummary(currentSession.value?.id ?? '');
+
+    if (act && imageStore.autoImage.enabled) {
+      await autoImage.processMarkers(
+        raw,
+        (att) => adventure.upsertActionImage(act!.id, att),
+        '冒险场景',
+      );
+    }
+  };
+
   const baseHistory = replaceId
     ? (() => {
         const s = currentSession.value;
@@ -592,53 +764,44 @@ async function sendAction() {
           scheduleDraftSave(action, streamOutput.value);
         },
         onDone: async () => {
-          flushDraftSave(action, streamOutput.value);
-          const raw = streamOutput.value;
-          if (!raw.trim()) {
-            await adventure.clearDraft();
-            return;
-          }
-
-          let act;
-          if (replaceId) {
-            // 重新生成：覆盖原来那一条，不留草稿
-            await adventure.replaceActionAi(replaceId, raw);
-            await adventure.clearDraft();
-            const s = currentSession.value;
-            act = s?.actions.find((a) => a.id === replaceId);
-            // 覆盖时旧配图已经不匹配新正文了，清掉重新配
-            if (act?.images?.length) {
-              for (const im of [...act.images]) {
-                await adventure.removeActionImage(act.id, im.id);
-              }
-            }
-          } else {
-            act = await adventure.commitDraft(raw);
-          }
-
-          // 消息已经落库，立刻清掉流式文本，避免它和正式消息同帧渲染（看起来像重复）
-          streamOutput.value = '';
-
-          void maybeAutoSummary(currentSession.value?.id ?? '');
-
-          if (act && imageStore.autoImage.enabled) {
-            await autoImage.processMarkers(
-              raw,
-              (att) => adventure.upsertActionImage(act!.id, att),
-              '冒险场景',
-            );
-          }
+          await commitStreamResult(streamOutput.value);
         },
       },
+      signal,
     );
   } catch (e) {
-    errorMessage.value = e instanceof Error ? e.message : String(e);
-    // 出错时保留草稿，用户回来后还能看到已经生成的部分
-    flushDraftSave(action, streamOutput.value);
+    /*
+     * 被「停止」掐断的不算错误。
+     *
+     * fetch 被 abort 会抛 AbortError，如果照旧显示成红色报错，
+     * 用户会以为"程序坏了"，其实是他自己点的停止。
+     */
+    const aborted =
+      genStopped.value ||
+      (e instanceof DOMException && e.name === 'AbortError') ||
+      (e instanceof Error && e.name === 'AbortError');
+
+    if (aborted) {
+      const raw = streamOutput.value;
+      if (!raw.trim()) {
+        /*
+         * 一个字都还没出来 —— 基本就是"发出去才发现打错字了"。
+         * 这种直接把这一轮丢掉，并把内容**还回输入框**，
+         * 用户改一下就能重发，不用先去删两条消息。
+         */
+        await adventure.clearDraft();
+        userInput.value = action;
+      } else {
+        // 已经生成了一部分：留着，别白等
+        await commitStreamResult(raw);
+      }
+    } else {
+      errorMessage.value = e instanceof Error ? e.message : String(e);
+      // 出错时保留草稿，用户回来后还能看到已经生成的部分
+      flushDraftSave(action, streamOutput.value);
+    }
   } finally {
-    streaming.value = false;
     regenerateTargetId.value = null;
-    streamUser.value = '';
     /*
      * 必须清掉流式文本。
      *
@@ -648,7 +811,7 @@ async function sendAction() {
      * onDone 已被 await（见 apiClient 的 finish），所以此处清理是在
      * 提交完成之后，不会把还没读到的内容抹掉。
      */
-    streamOutput.value = '';
+    finishGeneration();
   }
 }
 
@@ -982,30 +1145,54 @@ function handleImageGenerated(dataUrl: string) {
                 :streaming="streaming"
                 remove-label="删我的发言"
                 confirm-label="删掉我说的这句？"
+                regenerate-label="重新发送"
                 @save="(t) => adventure.updateAction(a.id, { user: t })"
                 @regenerate="() => regenerateWith(a)"
                 @branch="() => branchAt(a.id)"
                 @remove="() => adventure.removeActionUser(a.id)"
               />
             </div>
-            <div v-if="a.ai" class="message ai">
+            <!--
+              ★ 条件里带上 "有历史版本"。
+              只写 v-if="a.ai" 时，一旦当前版本正文为空（旧数据里可能残留
+              一个空版本），整块会消失 —— 连「‹ ›」切换按钮也一起没了，
+              用户就再也切不回有内容的那一版（只能重新生成"救"回来）。
+              只要还有版本可翻，这块就必须显示，否则等于把自己锁死。
+            -->
+            <div v-if="a.ai || (a.variants && a.variants.length)" class="message ai">
               <div class="msg-role">
                 🤖 AI
+                <!--
+                  正在重新生成时，把「‹ ›」和「配图」先收起来：
+                  这一刻内容正被覆盖，中途切版本/配图会打架。
+                  生成完它们自己会回来（那时 variants 里已经有旧版可翻）。
+                -->
+                <span v-if="isRegenerating(a.id)" class="regen-tag">重新生成中…</span>
                 <VersionSwitcher
-                  v-if="a.variants && a.variants.length"
+                  v-else-if="a.variants && a.variants.length"
                   :total="a.variants.length"
                   :index="a.variantIndex ?? 0"
                   @switch="(i) => adventure.switchVariant(a.id, i)"
                 />
                 <!-- 一键生图：点一下就用这条内容出一张图，自动插进来 -->
-                <button class="quick-img" :disabled="!!quickImgBusy"
+                <button v-if="!isRegenerating(a.id)" class="quick-img" :disabled="!!quickImgBusy"
                   @click="quickImageFor(a)"
                   title="用这段内容生成一张插图，自动插入，不满意可删除或重新生成">
                   {{ quickImgBusy ? '生成中…' : '🎨 配图' }}
                 </button>
               </div>
               <div class="msg-content">
+                <!--
+                  ★ 重新生成：**就在这个位置**换内容。
+                    旧正文先让位，新正文流式长在这里 ——
+                    底下不会再冒出第二份一模一样的。
+                -->
+                <template v-if="isRegenerating(a.id)">
+                  <ContentWithImages :content="displayText(streamOutput)" />
+                  <span v-if="streaming" class="cursor">▋</span>
+                </template>
                 <ContentWithImages
+                  v-else
                   :content="displayText(a.ai)"
                   :attachments="a.images"
                   removable
@@ -1014,8 +1201,13 @@ function handleImageGenerated(dataUrl: string) {
                   @regenerate="(att) => regenImageInPlace(a.id, att)"
                   @switch-version="(aid, vid) => switchActionImageVersion(a.id, aid, vid)"
                 />
+                <!-- 当前版本没有正文（历史残留的空版本）→ 明确说清，并给一条出路 -->
+                <p v-if="!isRegenerating(a.id) && !a.ai" class="empty-reply">
+                  这一版没有内容，点上方的「‹」切回有回复的那一版
+                </p>
               </div>
               <MessageActions
+                v-if="!isRegenerating(a.id)"
                 :content="a.ai"
                 :streaming="streaming"
                 remove-label="删这条回复"
@@ -1039,17 +1231,38 @@ function handleImageGenerated(dataUrl: string) {
 
           <!-- 流式输出 -->
           <div v-if="streaming || streamOutput" class="message-group">
-            <div class="message user" v-if="streamUser || streaming">
-              <div class="msg-role">🧑 你</div>
-              <div class="msg-content">{{ streamUser || '...' }}</div>
+            <!--
+              「还在生成中」提示条。
+              存在的意义：用户切走再回来时，看到的是正文自己在长 ——
+              没有这句话会以为是界面错乱。顺便给出已等待时间和停止入口。
+            -->
+            <div v-if="generatingHere" class="gen-banner">
+              <span class="spinner">⏳</span>
+              <span class="gen-text">
+                正在生成{{ genElapsed > 0 ? `（已 ${genElapsed} 秒）` : '…' }}
+                <em v-if="resumedWhileStreaming" class="gen-hint">离开页面时也没断，还在继续</em>
+              </span>
+              <button class="gen-stop" @click="stopGeneration" title="停止这次生成">⏹ 停止</button>
             </div>
-            <div class="message ai">
-              <div class="msg-role">🤖 AI</div>
-              <div class="msg-content">
-                <ContentWithImages :content="displayText(streamOutput)" />
-                <span v-if="streaming" class="cursor">▋</span>
+            <!--
+              ★ 只有「新发一条」才在这里渲染正文。
+                重新生成走的是**原地替换**（正文长在上面对应那条消息的位置），
+                这里就只剩状态条 —— 否则用户文字和 AI 正文会各重复一遍，
+                看起来像凭空多出一套一模一样的（用户报的就是这个）。
+            -->
+            <template v-if="!inPlaceRegenId">
+              <div class="message user" v-if="streamUser || streaming">
+                <div class="msg-role">🧑 你</div>
+                <div class="msg-content">{{ streamUser || '...' }}</div>
               </div>
-            </div>
+              <div class="message ai">
+                <div class="msg-role">🤖 AI</div>
+                <div class="msg-content">
+                  <ContentWithImages :content="displayText(streamOutput)" />
+                  <span v-if="streaming" class="cursor">▋</span>
+                </div>
+              </div>
+            </template>
             <!-- 自动配图进度 -->
             <div v-if="autoImgPending > 0" class="auto-image-status">
               <span class="spinner">⏳</span>
@@ -1097,8 +1310,12 @@ function handleImageGenerated(dataUrl: string) {
               :disabled="streaming"
               rows="2"
             ></textarea>
-            <button class="primary send-btn" @click="sendAction" :disabled="streaming || !userInput.trim()">
-              {{ streaming ? '生成中…' : '发送' }}
+            <button class="primary send-btn" v-if="streaming" @click="stopGeneration"
+              title="停止这次生成（已经收到的内容会保留）">
+              ⏹ 停止
+            </button>
+            <button class="primary send-btn" v-else @click="sendAction" :disabled="!userInput.trim()">
+              发送
             </button>
           </div>
         </div>
@@ -1177,7 +1394,7 @@ function handleImageGenerated(dataUrl: string) {
     <!-- 生图弹窗 -->
     <ImageGenModal
       v-if="showImageGen && currentSession"
-      :context-messages="currentSession.actions.map(a => ({ role: 'user', content: a.user || '' })).concat([{ role: 'assistant', content: currentSession.actions[currentSession.actions.length - 1]?.ai || '' }, { role: 'system', content: currentSession.sceneDescription || '' }])"
+      :context-messages="imageContextMessages"
       :context-label="'冒险场景'"
       :scene="'adventure'"
       :entity-id="currentSession.id"
@@ -1645,6 +1862,27 @@ function handleImageGenerated(dataUrl: string) {
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* 当前版本没有正文时的提示（历史残留的空版本，给用户一条出路） */
+.empty-reply {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+/*
+ * 「重新生成中…」小标签。
+ *
+ * 重新生成时这一条的正文会被就地换掉，给个明确的字样，
+ * 否则用户只看到自己那条回复突然在重写，不知道发生了什么。
+ */
+.regen-tag {
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: transparent;
+}
 .msg-content {
   font-size: 14px;
   line-height: 1.6;
@@ -1665,6 +1903,53 @@ function handleImageGenerated(dataUrl: string) {
   border: 1px solid var(--border);
   font-size: 12px;
   color: var(--text-dim);
+}
+/*
+ * 「正在生成中」提示条。
+ *
+ * 用户切走再回来时，正文在长但没有任何说明，很容易被当成界面错乱 ——
+ * 所以这条必须显眼，并且把「停止」放在手边。
+ */
+.gen-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.gen-banner .spinner {
+  animation: blink 1s steps(2) infinite;
+}
+.gen-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.gen-hint {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--accent);
+  opacity: 0.85;
+}
+.gen-stop {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--danger, #f87171);
+  background: transparent;
+  color: var(--danger, #f87171);
+  font-size: 12px;
+  cursor: pointer;
+}
+.gen-stop:hover {
+  background: rgba(248, 113, 113, 0.12);
 }
 .auto-image-error {
   margin-top: 6px;

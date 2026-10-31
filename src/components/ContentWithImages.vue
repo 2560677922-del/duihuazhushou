@@ -58,6 +58,23 @@ const loading = ref<Record<string, boolean>>({});
 /** 已经彻底失败的图：记下来，避免反复重试刷屏 */
 const failed = ref<Record<string, boolean>>({});
 
+/**
+ * 解析缓存的键。
+ *
+ * ★ 必须带上「当前是第几版」，不能只用附件 id。
+ *
+ *   「重新生图」是**原地替换**：附件 id 不变，只有 dataUrl / currentVersionId
+ *   在变（见 imageMarker.pushImageVersion）。
+ *   以前这里直接用 a.id 做键，缓存里还压着上一张图，
+ *   srcOf() 一看缓存命中就直接返回旧地址 ——
+ *   界面上就是"点了重新生成，图没变，还是旧的"，切版本也同样不刷新。
+ *
+ *   currentVersionId 是最准的身份标识；老数据可能没有，退回 createdAt。
+ */
+function cacheKeyOf(a: ImageAttachment): string {
+  return a.id + '::' + (a.currentVersionId || a.createdAt || '');
+}
+
 /** 判重：这个引用是不是本地图片存储区的键 */
 function blobKeyOf(a: ImageAttachment): string | null {
   const u = a.dataUrl || '';
@@ -111,7 +128,8 @@ async function fromGithub(a: ImageAttachment): Promise<string | null> {
  */
 async function resolveOne(a: ImageAttachment, allowRemote: boolean) {
   if (!a) return;
-  if (resolved.value[a.id] !== undefined) return;
+  const key = cacheKeyOf(a);
+  if (resolved.value[key] !== undefined) return;
   if (loading.value[a.id]) return;
 
   loading.value = { ...loading.value, [a.id]: true };
@@ -124,19 +142,19 @@ async function resolveOne(a: ImageAttachment, allowRemote: boolean) {
     if (a.assetId) {
       const fromAsset = await assetUrl(a.assetId);
       if (fromAsset) {
-        resolved.value = { ...resolved.value, [a.id]: fromAsset };
+        resolved.value = { ...resolved.value, [key]: fromAsset };
         return;
       }
     }
     /* 老数据没有 assetId：内存里的可能已经是完整 dataURL */
     if (a.dataUrl?.startsWith('data:')) {
-      resolved.value = { ...resolved.value, [a.id]: a.dataUrl };
+      resolved.value = { ...resolved.value, [key]: a.dataUrl };
       return;
     }
     // 1) 本地图片存储区
     const local = await fromLocalBlob(a);
     if (local) {
-      resolved.value = { ...resolved.value, [a.id]: local };
+      resolved.value = { ...resolved.value, [key]: local };
       return;
     }
     // 还没进视口就先不联网，等它滚进来再说
@@ -144,15 +162,15 @@ async function resolveOne(a: ImageAttachment, allowRemote: boolean) {
     // 2) 远端仓库
     const remote = await fromGithub(a);
     if (remote) {
-      resolved.value = { ...resolved.value, [a.id]: remote };
+      resolved.value = { ...resolved.value, [key]: remote };
       return;
     }
     // 3) 实在没有：dataUrl 本身是个可用链接就交给 <img>
     const u = a.dataUrl || '';
     if (u && !u.startsWith('blob:') && !u.startsWith('__PENDING__')) {
-      resolved.value = { ...resolved.value, [a.id]: u };
+      resolved.value = { ...resolved.value, [key]: u };
     } else {
-      failed.value = { ...failed.value, [a.id]: true };
+      failed.value = { ...failed.value, [key]: true };
     }
   } finally {
     loading.value = { ...loading.value, [a.id]: false };
@@ -235,9 +253,10 @@ watch(
 /** 图片实际使用的地址 */
 function srcOf(a?: ImageAttachment): string {
   if (!a) return '';
-  // 解析结果优先（可能来自本地存储区或远端）
-  const r = resolved.value[a.id];
+  // 解析结果优先（可能来自本地存储区或远端）。键里带了版本号，切版本会自然失效。
+  const r = resolved.value[cacheKeyOf(a)];
   if (r) return r;
+  // 顶层就是一张 dataURL：新生成/刚重生成时会走到这里
   if (a.dataUrl?.startsWith('data:')) return a.dataUrl;
   // 资产库里已经取过图的话，直接给（不用等异步）
   if (a.assetId) {
@@ -281,6 +300,19 @@ async function resolveVersions(a?: ImageAttachment) {
 
   for (const v of a.versions) {
     if (out[v.id]) continue;
+    /*
+     * 0) 版本自己的 assetId（新版流程）。
+     *
+     * ★ 这一步必须有：图片本体只存资产库，历史版本的 dataUrl 往往是空的，
+     *   只有 assetId 能把它取回来。少了这条，"切回上一版"就是裂图。
+     */
+    if (v.assetId) {
+      const fromAsset = await assetUrl(v.assetId);
+      if (fromAsset) {
+        out[v.id] = fromAsset;
+        continue;
+      }
+    }
     // 1) 版本自带 dataURL（内存里刚生成的）
     if (v.dataUrl) {
       out[v.id] = v.dataUrl;
@@ -315,7 +347,7 @@ function onSwitchVersion(versionId: string) {
 /**
  * 外部把数据改好了 → 同步正在看的那张大图。
  *
- * 上层（Adventure / NovelEditor）改完 attachment 后会传新的 attachments 进来，
+ * 上层（Adventure）改完 attachment 后会传新的 attachments 进来，
  * 这里跟着更新，避免"切了版本但大图没变"。
  */
 watch(
@@ -341,14 +373,16 @@ watch(
  * 在部分网络下解析不了。这时用 API 带令牌取回 base64。
  */
 async function onImgError(a?: ImageAttachment) {
-  if (!a || failed.value[a.id] || !a.remotePath) return;
-  failed.value = { ...failed.value, [a.id]: true };
+  if (!a) return;
+  const key = cacheKeyOf(a);
+  if (failed.value[key] || !a.remotePath) return;
+  failed.value = { ...failed.value, [key]: true };
   loading.value = { ...loading.value, [a.id]: true };
   try {
     const dataUrl = await fromGithub(a);
     if (dataUrl) {
-      resolved.value = { ...resolved.value, [a.id]: dataUrl };
-      failed.value = { ...failed.value, [a.id]: false };
+      resolved.value = { ...resolved.value, [key]: dataUrl };
+      failed.value = { ...failed.value, [key]: false };
     }
   } finally {
     loading.value = { ...loading.value, [a.id]: false };

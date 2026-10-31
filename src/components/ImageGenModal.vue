@@ -7,7 +7,7 @@ import { generateImage, extractContext, fetchModels } from '../engine/imageGen';
 import type { ImageGenConfig, ImageGenOptions } from '../engine/imageGen';
 import type { StoredApiConfig } from '../stores/apiConfig';
 import { NOVELAI_MODELS } from '../engine/novelai';
-import { buildTagReference } from '../engine/tagLibrary';
+import { buildTagReference, TAG_CATEGORIES } from '../engine/tagLibrary';
 import { useStorageSettingsStore } from '../stores/storageSettings';
 import { useDnaStore } from '../stores/characterDna';
 import { uid } from '../lib/storage';
@@ -43,7 +43,44 @@ const generatingStep = ref('');
 const skipOptimization = ref(false);
 const manualPrompt = ref('');
 const manualNegative = ref('');
-const contextWindow = ref(props.defaultWindow ?? 5);
+
+/**
+ * 「取材范围」直接绑到 store，改一下就落盘。
+ *
+ * 以前是 `ref(props.defaultWindow ?? 5)` —— 局部状态，关掉弹窗就没了，
+ * 下次打开又回到 5。用户明确要求"这个要有保存功能"。
+ *
+ * props.defaultWindow 仍然作为**首次使用**的初值（存档里还没有值时）。
+ */
+const contextWindow = computed<number>({
+  get() {
+    const v = imageStore.quickContextWindow;
+    return typeof v === 'number' && v > 0 ? v : (props.defaultWindow ?? 5);
+  },
+  set(v: number) {
+    void imageStore.updateQuickContext(v);
+  },
+});
+/** 只取 AI 消息（配图要的是画面，用户那句"我走过去"帮助不大） */
+const aiOnly = computed<boolean>({
+  get() {
+    return imageStore.quickAiOnly;
+  },
+  set(v: boolean) {
+    void imageStore.updateQuickContext(undefined, v);
+  },
+});
+
+/** 自定义标签输入框（回车或点「添加」都能提交） */
+const customTagInput = ref('');
+
+/** 把输入框里的东西加进自定义标签（支持一次贴一串逗号分隔的） */
+function commitCustomTag() {
+  const t = customTagInput.value.trim();
+  if (!t) return;
+  void storageSettings.addCustomTag(t);
+  customTagInput.value = '';
+}
 const result = ref<string | null>(null);
 const error = ref('');
 const resultPrompt = ref('');
@@ -54,7 +91,30 @@ const showModels = ref(false);
 const fetchingModels = ref(false);
 const availableModels = ref<string[]>([]);
 const modelError = ref('');
-const selectedLlmConfigId = ref<string | undefined>(undefined);
+
+/**
+ * 「用哪套大模型来写提示词」—— 跟着当前生图配置走，**存进 store**。
+ *
+ * 以前这里是个裸的 `ref<string | undefined>(undefined)`：
+ * 选了模型只改了本地变量，从不写回 imageStore，于是弹窗一关就忘了 ——
+ * 用户反馈"我选了其他模型，再打开还是显示跟随对话"。
+ *
+ * 现在直接用 store 里的 llmConfigId（那本来就是为这个用途留的字段，
+ * 见 ImageApiEntry.llmConfigId 的注释），选完立刻落盘。
+ * 空字符串 = 跟随当前对话模型（ModelPicker 的 allow-follow 约定）。
+ */
+const selectedLlmConfigId = computed<string | undefined>({
+  get() {
+    return imageStore.currentApi?.llmConfigId;
+  },
+  set(v) {
+    const api = imageStore.currentApi;
+    if (!api) return;
+    // 选「跟随」时写空串而不是 undefined：前者是"明确选了跟随"，
+    // 后者在 Object.assign 里会被当成"没这个字段"，旧值就清不掉。
+    void imageStore.updateApi(api._uid, { llmConfigId: v ?? '' });
+  },
+});
 
 const currentImageConfig = computed(() => imageStore.currentConfig);
 
@@ -84,7 +144,37 @@ function pickedReference(): string {
   return storageSettings.pickedTagReferenceText();
 }
 const currentApiConfig = computed(() => api.currentConfig as StoredApiConfig | undefined);
-const contextPreview = computed(() => extractContext(props.contextMessages, contextWindow.value));
+/**
+ * 按「只取 AI 消息」的规则挑出要用的那段上下文。
+ *
+ * 用户的诉求（原话）：
+ *   "点一下倒数第二条消息，他只会携带 ai 消息的倒数第二条 + 之前的 ai 消息"
+ *
+ * 所以 window 计的是**AI 回合数**，不是消息条数：
+ *   取最近 N 条 assistant 消息，它们和各自的用户发言一起构成那段剧情。
+ * 这样 N=2 就是"最后两回合"，不会因为中间夹着用户发言而少算一回合。
+ *
+ * 用户发言**保留**在拼接里（它是剧情的衔接，去掉会让上下文断片），
+ * 只是不占"条数"名额。
+ */
+const effectiveMessages = computed(() => {
+  const all = props.contextMessages || [];
+  if (!aiOnly.value) return all;
+
+  const aiIdx: number[] = [];
+  all.forEach((m, i) => {
+    if (m.role === 'assistant') aiIdx.push(i);
+  });
+  if (aiIdx.length === 0) return all;   // 一条 AI 消息都没有 → 原样返回
+
+  const need = Math.max(1, contextWindow.value);
+  const picked = aiIdx.slice(-need);
+  const from = picked[0];
+  // 从最早那回合开始，一直取到末尾（保留其后的用户发言，剧情才连贯）
+  return all.slice(from);
+});
+
+const contextPreview = computed(() => extractContext(effectiveMessages.value, 999));
 // 注：以前这里有个 llmConfigs 列表给扁平下拉用，现在换成 ModelPicker 了
 // （它自己从 store 读 providers 分组，不用外面筛）。
 
@@ -175,7 +265,8 @@ async function startGenerate() {
     return;
   }
 
-  const llmConfigId = selectedLlmConfigId.value || imgCfg.llmConfigId;
+  // 空值（跟随对话）就用当前对话模型
+  const llmConfigId = selectedLlmConfigId.value || '';
   const llmConfig = (
     llmConfigId ? api.configs.find((c: any) => c._uid === llmConfigId) : currentApiConfig.value
   ) as StoredApiConfig | undefined;
@@ -229,8 +320,11 @@ async function startGenerate() {
     };
 
     const options: ImageGenOptions = {
-      contextMessages: props.contextMessages,
-      contextWindow: contextWindow.value,
+      // 用筛好的那一段（只取 AI 回合），并且窗口给满 ——
+      // 条数已经在上面的 effectiveMessages 里决定过了，
+      // 这里再截一次会把刚挑好的内容又切掉。
+      contextMessages: effectiveMessages.value,
+      contextWindow: effectiveMessages.value.length,
       contextLabel: props.contextLabel,
       skipOptimization: skipOptimization.value,
       manualPrompt: manualPrompt.value.trim() || undefined,
@@ -379,12 +473,27 @@ function clearReference() {
           <section class="card">
             <div class="card-head">
               <span>📖 取材范围</span>
-              <span class="hint">取最近 {{ contextWindow }} 条{{ props.contextLabel || '内容' }}</span>
+              <span class="hint">
+                {{ aiOnly ? `取最近 ${contextWindow} 回合 AI 叙述` : `取最近 ${contextWindow} 条内容` }}
+              </span>
             </div>
+            <!--
+              「只取 AI 消息」默认开。
+              配图要的是**画面**，AI 的叙述才是画面来源；用户发言多是
+              "我向前走一步"这类动作指令，对画面帮助小，还会稀释注意力。
+              关掉就退回"按消息条数取材"，和以前一样。
+            -->
+            <label class="switch" style="margin-bottom: 8px;">
+              <input type="checkbox" v-model="aiOnly" />
+              <span>只取 AI 的叙述（按回合计数，不含我的发言）</span>
+            </label>
             <div class="slider-row">
               <input type="range" min="1" max="20" v-model.number="contextWindow" />
               <input type="number" min="1" max="20" v-model.number="contextWindow" class="num-sm" />
             </div>
+            <p class="hint" style="margin: 4px 0 0;">
+              这个设置会自动记住，下次打开还是它。
+            </p>
             <details class="preview-details">
               <summary>查看取材内容预览</summary>
               <div class="preview-content">{{ contextPreview || '（暂无内容）' }}</div>
@@ -596,20 +705,82 @@ function clearReference() {
             </p>
           </section>
 
-          <!-- 简单说明当前用到的标签参考 -->
+          <!--
+            ★ 标签参考：这里可以直接勾选**带哪些分类**。
+            以前这里只有一句"分类与每类数量可在「设置 → 标签库」里调" ——
+            想临时少带几类得跑去设置页改，回来又得改回去，很不自由。
+            现在和标签库页一样可以在原地勾选，改完立刻落盘。
+          -->
           <section v-if="!skipOptimization" class="card">
-            <div class="card-head"><span>🏷️ 标签参考</span></div>
+            <div class="card-head">
+              <span>🏷️ 标签参考</span>
+              <span class="hint">已选 {{ storageSettings.tagCategories.length }} 类 · 每类 {{ storageSettings.tagPerCategory }} 个</span>
+            </div>
             <label class="switch">
               <input type="checkbox" :checked="storageSettings.tagReferenceEnabled"
                 @change="storageSettings.tagReferenceEnabled = ($event.target as HTMLInputElement).checked; storageSettings.save()" />
               <span>优化提示词时附上 NovelAI 标准标签表（推荐开启）</span>
             </label>
-            <p class="tip">
-              已选 {{ storageSettings.tagCategories.length }} 个分类、每类
-              {{ storageSettings.tagPerCategory }} 个标签。
-              开了它，模型更可能写出 <code>silver hair</code> 这类标准标签，而不是自造同义词。
-              分类与每类数量可在「设置 → 标签库」里调。
-            </p>
+
+            <!-- 关掉总开关就收起细节，避免一堆勾选框看着乱 -->
+            <template v-if="storageSettings.tagReferenceEnabled">
+              <div class="row" style="margin-top: 8px; align-items: center;">
+                <div class="col">
+                  <label>每类取几个</label>
+                  <input type="number" min="8" max="60" step="4"
+                    v-model.number="storageSettings.tagPerCategory"
+                    @change="storageSettings.save()" />
+                </div>
+                <div class="col" style="flex: 0 0 auto; align-self: end;">
+                  <button class="mini-btn" @click="storageSettings.tagCategories = TAG_CATEGORIES.map(c => c.id); storageSettings.save()">
+                    全选
+                  </button>
+                  <button class="mini-btn" @click="storageSettings.tagCategories = []; storageSettings.save()">
+                    全不选
+                  </button>
+                </div>
+              </div>
+
+              <!-- 分类勾选格：点哪个带哪个 -->
+              <div class="tag-cat-grid">
+                <label v-for="c in TAG_CATEGORIES" :key="c.id" class="tag-cat"
+                  :class="{ on: storageSettings.tagCategories.includes(c.id) }">
+                  <input type="checkbox" :checked="storageSettings.tagCategories.includes(c.id)"
+                    @change="storageSettings.toggleTagCategory(c.id, ($event.target as HTMLInputElement).checked)" />
+                  <span class="tc-name">{{ c.name }}</span>
+                </label>
+              </div>
+
+              <!-- 手挑的标签也带上（和标签库页里"已选"是同一份） -->
+              <p v-if="storageSettings.pickedTags.length" class="tip">
+                另外还会带上你在标签库里手挑的 {{ storageSettings.pickedTags.length }} 个标签。
+              </p>
+
+              <!--
+                ★ 自定义标签：自己敲的、标签库里没有的（比如角色专属设定）。
+                和"在标签库里挑"是两条路：
+                  挑的那个有中英对照、能清空重选；
+                  这里的是一段固定要带上的文字，不该被"清空已选"带走。
+              -->
+              <div class="custom-tags">
+                <label>自己加标签<span class="hint-inline">逗号分隔，会一起带给模型</span></label>
+                <div class="ct-input-row">
+                  <input type="text" v-model="customTagInput"
+                    placeholder="例如：scar on left eye, black choker, my oc"
+                    @keyup.enter="commitCustomTag" />
+                  <button class="mini-btn" :disabled="!customTagInput.trim()" @click="commitCustomTag">
+                    添加
+                  </button>
+                </div>
+                <div v-if="storageSettings.customTags.length" class="ct-pills">
+                  <button v-for="t in storageSettings.customTags" :key="t" class="ct-pill"
+                    :title="'点一下移除：' + t" @click="storageSettings.removeCustomTag(t)">
+                    {{ t }}<span class="ct-x">×</span>
+                  </button>
+                </div>
+                <p v-else class="tip">还没有自定义标签。上面写几个，每次出图都会带上。</p>
+              </div>
+            </template>
           </section>
 
           <button class="primary generate-btn" :disabled="!canGenerate" @click="startGenerate">
@@ -833,6 +1004,98 @@ function clearReference() {
   background: var(--code-bg);
   padding: 0 4px;
   border-radius: 3px;
+}
+
+/*
+ * 标签分类勾选格。
+ *
+ * 和「设置 → 标签库」里那套视觉保持一致（那个是用户已经看惯的样子），
+ * 但这里是 modal 内的 scoped 样式，所以要自己写一份。
+ * 手机上两列，够点、又不至于把弹窗撑得太长。
+ */
+.tag-cat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+.tag-cat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.tag-cat.on {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.tag-cat input {
+  width: auto;
+  margin: 0;
+  flex-shrink: 0;
+}
+.tag-cat .tc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- 自定义标签 ---- */
+.custom-tags {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+.custom-tags > label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 5px;
+}
+.ct-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ct-input-row input {
+  flex: 1;
+  min-width: 0;
+}
+.ct-input-row .mini-btn {
+  flex-shrink: 0;
+}
+.ct-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+.ct-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.ct-pill:hover {
+  border-color: var(--danger, #e5484d);
+  color: var(--danger, #e5484d);
+}
+.ct-x {
+  opacity: 0.5;
+  font-size: 12px;
 }
 /* ---- 角色 DNA ---- */
 .dna-list {

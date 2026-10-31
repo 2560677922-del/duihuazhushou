@@ -15,11 +15,17 @@
 //   这里把所有生成过的图集中列出来，可看、可下、可删、可复用。
 import { ref, computed, onMounted } from 'vue';
 import { useImageStore } from '../stores/image';
-import { listAssets, removeAsset, removeAllAssets, assetUrl, assetCount } from '../lib/imageAssets';
+import {
+  listAssets,
+  loadAssets,
+  removeAsset,
+  removeAllAssets,
+  assetUrl,
+  assetCount,
+} from '../lib/imageAssets';
 import { imageBlobs } from '../lib/imageBlobDb';
 import { store } from '../lib/storage';
 import { useStorageSettingsStore } from '../stores/storageSettings';
-import { resolveCached } from '../lib/lazyImage';
 
 const imageStore = useImageStore();
 const settings = useStorageSettingsStore();
@@ -34,15 +40,22 @@ const message = ref('');
 /* ---------------------------------------------------------------------------
    图片懒加载
    ---------------------------------------------------------------------------
-   存图时 dataURL 被外置成 `blob:<id>` 短引用（几十字节），
-   所以 src 不能直接用它 —— `<img src="blob:xxx">` 是裂图。
+   图片库里的图片本体存在独立存储里（浏览器 IndexedDB 的 imageBlobs /
+   真机上的 filesystem），key 是 `ia-xxx`，元数据表（索引）里只记 id，
+   不存 base64。所以 `<img src>` 必须通过 assetUrl() 去取本体。
 
-   做法：一张图滚进视口才去 IndexedDB 取本体。
+   ⚠️ 以前这里用的是 resolveCached(img.id)，那是给正文"内嵌图"用的
+   （它只认 `blob:` / `__PENDING__` 前缀），而图片库的 id 是 `ia-xxx`，
+   于是永远返回 null —— 表现就是**每张缩略图都是裂的**。别再改回去。
+
+   做法：一张图滚进视口才去取本体。
    这正是图片库以前越用越卡的原因 —— 一进页面就把几十张图全读进内存了。
    --------------------------------------------------------------------------- */
 
 /** id → 已解析好的 dataURL（只存已加载的，滚走也不清，省得来回滚时反复读） */
 const thumbs = ref<Record<string, string>>({});
+/** id → 本体已经找不到了（清缓存/换地址/被清理），用来显示占位而不是裂图 */
+const missing = ref<Record<string, true>>({});
 
 function thumbOf(id: string): string | undefined {
   return thumbs.value[id];
@@ -51,8 +64,9 @@ function thumbOf(id: string): string | undefined {
 /** 网格里的图进视口时调用 */
 async function loadThumb(img: { id: string; dataUrl?: string }): Promise<void> {
   if (thumbs.value[img.id]) return;
-  const url = await resolveCached(img.id);
+  const url = await assetUrl(img.id);
   if (url) thumbs.value = { ...thumbs.value, [img.id]: url };
+  else missing.value = { ...missing.value, [img.id]: true };
 }
 
 /** 进视口才加载的自定义指令 */
@@ -112,7 +126,9 @@ async function refreshUsage() {
 }
 
 onMounted(async () => {
-  await Promise.all([imageStore.load(), settings.load()]);
+  // ★ 必须显式 loadAssets()：资产表是懒加载的，模块级 ref 初始为空，
+  //   不加载的话 listAssets() 永远返回 []（"图片库一张都不显示"的根因之一）。
+  await Promise.all([imageStore.load(), settings.load(), loadAssets()]);
   await refreshUsage();
 });
 
@@ -230,7 +246,11 @@ async function cleanOrphans() {
     <div class="toolbar">
       <div class="seg">
         <button :class="{ active: filter === 'all' }" @click="filter = 'all'">全部</button>
-        <button :class="{ active: filter === 'novel' }" @click="filter = 'novel'">小说</button>
+        <!--
+          「小说」筛选已移除：小说功能整体删掉了（只保留冒险主线），
+          新图统一归到 adventure。老数据里 scene='novel' 的那些图
+          仍然会出现在「全部」里，不会丢。
+        -->
         <button :class="{ active: filter === 'adventure' }" @click="filter = 'adventure'">冒险</button>
       </div>
       <input type="text" v-model="query" placeholder="搜索提示词 / 模型…" class="search" />
@@ -255,25 +275,41 @@ async function cleanOrphans() {
       <p v-if="!assetCount">还没有生成过图片。</p>
       <p v-else>没有符合条件的图片。</p>
       <p class="hint-sm">
-        在小说/冒险页点 🎨 生图，或到「标签库」用标签直出，图都会出现在这里。
+        在冒险对话页点 🎨 生图，或到「生图」页用标签直出，图都会出现在这里。
       </p>
     </div>
 
     <div v-else class="grid">
-      <div v-for="img in list" :key="img.id" class="cell">
+      <div v-for="img in list" :key="img.id" class="cell" v-lazy-img="img">
         <!--
           缩略图懒加载：进视口才去取图。
-          `loading="lazy"` 只挡住**网络请求**，挡不住 IndexedDB 读取 ——
-          存图时 dataURL 已被外置成 blob: 引用，必须自己解析才能给 src。
+          指令挂在**格子**上而不是 <img> 上 —— 图没取回来之前 <img> 根本
+          不渲染（否则会是一张裂图），而它一旦没渲染，挂在它身上的指令
+          就永远不会 mounted，等于永远不加载。
+          `loading="lazy"` 只挡住**网络请求**，挡不住存储读取。
         -->
         <img
-          v-lazy-img="img"
+          v-if="thumbOf(img.id)"
           :src="thumbOf(img.id)"
           alt="生成图"
           @click="openPreview(img.id)"
         />
+        <!--
+          本体找不到了（清过缓存 / 换过访问地址 / 被误清理）。
+          这时**不要**渲染 <img>：那会是一张裂图，用户以为"图片库坏了"。
+          给一块说明 + 一个删除入口，让他知道这条记录已经没内容了。
+        -->
+        <div v-else-if="missing[img.id]" class="cell-missing">
+          <span>⚠ 本地副本已丢失</span>
+          <button class="mini" @click="removeOne(img.id)">删掉这条记录</button>
+        </div>
+        <div v-else class="cell-loading">载入中…</div>
         <div class="cell-meta">
-          <span class="scene">{{ img.scene === 'novel' ? '小说' : '冒险' }}</span>
+          <!--
+            这里原来会显示「小说 / 冒险」分类标签。
+            小说功能已经整体删掉，这个标签再留着一半是死词汇（老图会显示"小说"），
+            所以直接去掉 —— 时间还在。图片本身不受影响，老图照样在「全部」里。
+          -->
           <span class="time">{{ fmtTime(img.timestamp) }}</span>
         </div>
         <div class="cell-actions">
@@ -434,6 +470,26 @@ button.danger {
   background: var(--code-bg);
   display: block;
   cursor: pointer;
+}
+/* 还没取到本体（滚进视口才取）时的占位，别让格子高度跳来跳去 */
+.cell-loading,
+.cell-missing {
+  width: 100%;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 7px;
+  background: var(--code-bg);
+  color: var(--text-dim);
+  font-size: 11px;
+  text-align: center;
+  padding: 8px;
+}
+.cell-missing span {
+  color: var(--danger);
 }
 .cell-meta {
   display: flex;

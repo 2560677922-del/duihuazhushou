@@ -181,7 +181,9 @@ export function useAutoImage() {
             seed: result.seed,
             timestamp: Date.now(),
             context: m.description.slice(0, 200),
-            scene: contextLabel.includes('章') ? 'novel' : 'adventure',
+            // 小说功能已移除，配图统一归到冒险；原来这里是按
+            // "上下文标签里有没有『章』字"来猜，现在没必要猜了
+            scene: 'adventure',
             entityId: attachment.id,
           });
         } catch (e) {

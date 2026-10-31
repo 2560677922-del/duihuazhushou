@@ -83,6 +83,16 @@ export interface ImageAttachment {
 export interface ImageVersion {
   /** 稳定 id，切换时用来定位 */
   id: string;
+  /**
+   * 这一版在**图片资产库**里的 id。
+   *
+   * ★ 必须带着走：现在图片本体只存资产库，附件顶层的 dataUrl 在
+   *   "已入资产库"这种情况下是**空的**（见 useQuickImage）。
+   *   原来这里没有 assetId，于是 snapshotVersion 抓出来的历史版本
+   *   是一张"没有 dataUrl、也没有 assetId"的空壳 ——
+   *   切回旧版直接变成占位符，等于"重新生图之后旧图就废了"。
+   */
+  assetId?: string;
   dataUrl?: string;
   remotePath?: string;
   remoteUrl?: string;
@@ -105,6 +115,7 @@ export const MAX_IMAGE_VERSIONS = 5;
 export function snapshotVersion(att: ImageAttachment): ImageVersion {
   return {
     id: att.currentVersionId || att.id + '-v' + att.createdAt,
+    assetId: att.assetId,
     dataUrl: att.dataUrl,
     remotePath: att.remotePath,
     remoteUrl: att.remoteUrl,
@@ -133,6 +144,12 @@ export function pushImageVersion(
 
   return {
     ...att,
+    /*
+     * assetId 必须跟着**新版本**走，不能靠 `...att` 带过来的旧值。
+     * 旧代码就是漏了这一步：重新生图后顶层 assetId 还指着原来那张，
+     * 而那张可能已经被删了 —— 刷新一次图就没了。
+     */
+    assetId: fresh.assetId ?? att.assetId,
     dataUrl: fresh.dataUrl,
     remotePath: fresh.remotePath,
     remoteUrl: fresh.remoteUrl,
@@ -175,6 +192,7 @@ export function switchToVersion(
 
   return {
     ...att,
+    assetId: target.assetId ?? att.assetId,
     dataUrl: target.dataUrl,
     remotePath: target.remotePath,
     remoteUrl: target.remoteUrl,

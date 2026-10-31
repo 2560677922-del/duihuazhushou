@@ -111,8 +111,18 @@ interface AdventureState {
  */
 function pushVariant(act: Action, next: MessageVariant) {
   const cur = act.variants ?? [];
+  /*
+   * 只有**有内容**的版本才值得留。
+   *
+   * 踩过的坑（用户复现）：删除一条 AI 回复后重新生成，
+   * replaceActionAi 会把"当前内容"先存成一个版本 ——
+   * 而那时 act.ai 已经是空串了，于是历史里多出一个
+   * 「有用户发言、没有 AI 正文」的幽灵版本。
+   * 切过去整条消息就空了，还因为 v-if 把切换按钮一起藏了，再也切不回来。
+   */
+  const onlyReal = cur.filter((v) => (v.ai ?? '').trim() || (v.user ?? '').trim());
   // 去掉重复（模型两次返回同样内容时不堆垃圾）
-  const rest = cur.filter((v) => !(v.user === next.user && v.ai === next.ai));
+  const rest = onlyReal.filter((v) => !(v.user === next.user && v.ai === next.ai));
   act.variants = [next, ...rest].slice(0, MAX_VARIANTS);
   act.variantIndex = 0;
   act.user = next.user;
@@ -405,8 +415,17 @@ export const useAdventureStore = defineStore('adventure', {
       const act = session.actions.find((a) => a.id === actionId);
       if (!act) return;
 
-      // 先把当前内容保下来（若还没记录过）
-      if (!act.variants?.length && (act.ai || act.user)) {
+      /*
+       * 先把当前内容保下来（若还没记录过）。
+       *
+       * ★ 但**只保真正有 AI 正文的那一份**。
+       *   用户删掉回复后重新生成时，act.ai 是空串 ——
+       *   以前这里会存出一个「只有用户发言、没有回复」的版本，
+       *   切过去整条消息变空，而且再也切不回来（用户复现的那个 bug）。
+       *   没有正文就没有"旧版本"可言，不该占一格。
+       */
+      const hasRealAi = !!(act.ai ?? '').trim();
+      if (!act.variants?.length && hasRealAi) {
         act.variants = [
           { user: act.user, ai: act.ai, timestamp: act.timestamp || Date.now() },
         ];
@@ -446,6 +465,25 @@ export const useAdventureStore = defineStore('adventure', {
       const session = this.currentSession;
       const act = session?.actions.find((a) => a.id === actionId);
       if (!session || !act?.variants?.length) return;
+
+      /*
+       * 剔除「没有 AI 正文」的幽灵版本（history 里可能残留旧数据）。
+       *
+       * 用户复现：删了回复再重新生成，历史里多出一个空版本；
+       * 切过去整条消息变空，还因为 v-if 把切换按钮一起藏了 ——
+       * 再也切不回来，只能重新生成一遍把这条消息"救"出来。
+       * 这里在切换前先把空版本清掉，从根上避免切进去。
+       */
+      const cleaned = act.variants.filter(
+        (v) => (v.ai ?? '').trim() || (v.user ?? '').trim(),
+      );
+      if (cleaned.length !== act.variants.length) {
+        act.variants = cleaned;
+        // 下标可能越界，先夹回合法范围
+        act.variantIndex = Math.min(act.variantIndex ?? 0, Math.max(0, cleaned.length - 1));
+      }
+      if (!act.variants.length) return;
+
       const i = Math.max(0, Math.min(index, act.variants.length - 1));
       act.variantIndex = i;
       const v = act.variants[i];

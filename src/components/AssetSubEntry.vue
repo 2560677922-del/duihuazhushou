@@ -129,7 +129,11 @@ function togglePrompt(p: any, i: number, on: boolean) {
   <div v-if="props.kind === 'worldbook'" class="sub-wrap" :class="{ off: entryDisabled(props.item) }">
     <div class="sub-head" @click="open = !open">
       <span class="caret">{{ open ? '▾' : '▸' }}</span>
-      <span class="star" :class="{ on: !entryDisabled(props.item) }">✱</span>
+      <!--
+        这里以前还有个「✱」星号表示启用状态，右侧又有一个勾选框 ——
+        同一个信息画两遍，用户反馈"都有勾选了，就不要搞那个五角星了"。
+        状态只由右侧勾选框表达，星号去掉。
+      -->
       <span class="title">
         {{ props.item.comment || entryKeys(props.item)[0] || `条目 ${props.index + 1}` }}
       </span>
@@ -215,7 +219,6 @@ function togglePrompt(p: any, i: number, on: boolean) {
     :class="{ off: !promptEnabled(props.item, props.index) }">
     <div class="sub-head" @click="open = !open">
       <span class="caret">{{ open ? '▾' : '▸' }}</span>
-      <span class="star" :class="{ on: promptEnabled(props.item, props.index) }">✱</span>
       <span class="title">
         {{ promptObj(props.item, props.index).name || promptObj(props.item, props.index).identifier || `prompt ${props.index + 1}` }}
       </span>
@@ -261,7 +264,6 @@ function togglePrompt(p: any, i: number, on: boolean) {
   <div v-else-if="props.kind === 'regex'" class="sub-wrap">
     <div class="sub-head" @click="open = !open">
       <span class="caret">{{ open ? '▾' : '▸' }}</span>
-      <span class="star" :class="{ on: !props.item.disabled }">✱</span>
       <span class="title">{{ props.item.scriptName || '(未命名正则)' }}</span>
       <span class="meta mono">{{ props.item.findRegex || '(空)' }}</span>
       <label class="sw" @click.stop>
@@ -337,7 +339,7 @@ function togglePrompt(p: any, i: number, on: boolean) {
   <div v-else class="sub-wrap">
     <div class="sub-head" @click="open = !open">
       <span class="caret">{{ open ? '▾' : '▸' }}</span>
-      <span class="star" :class="{ on: !!props.item.value }">✱</span>
+      <!-- 这一项没有启用开关，星号只表示"填没填"，容易和"启用"混淆 —— 去掉 -->
       <span class="title">{{ props.item.label }}</span>
       <span class="meta">{{ (props.item.value || '').slice(0, 50) || '(空)' }}</span>
     </div>

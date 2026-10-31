@@ -83,8 +83,11 @@ export const useTagLibraryStore = defineStore('tagLibrary', () => {
        * 表现为"标签库怎么不全"、"明明补了还是搜不到"。
        *
        * 改了那个 JSON 就把这个数字 +1，缓存会自动重建。
+       *
+       * 6：重建标签库（scripts/rebuild-tags.mjs）—— 合并下划线/空格两种写法的
+       *    重复标签、统一二级分类、把常用标签排到前面、头发拆成发型+发色。
        */
-      const BUNDLED_VERSION = 5;
+      const BUNDLED_VERSION = 6;
 
       // 1. 先看本地有没有存过，且版本一致
       const cached = await store.getItem<FullTag[]>(STORE_KEY);

@@ -73,6 +73,21 @@ const db = localforage.createInstance({
  */
 const BLOB_ONLY_KEYS = new Set(['generatedImages']);
 
+/**
+ * 图片资产库（「资产 → 图片库」）的索引键。
+ *
+ * ⚠️ 这个键和 GC 的关系很大，别删：
+ *   图片库里的图片本体也是存在 imageBlobs 里（key = `ia-xxx`），
+ *   但它们**不是** `blob:<id>` 这种短引用 —— 引用关系记在这个索引数组里。
+ *   所以 gcOrphanBlobs 必须把索引里的 id 也当作"有人用"，
+ *   否则启动后那次空闲 GC 会把整个图片库当孤儿删光
+ *   （表现：图片库永远是空的、"标签生图"存进去的图下次打开就没了）。
+ *
+ * 这里硬编码（而不是 import imageAssets）是为了避免循环依赖：
+ * imageAssets → imageStorage → storage。
+ */
+const ASSET_INDEX_KEY = 'imageAssetIndex_v1';
+
 function isBlobOnly(key: string): boolean {
   return BLOB_ONLY_KEYS.has(key);
 }
@@ -157,6 +172,12 @@ const MERGE_KEY_OF: Record<string, string> = {
   characters: '_uid',
   characterDnaList: '_uid',
   adventureSessions: 'id',
+  /*
+   * 小说功能已经整体移除（只保留冒险主线），但这两个键**故意留着**：
+   *   用户的旧稿件还躺在 app-data.json 里，从这里删掉的话，
+   *   合并/落盘时就不再认这些数组，等于把人家写的东西悄悄丢了。
+   *   留着它们不影响任何界面，将来想恢复小说功能也还有数据可用。
+   */
   novelChapters: 'id',
   novelProjects: 'id',
   apiConfigs: '_uid',
@@ -420,7 +441,7 @@ async function healImageRefs(): Promise<number> {
       }
     }
 
-    // 小说：每轮消息的附件 + 章节级附件
+    // 小说（功能已移除，但旧数据的图片引用仍然帮它补一下，避免留下死链）
     const chapters = await readBrowser<any[]>('novelChapters');
     if (Array.isArray(chapters)) {
       let n = 0;
@@ -645,25 +666,45 @@ export const store = {
       }
     }
 
-    let removed = 0;
-    let freedBytes = 0;
+    // 图片资产库：「资产 → 图片库」里的图片本体 key 是 `ia-xxx`，
+    // 既不是配置键也不是 blob: 短引用，只有索引里记着。漏掉这一步 =
+    // 启动后把整个图片库删空（这就是"图片库一张都不显示"的根因之一）。
+    let assetIdsKnown = true;
     try {
-      const keys = await imageBlobs.keys();
-      for (const k of keys) {
-        if (configKeys.has(k)) continue; // 这是配置条目，不是图片
-        if (referenced.has(k)) continue; // 还有人用
-        try {
-          const v = await imageBlobs.get(k);
-          if (typeof v === 'string') freedBytes += v.length;
-          await imageBlobs.remove(k);
-          removed++;
-        } catch {
-          /* 单条删不掉不影响其余 */
+      const raw = useLocalStorage
+        ? getLocalStorage(ASSET_INDEX_KEY)
+        : await db.getItem<unknown>(ASSET_INDEX_KEY);
+      if (Array.isArray(raw)) {
+        for (const item of raw) {
+          const id = item && typeof item === 'object' ? (item as { id?: unknown }).id : null;
+          if (typeof id === 'string' && id) referenced.add(id);
         }
       }
-    } catch (e) {
-      console.warn('[存储] 回收孤儿图片失败：', e);
+    } catch {
+      // 索引读不到时**绝不能**继续删：那会把整库当孤儿。宁可这轮不清。
+      assetIdsKnown = false;
     }
+
+    let removed = 0;
+    let freedBytes = 0;
+    if (assetIdsKnown)
+      try {
+        const keys = await imageBlobs.keys();
+        for (const k of keys) {
+          if (configKeys.has(k)) continue; // 这是配置条目，不是图片
+          if (referenced.has(k)) continue; // 还有人用
+          try {
+            const v = await imageBlobs.get(k);
+            if (typeof v === 'string') freedBytes += v.length;
+            await imageBlobs.remove(k);
+            removed++;
+          } catch {
+            /* 单条删不掉不影响其余 */
+          }
+        }
+      } catch (e) {
+        console.warn('[存储] 回收孤儿图片失败：', e);
+      }
     if (removed) {
       console.log(
         `[存储] 已回收 ${removed} 张无人引用的图片，释放约 ${(freedBytes / 1024 / 1024).toFixed(1)} MB`,

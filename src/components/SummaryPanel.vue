@@ -6,12 +6,19 @@
 //
 // 两种生成方式：
 //   手动 —— 用户点一下，可以指定目标字数和覆盖范围
-//   自动 —— 达到设定的条数/字数阈值时后台生成（见 novel store 的 summaryDue）
+//   自动 —— 达到设定的条数/字数阈值时后台生成（见 adventure store 的 summaryDue）
 import { ref, computed } from 'vue';
-import type { Chapter, SummaryEntry } from '../stores/novel';
+import type { SummaryEntry } from '../stores/adventure';
 
 const props = defineProps<{
-  chapter?: Chapter;
+  /**
+   * 承载摘要的那个会话（冒险）。
+   *
+   * 这里刻意只声明需要的那一个字段，而不是直接绑死 `AdventureSession` ——
+   * 这个组件原本是给「小说章节」和「冒险会话」共用的，
+   * 现在小说功能已经删掉，但它依旧只关心 summaries，没必要跟着别的类型走。
+   */
+  chapter?: { summaries?: SummaryEntry[] };
   summarizing?: boolean;
   error?: string;
   targetWords: number;

@@ -16,12 +16,33 @@ import { useImageStore } from '../stores/image';
 import { useDnaStore } from '../stores/characterDna';
 import { useStorageSettingsStore } from '../stores/storageSettings';
 import { persistGeneratedImage } from './useImageStorage';
-import { addAsset, assetOf, removeAsset } from '../lib/imageAssets';
+import { addAsset, assetOf } from '../lib/imageAssets';
 import { buildTagReference } from '../engine/tagLibrary';
 import type { ImageAttachment } from '../engine/imageMarker';
 import { buildPresetBlock } from '../engine/presetContent';
 import { useAssetsStore } from '../stores/assets';
 import { resolveImageLlmConfig, buildImageMacroContext } from './imageLlm';
+import { cleanSceneText } from '../engine/imageGen';
+
+/**
+ * 超长文本截断：**保住开头**（画面主体）+ 结尾（情绪/收束），砍中间。
+ *
+ * 为什么不用 slice(-N)：正文里"这画面长什么样"的信息集中在开头，
+ * 只留尾巴等于把最该给模型的砍掉了（历史消息配图乱配的根因之一）。
+ *
+ * @param text 原文
+ * @param limit 总字符上限
+ * @param headRatio 开头占的比例（0.7 = 头七尾三）
+ */
+function headTail(text: string, limit = 6000, headRatio = 0.7): string {
+  const t = text || '';
+  if (t.length <= limit) return t;
+  const headLen = Math.floor(limit * headRatio);
+  const tailLen = limit - headLen - 20; // 20 留给分隔说明
+  const head = t.slice(0, headLen);
+  const tail = t.slice(-Math.max(0, tailLen));
+  return `${head}\n\n……（中间省略）……\n\n${tail}`;
+}
 
 export function useQuickImage() {
   const imageStore = useImageStore();
@@ -72,6 +93,12 @@ export function useQuickImage() {
     status.value = '正在生成配图…';
     error.value = '';
 
+    /*
+     * 先把"不是画面"的东西剔掉，再按"头重脚轻"的方式截断。
+     * 见下面 contextMessages 处的说明。
+     */
+    const sceneText = headTail(cleanSceneText(text), 6000, 0.7);
+
     try {
       /*
        * 提示词优化用的模型：优先生图接口里指定的 llmConfigId，
@@ -88,7 +115,22 @@ export function useQuickImage() {
           // 用生图配置里的尺寸/步数等，不额外覆盖
         } as any,
         {
-          contextMessages: [{ role: 'assistant', content: text.slice(-3000) }],
+          /*
+           * ★ 上下文怎么给，决定了"配图贴不贴这段剧情"。
+           *
+           * 以前是 `text.slice(-3000)` —— 只取**末尾** 3000 字。
+           * 对短消息没事，但真实会话里动辄三四千字，开头那段
+           * （"银发少女推开石门…"）正好是**画面主体最集中的地方**，
+           * 被切掉之后模型只剩结尾的对话和过渡，只能瞎猜——
+           * 这就是"点历史消息的配图会乱配、而最新一条正常"的原因。
+           *
+           * 现在的做法：
+           *   1. 先 cleanSceneText 去掉思维链/代码/元话语（那类内容占比很大）；
+           *   2. 净化后仍然超长时，**保留开头 70% + 结尾 30%** ——
+           *      画面描写通常在开头，情绪/收束在结尾，两头都留住；
+           *      中间那些重复的过程叙述丢掉的代价最小。
+           */
+          contextMessages: [{ role: 'assistant', content: sceneText }],
           contextWindow: 1,
           contextLabel,
           /*
@@ -239,13 +281,39 @@ export function useQuickImage() {
 
       const stored = await persistGeneratedImage(result.dataUrl, `重生成 ${contextLabel}`);
 
+      /*
+       * 新图也要进**图片资产库** —— 和 generateFor 保持一致。
+       *
+       * ★ 这里原来漏了 addAsset，却还在下面把**旧资产删掉**：
+       *     旧图从库里消失、新图从来没进过库，
+       *   结果每点一次"重新生图"，图片库就少一张，
+       *   而且附件拿不到新图的 assetId，刷新后这张图就找不回来了。
+       */
+      let assetId = '';
+      try {
+        assetId = await addAsset(result.dataUrl, {
+          prompt: result.prompt,
+          negativePrompt: result.negativePrompt,
+          provider: result.provider,
+          model: result.model,
+          seed: result.seed,
+          description: result.prompt.slice(0, 120),
+          origin: 'auto',
+          scene: 'adventure',
+          entityId: 'manual',
+        });
+      } catch (e) {
+        console.warn('[重生成] 存图片库失败，退回内联方式：', e);
+      }
+
       const attachment: ImageAttachment = {
         // 复用原 id 与位置 → 原地替换，正文里不会多出一个标记
         id: att.id,
         markdownIndex: att.markdownIndex,
         description: result.prompt.slice(0, 120),
         prompt: result.prompt,
-        dataUrl: stored.displayUrl || result.dataUrl,
+        assetId: assetId || undefined,
+        dataUrl: assetId ? undefined : stored.displayUrl || result.dataUrl,
         remotePath: stored.remotePath,
         remoteUrl: stored.remoteUrl,
         storage: stored.uploaded ? 'github' : 'browser',
@@ -255,10 +323,13 @@ export function useQuickImage() {
       };
 
       /*
-       * 重新生图：把**原来那张资产**删掉，而不是留着再堆一张。
-       * （新生成的图上面已经 addAsset 过一次，附件拿到的是新的 assetId。）
+       * ★ 不删旧资产。
+       *
+       * 旧图会被 pushImageVersion 存成**历史版本**，用户随时可能切回去看。
+       * 之前这里 removeAsset(att.assetId) 把旧图本体删了 ——
+       * 于是"翻回上一版"永远是一张裂图，版本功能等于白做。
+       * 旧版本在历史上限（MAX_IMAGE_VERSIONS）内就留着，超出后由图片库自己清理。
        */
-      if (att.assetId) await removeAsset(att.assetId);
 
       status.value = '已重新生成';
       setTimeout(() => (status.value = ''), 2500);

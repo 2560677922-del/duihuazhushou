@@ -5,17 +5,21 @@ import android.net.Uri;
 import android.os.Environment;
 import android.util.Base64;
 import android.webkit.JavascriptInterface;
+import android.webkit.WebView;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
@@ -38,14 +42,118 @@ public final class FileBridge {
 
     private final Context ctx;
 
+    /**
+     * 后台线程池。
+     *
+     * 为什么单独开池而不是用 AsyncTask：AsyncTask 早已废弃，
+     * 而且它默认串行；这里希望"同时点几个操作互不阻塞"。
+     * 固定 4 个线程够用 —— 同时开 4 个出图请求已经不是正常用法了。
+     */
+    private static final java.util.concurrent.ExecutorService executor =
+            java.util.concurrent.Executors.newFixedThreadPool(4);
+
+    /** 弱引用持有 WebView，用来把异步结果 evaluateJavascript 回去 */
+    private final java.lang.ref.WeakReference<WebView> webViewRef;
+
+    /**
+     * @param ctx 用于文件与网络
+     * @param webView 用来回填异步结果（可为 null —— 只做文件操作时不需要）
+     */
     public FileBridge(Context ctx) {
+        this(ctx, null);
+    }
+
+    public FileBridge(Context ctx, WebView webView) {
         this.ctx = ctx.getApplicationContext();
+        this.webViewRef = new java.lang.ref.WeakReference<>(webView);
     }
 
     /** JS 侧唯一入口。必须是实例方法（@JavascriptInterface 的要求），内部转给静态 {@link #handle}。 */
     @JavascriptInterface
     public String api(String method, String payloadJson) {
         return handle(ctx, method, payloadJson);
+    }
+
+    /**
+     * 异步版 HTTP —— **出图必须走这个**。
+     *
+     * <p>为什么必须异步（用户报的"本地部署生图时整个界面卡死"）：
+     * {@code @JavascriptInterface} 是**同步**的：Java 方法返回之前，
+     * WebView 的 JS 线程一直被占着。文件读写几十毫秒无所谓，
+     * 但出图要 20~40 秒 —— 这期间 JS 完全停摆，界面就是一具死尸
+     * （转圈不动、按钮点不了）。第三方平台走的是普通 fetch，天生异步，
+     * 所以从来不会卡。这就是"别的接口没事、只有本地部署卡"的原因。
+     *
+     * <p>做法：立刻返回一个请求 id，真正的请求丢到后台线程池里跑，
+     * 跑完用 {@code evaluateJavascript} 回调
+     * {@code window.__dhpHttpDone(id, ok, status, bodyOrError)}。
+     * JS 侧包成 Promise，和 fetch 一样 await。
+     *
+     * <p>注意 body 可能很大（base64 图几百 KB），用 JSONObject.quote 转义后
+     * 直接内联进 JS 字符串 —— 不经过 String.format 免得被 % 搞坏。
+     */
+    @JavascriptInterface
+    public void httpAsync(final String reqId, final String method, final String url,
+                          final String headersJson, final String body, final int timeoutMs) {
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                String okFlag = "false";
+                String status = "0";
+                String payload = "";
+                try {
+                    JSONObject p = new JSONObject();
+                    p.put("url", url);
+                    p.put("body", body);
+                    p.put("timeoutMs", timeoutMs);
+                    if (headersJson != null && !headersJson.isEmpty()) {
+                        p.put("headers", new JSONObject(headersJson));
+                    }
+                    String raw = handle(ctx, "POST".equalsIgnoreCase(method) ? "httpPost" : "httpGet", p.toString());
+                    JSONObject res = new JSONObject(raw);
+                    if (res.optBoolean("ok")) {
+                        JSONObject v = res.optJSONObject("value");
+                        if (v != null) {
+                            okFlag = "true";
+                            status = String.valueOf(v.optInt("status", 0));
+                            payload = v.optString("body", "");
+                        } else {
+                            payload = "响应缺少 value";
+                        }
+                    } else {
+                        payload = res.optString("error", "请求失败");
+                    }
+                } catch (Throwable t) {
+                    payload = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
+                }
+                deliver(reqId, "true".equals(okFlag), status, payload);
+            }
+        });
+    }
+
+    /**
+     * 把结果送回 JS。必须在 UI 线程调 evaluateJavascript。
+     *
+     * <p>payload 用 JSONObject.quote 转义（它会把引号、换行、反斜杠都处理好），
+     * 这样几百 KB 的 base64 也能安全地内联成一个 JS 字符串字面量。
+     */
+    private void deliver(final String reqId, final boolean ok, final String status, final String payload) {
+        final WebView wv = webViewRef.get();
+        if (wv == null) return;
+        final String js = "window.__dhpHttpDone && window.__dhpHttpDone("
+                + JSONObject.quote(reqId) + ","
+                + ok + ","
+                + status + ","
+                + JSONObject.quote(payload) + ")";
+        wv.post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    wv.evaluateJavascript(js, null);
+                } catch (Throwable ignored) {
+                }
+            }
+        });
     }
 
     /** 给 {@link MainActivity} 的下载监听复用：保存 data: URL 到 Download/，成功返回相对路径。 */
@@ -159,6 +267,31 @@ public final class FileBridge {
                     File t = resolve(base, optString(p, "path", null));
                     if (!t.exists() && !t.mkdirs()) throw new IOException("无法创建目录：" + optString(p, "path", ""));
                     return ok();
+                }
+
+                /*
+                 * HTTP 代理：绕过浏览器/WebView 的 CORS 与混合内容限制。
+                 *
+                 * 为什么需要：
+                 *   用户的生图服务常常是自己局域网里跑的小服务
+                 *   （比如 http://192.168.137.1:8899，FastAPI + ComfyUI）。
+                 *   这类自建服务**默认不发 Access-Control-Allow-Origin**，
+                 *   也不实现 OPTIONS 预检（实测返回 405）。
+                 *   浏览器里 fetch 一定会报 "Failed to fetch"，WebView 同理 ——
+                 *   而 RikkaHub 这类原生 App 不受 CORS 约束，所以它能连上。
+                 *   这不是网络不通，是浏览器的同源策略。
+                 *
+                 *   解法：把请求交给原生发。原生 HTTP 没有"源"的概念，
+                 *   既不会被 CORS 拦，也不受 https 页面发 http 请求的限制。
+                 *
+                 * 参数：{ url, headers:{...}, body:"...", timeoutMs }
+                 * 返回：{ status, body } —— body 是原始响应文本（可能是 JSON 或 base64）
+                 */
+                case "httpPost": {
+                    return httpRequest(optString(p, "url", null), "POST", p);
+                }
+                case "httpGet": {
+                    return httpRequest(optString(p, "url", null), "GET", p);
                 }
 
                 case "writeFile": {
@@ -446,6 +579,101 @@ public final class FileBridge {
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    /**
+     * 原生发一个 HTTP 请求，把响应原样带回来。
+     *
+     * <p>存在的唯一目的：绕开浏览器的同源策略。自建的局域网服务
+     * （FastAPI / ComfyUI 那类）通常不发 CORS 头、也不实现 OPTIONS 预检，
+     * 网页里 fetch 必然 "Failed to fetch"；改由原生发就没有这个限制，
+     * 同时也不受"https 页面不能请求 http"的约束（见 MainActivity 里
+     * setMixedContentMode 的说明）。
+     *
+     * <p>用 HttpURLConnection 而不是引入 OkHttp：这个桥只做几件小事，
+     * 不值得为它加一个依赖、把包体撑大。
+     */
+    private static String httpRequest(String url, String method, JSONObject p) {
+        if (url == null || url.isEmpty()) return fail("缺少 url");
+        HttpURLConnection conn = null;
+        try {
+            /*
+             * 跟随重定向要手动处理：HttpURLConnection 对 POST 的 3xx
+             * 默认不会自动跟，而有些反代会先 302 一下。
+             */
+            int timeout = p == null ? 180000 : p.optInt("timeoutMs", 180000);
+            String body = optString(p, "body", null);
+
+            for (int hop = 0; hop < 4; hop++) {
+                URL u = new URL(url);
+                conn = (HttpURLConnection) u.openConnection();
+                conn.setRequestMethod(method);
+                conn.setConnectTimeout(15000);      // 连不上要快点报错，别让用户干等
+                conn.setReadTimeout(timeout);       // 出图很慢，读超时要给足
+                conn.setInstanceFollowRedirects(false);
+                conn.setRequestProperty("Accept", "application/json, image/*, */*");
+
+                JSONObject headers = p == null ? null : p.optJSONObject("headers");
+                if (headers != null) {
+                    java.util.Iterator<String> it = headers.keys();
+                    while (it.hasNext()) {
+                        String k = it.next();
+                        conn.setRequestProperty(k, headers.optString(k, ""));
+                    }
+                }
+
+                if (body != null && !"GET".equals(method)) {
+                    conn.setDoOutput(true);
+                    byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+                    conn.setFixedLengthStreamingMode(bytes.length);
+                    OutputStream os = conn.getOutputStream();
+                    try {
+                        os.write(bytes);
+                    } finally {
+                        os.close();
+                    }
+                }
+
+                int status = conn.getResponseCode();
+
+                // 3xx → 跟着 Location 再发一次
+                if (status >= 300 && status < 400) {
+                    String loc = conn.getHeaderField("Location");
+                    conn.disconnect();
+                    conn = null;
+                    if (loc == null || loc.isEmpty()) return fail("重定向缺少 Location");
+                    url = new URL(new URL(url), loc).toString();
+                    continue;
+                }
+
+                InputStream in = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
+                String text = in == null ? "" : readAll(in);
+
+                JSONObject value = new JSONObject();
+                value.put("status", status);
+                value.put("body", text);
+                return okValue(value);
+            }
+            return fail("重定向次数过多");
+        } catch (Throwable t) {
+            String msg = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
+            return fail("请求失败：" + msg);
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    /** 把一个流读完成字符串 */
+    private static String readAll(InputStream in) throws IOException {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        try {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+        } finally {
+            try { in.close(); } catch (IOException ignored) {}
+        }
+        return new String(bos.toByteArray(), StandardCharsets.UTF_8);
     }
 
     private static String optString(JSONObject p, String key, String def) {

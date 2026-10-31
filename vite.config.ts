@@ -67,5 +67,19 @@ export default defineConfig({
      * 两边一起保证"打开就能看到自己的东西"。
      */
     strictPort: true,
+    /*
+     * 别监视 scripts/。
+     *
+     * 那里放的是测试脚本，跑测试时会被频繁创建/删除。
+     * 编辑器（以及某些写文件的方式）会先写一个临时文件再改名，
+     * Vite 的 watcher 正好撞上那个 tmp 文件还锁着，直接抛
+     *   EBUSY: resource busy or locked, watch '...tmpdir\\xxx.mjs.tmp'
+     * 整个开发服务器当场崩掉 —— 本会话踩过好几次，每次都要重启。
+     *
+     * 这些文件本来就不属于应用源码，不监视没有任何损失。
+     */
+    watch: {
+      ignored: ['**/scripts/**', '**/data/**', '**/dbpg/**'],
+    },
   },
 });

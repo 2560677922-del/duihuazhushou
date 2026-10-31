@@ -7,6 +7,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { addAsset } from '../lib/imageAssets';
 import { useTagLibraryStore } from '../stores/tagLibrary';
+import { TAG_GROUP_ORDER, tagSubLabel } from '../lib/tagSubZh';
 import { useStorageSettingsStore } from '../stores/storageSettings';
 import { useImageStore } from '../stores/image';
 import { buildTagReference } from '../engine/tagLibrary';
@@ -200,7 +201,14 @@ async function doGenerate() {
         description: prompt.slice(0, 120),
         timestamp: item.timestamp,
         origin: 'tagtool',
-        scene: 'novel',
+        /*
+         * 这里原先填的是 'novel'。
+         *
+         * 标签页直出的图和"小说"没有任何关系，归到冒险那一类才对 ——
+         * 而且小说功能现在已经整体删掉，再往那个分类里塞图，
+         * 图片库的筛选就永远点不到它们了。
+         */
+        scene: 'adventure',
         entityId: 'tags',
       });
     } catch (e) {
@@ -326,7 +334,7 @@ const visibleCount = computed(() =>
  * 一级分类列表 —— NSFW 关掉时**整类隐藏**，不是只筛标签。
  * 顺序固定，不按数量（按数量排序会让分类名每次刷新都在跳）。
  */
-const GROUP_ORDER = ['服装', '角色扮演', '外表', '动作', '场景', '动物', '风格', NSFW_GROUP];
+const GROUP_ORDER = [...TAG_GROUP_ORDER, NSFW_GROUP];
 const visibleGroups = computed(() => {
   const stats = new Map(lib.groupStats.map((g) => [g.name, g.count]));
   return GROUP_ORDER.filter((g) => (showNsfw.value || g !== NSFW_GROUP) && stats.has(g)).map(
@@ -346,30 +354,52 @@ const subIndex = computed(() => {
   return m;
 });
 
-/** 二级分类的中文显示名 */
-const SUB_ZH: Record<string, string> = {
-  outfit: '整装', accents: '配饰', headwear: '头饰', top: '上装', bottom: '下装',
-  footwear: '鞋履', legwear: '腿袜', eyewear: '眼镜', underwear: '内衣',
-  anatomy: '身体', hair: '发型', eyes: '眼睛', demographics: '人口属性',
-  physiological: '生理反应', interaction: '互动', gesture: '手势',
-  posture: '姿态', expression: '表情', camera: '镜头', kinetic: '动态',
-  combat: '战斗', props: '道具', setting: '场景', atmosphere: '氛围',
-  animal: '动物', style: '画风', layout: '构图', handheld: '手持物',
-  weapon: '武器', cosplay: 'cosplay', misc: '其他',
-};
-function subLabel(sub: string): string {
-  /* 新库的二级是英文代号（top/headwear…），按映射表翻；
-     旧库的二级本来就是中文，直接显示。 */
-  if (/[\u4e00-\u9fff]/.test(sub)) return sub;
-  return SUB_ZH[sub] || sub;
-}
+/*
+ * 二级分类的中文显示名来自 src/lib/tagSubZh.ts（唯一的一份）。
+ * 以前这里抄了一份 SUB_ZH，结果新加的 hair_style / pattern 等代号
+ * 在界面上直接露出英文 —— 现在统一了。
+ */
+const subLabel = tagSubLabel;
+
+/**
+ * 二级分类的顺序：**跟着标签库 JSON 里的出现顺序走**。
+ *
+ * 标签库重建时已经按"常用程度"把子类排好了（服装先整装、再上装、再下装…），
+ * 这里如果再按条数降序排一遍，等于把那份顺序又打乱 ——
+ * 用户会看到"配饰"排在"上装"前面这种反直觉的结果。
+ * 所以：有定义顺序就用定义顺序，没出现在数据里的忽略。
+ */
+const subOrderIndex = computed(() => {
+  const m = new Map<string, string[]>();
+  const seen = new Map<string, Set<string>>();
+  for (const t of lib.tags) {
+    if (!t.sub) continue;
+    if (!seen.has(t.group)) {
+      seen.set(t.group, new Set());
+      m.set(t.group, []);
+    }
+    const s = seen.get(t.group)!;
+    if (!s.has(t.sub)) {
+      s.add(t.sub);
+      m.get(t.group)!.push(t.sub);
+    }
+  }
+  return m;
+});
 
 function subsOf(group: string) {
   const inner = subIndex.value.get(group);
   if (!inner) return [];
+  const order = subOrderIndex.value.get(group) || [];
+  const rank = new Map(order.map((s, i) => [s, i]));
   return [...inner.entries()]
     .map(([name, count]) => ({ name, label: subLabel(name), count }))
-    .sort((a, b) => b.count - a.count);
+    .sort((a, b) => {
+      const ra = rank.has(a.name) ? rank.get(a.name)! : 999;
+      const rb = rank.has(b.name) ? rank.get(b.name)! : 999;
+      if (ra !== rb) return ra - rb;
+      return b.count - a.count;
+    });
 }
 
 /** 点一级：换一级（单选），二级清空重选；再点同一个收起 */
@@ -490,8 +520,52 @@ const referenceText = computed(() =>
   [autoReference.value, pickedReference.value].filter(Boolean).join('\n\n'),
 );
 
+/**
+ * 「提示词」—— 只有标签本身，逗号分隔，直接能贴进任何生图工具。
+ *
+ * 为什么不复用 referenceText（用户反馈"复制的东西太多了，实际需要的只是提示词"）：
+ *   referenceText 是**给大模型看的说明书**：
+ *     自动分类参考块（几千字的候选标签表）
+ *     + "【我挑好的标签】xxx"
+ *     + "写提示词时请优先从上面这些标签里选，保持写法完全一致。"
+ *   这些内容对"我想复现这张图"没用 —— 贴到 NovelAI/ComfyUI 里
+ *   只会把说明文字也当成提示词，出来的图反而是错的。
+ *
+ *   所以这里只给**纯标签串**：手挑的 + 自定义的，逗号分隔。
+ */
+const promptOnlyText = computed(() => {
+  const all = [...picked.value, ...settings.customTags];
+  // 去重（用户可能手挑了一个又自己写了一遍）
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of all) {
+    const k = t.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+  }
+  return out.join(', ');
+});
+
+/** 自定义标签输入 */
+const customTagInput = ref('');
+
+function commitCustomTag() {
+  const t = customTagInput.value.trim();
+  if (!t) return;
+  void settings.addCustomTag(t);
+  customTagInput.value = '';
+}
+
 function copyReference() {
   void navigator.clipboard.writeText(referenceText.value);
+}
+
+/** 复制纯提示词（只有标签，逗号分隔） */
+function copyPromptOnly() {
+  const text = promptOnlyText.value;
+  if (!text) return;
+  void navigator.clipboard.writeText(text);
 }
 
 /**
@@ -771,14 +845,29 @@ function clearPicked() {
     </div>
 
     <!-- 已选 -->
-    <div v-if="picked.length" class="picked-box">
+    <!--
+      只在「有手挑标签」或「有自定义标签」时显示。
+      加自定义标签的入口也在这个框里，所以只要用户加过就得一直显示，
+      否则他打了字、点添加，面板却因为"没挑过库里的标签"而不出现 —— 会以为没生效。
+    -->
+    <div v-if="picked.length || settings.customTags.length" class="picked-box">
       <div class="picked-head">
-        <span>已选 {{ picked.length }} 个标签</span>
+        <span>已选 {{ picked.length }} 个标签<template v-if="settings.customTags.length"> · 自定义 {{ settings.customTags.length }} 个</template></span>
         <div class="row">
+          <!--
+            主按钮：复制纯提示词（只有标签，直接能贴进生图工具）。
+            以前这里只有一个「复制参考块」，复制出来是一大段给大模型看的
+            说明书（候选标签表 + 用法说明），贴到生图工具里反而会污染提示词。
+          -->
+          <button class="mini primary" @click="copyPromptOnly" title="只复制标签本身，逗号分隔，可直接贴进生图工具">
+            复制提示词
+          </button>
           <button class="mini" @click="showReference = !showReference">
             {{ showReference ? '隐藏' : '预览' }}参考块
           </button>
-          <button class="mini" @click="copyReference">复制参考块</button>
+          <button class="mini" @click="copyReference" title="复制给大模型看的说明书（含候选标签表和用法说明）">
+            复制参考块
+          </button>
           <button class="mini danger" @click="clearPicked">清空</button>
         </div>
       </div>
@@ -789,7 +878,31 @@ function clearPicked() {
           <span class="x">×</span>
         </button>
       </div>
+
+      <!--
+        自定义标签：标签库里没有的、我自己敲的（角色专属设定之类）。
+        它会同时出现在生图弹窗里 —— 两处读的是同一份数据（storageSettings.customTags）。
+      -->
+      <div class="custom-tag-row">
+        <input type="text" v-model="customTagInput"
+          placeholder="自己加标签，逗号分隔，例如：scar on left eye, black choker"
+          @keyup.enter="commitCustomTag" />
+        <button class="mini" :disabled="!customTagInput.trim()" @click="commitCustomTag">添加</button>
+      </div>
+      <div v-if="settings.customTags.length" class="picked-tags">
+        <button v-for="t in settings.customTags" :key="'c-' + t" class="picked-tag custom"
+          :title="'点一下移除：' + t" @click="settings.removeCustomTag(t)">
+          <span class="pt-en">{{ t }}</span>
+          <span class="x">×</span>
+        </button>
+      </div>
+
+      <!--
+        预览默认显示**纯提示词**（用户要的就是这个）。
+        想看给大模型的完整参考块，点上面「预览参考块」。
+      -->
       <pre v-if="showReference" class="ref-preview">{{ referenceText }}</pre>
+      <pre v-else class="ref-preview prompt-only">{{ promptOnlyText }}</pre>
     </div>
 
 
@@ -974,6 +1087,25 @@ function clearPicked() {
 .picked-tag .x {
   opacity: 0.6;
   margin-left: 3px;
+}
+/* 自定义标签：换个颜色，和"从库里挑的"区分开 */
+.picked-tag.custom {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+/* 自定义标签输入行 */
+.custom-tag-row {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0 6px;
+}
+.custom-tag-row input {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+}
+.custom-tag-row .mini {
+  flex-shrink: 0;
 }
 .ref-preview {
   margin: 0;

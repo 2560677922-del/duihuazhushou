@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // 消息操作条：编辑 / 重新生成 / 分支 / 删除
 //
-// 冒险和小说两个界面都要用同一套操作，所以抽成组件，避免两边各写一遍、
-// 以后改一处忘一处。
+// 冒险对话和（已移除的）小说编辑器原本共用这一套操作，所以抽成组件，
+// 避免两边各写一遍、以后改一处忘一处。现在只剩冒险在用。
 import { ref, nextTick } from 'vue';
 
 const props = defineProps<{
@@ -20,6 +20,15 @@ const props = defineProps<{
   removeLabel?: string;
   /** 二次确认时的提示文字 */
   confirmLabel?: string;
+  /**
+   * 重生成按钮的文字。
+   *
+   * 同一件事在两侧的说法不一样：
+   *   在 AI 那条上点 = 「重新生成」（换个回答）
+   *   在你自己那条上点 = 「重新发送」（拿这句重发一次）
+   * 行为完全一样（都是重做这一轮），但按用户的说法写出来更好认。
+   */
+  regenerateLabel?: string;
 }>();
 
 const emit = defineEmits<{
@@ -94,7 +103,9 @@ function askDelete() {
       </button>
       <button class="ma" @click="startEdit" title="编辑这条内容">✏️ 编辑</button>
       <button class="ma" :disabled="streaming" @click="emit('regenerate')"
-        title="用同样的指令重新生成">🔄 重新生成</button>
+        :title="regenerateLabel ? '把这一轮重做一次' : '用同样的指令重新生成'">
+        🔄 {{ regenerateLabel || '重新生成' }}
+      </button>
       <button class="ma" @click="emit('branch')" title="从这一步复制出一个新会话">🌿 分支</button>
       <button class="ma danger" :class="{ confirm: confirmingDelete }" @click="askDelete"
         :title="confirmingDelete ? '再点一次确认删除' : `删除这条${removeLabel ? '（' + removeLabel + '）' : ''}，不影响另一侧`">

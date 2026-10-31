@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.Gravity;
@@ -125,12 +126,38 @@ public final class MainActivity extends Activity {
         s.setTextZoom(100);
         s.setSaveFormData(true);
 
+        /*
+         * 允许 https 页面里加载 http 资源（混合内容）。
+         *
+         * 为什么必须开：
+         *   本应用的页面来源是 https://dbpg.local（见 APP_URL），
+         *   而用户自己的模型服务常常是局域网里的 http:// —— 比如
+         *   http://192.168.137.1:8899（另一台电脑开的出图服务）。
+         *   Chromium 默认把这种请求当"混合内容"**直接拒掉**，
+         *   表现就是：本地 127.0.0.1 的服务能用（localhost 属于可信来源，
+         *   不受这条限制）、第三方 https 平台也能用，
+         *   唯独局域网里那台 http 服务连不上。
+         *
+         *   实测现象与此完全一致，所以这里放开。
+         *   ALWAYS_ALLOW 比 COMPATIBILITY_MODE 更彻底：
+         *   后者只放行图片/音视频，对 fetch() 的 XHR/JSON 请求仍然拦截，
+         *   而现在要放行的正是 fetch 调用。
+         *
+         * 安全性：WebView 只加载本地 assets 里的页面（shouldInterceptRequest
+         * 拦掉了 dbpg.local 的所有请求），不存在加载外部恶意页面的入口，
+         * 放开这条的风险仅限于我们自己发出去的 API 请求。
+         */
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        }
+
         w.setVerticalScrollBarEnabled(true);
         w.setHorizontalScrollBarEnabled(false);
         w.setWebViewClient(new AppWebViewClient());
         w.setWebChromeClient(new AppWebChromeClient());
         w.setDownloadListener(new AppDownloadListener());
-        w.addJavascriptInterface(new FileBridge(this), "dhp");
+        // 把 WebView 一起传进去：出图这类慢请求要靠它回调结果（见 FileBridge.httpAsync）
+        w.addJavascriptInterface(new FileBridge(this, w), "dhp");
         return w;
     }
 

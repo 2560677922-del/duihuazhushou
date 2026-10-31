@@ -77,6 +77,11 @@ const byId = computed(() => {
  * 返回 assetId —— **会话里只存这个**，不存 dataUrl。
  */
 export async function registerAsset(dataUrl: string, meta: Partial<ImageAsset>): Promise<string> {
+  // ★ 先确保旧表已经在内存里。资产表是**整份**写回的（setIndex），
+  //   如果调用方没先 load 过（内存里只有一张新图），这里就会用
+  //   `[新图]` 覆盖掉用户整个索引 —— 以前"存进去的图下次打开就没了"
+  //   就是这么来的。表只有元数据，很小，读一次不吃亏。
+  await loadAssets();
   const id = newId();
   try {
     await imageFileStore.put(id, dataUrl);
@@ -127,6 +132,8 @@ export async function removeAsset(id: string): Promise<void> {
   const next = { ...urls.value };
   delete next[id];
   urls.value = next;
+  // 必须落盘：不写回索引的话，刷新页面这些"已经没有本体"的记录又会冒出来
+  scheduleSave();
   try {
     await imageFileStore.remove(id);
   } catch {
@@ -139,6 +146,7 @@ export async function removeAllAssets(): Promise<void> {
   const ids = assets.value.map((a) => a.id);
   assets.value = [];
   urls.value = {};
+  scheduleSave(); // 同上：索引必须写回，否则下次打开又"复活"
   for (const id of ids) {
     try {
       await imageFileStore.remove(id);
@@ -168,6 +176,12 @@ export async function loadAssets(): Promise<void> {
 }
 
 async function saveAssets(): Promise<void> {
+  // 没读到旧表就整份覆盖 = 把用户整个图片库抹掉。读失败时这轮先不存，
+  // 下次改动还会再试。读成功（哪怕是空表）loaded 也会是 true。
+  if (!loaded.value) {
+    await loadAssets();
+    if (!loaded.value) return;
+  }
   try {
     await imageFileStore.setIndex(assets.value);
   } catch (e) {

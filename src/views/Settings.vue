@@ -24,6 +24,7 @@ import {
   suffixFromEndpoint,
 } from '../engine/novelai';
 import ImageParamsPanel from '../components/ImageParamsPanel.vue';
+import { resolveCached } from '../lib/lazyImage';
 
 /* ===== 按键音效 ===== */
 import { soundPrefs, playSound } from '../lib/sound';
@@ -40,6 +41,52 @@ const storageSettings = useStorageSettingsStore();
 const appearance = useAppearanceStore();
 const loaded = ref(false);
 const exportJson = ref('');
+
+/**
+ * 风格参考图：把存储里的引用解析成 background-image 能用的 dataURL。
+ *
+ * 为什么需要（用户反馈"图放上去当时显示，再去看就变黑了"）：
+ *   storage.setItem 会把内嵌的 dataURL「外置」到 IndexedDB，
+ *   配置里只留 `blob:<id>` 这种几十字节的短引用（见 lib/storage.ts 的
+ *   externalize 与 lib/lazyImage.ts 的说明）。
+ *   模板以前直接 `backgroundImage: url(${st.thumb})` —— 刚上传那一下
+ *   内存里还是真 dataURL，所以显示正常；重开页面后读到的是 blob:xxx，
+ *   浏览器解析不了这个假地址，就渲染成黑块。
+ *
+ *   正确做法和其他所有图片一致：按需去 blob 库取，取到再显示。
+ *
+ * ⚠ 这段必须放在 imageStore 定义**之后**：下面的 watch 带 immediate，
+ *   组件 setup 时会立刻跑一次，放在前面会撞上
+ *   "Cannot access 'imageStore' before initialization"，
+ *   整个设置页都会白屏。
+ */
+const styleThumbs = ref<Record<string, string>>({});
+
+async function loadStyleThumbs() {
+  const next: Record<string, string> = {};
+  for (const st of imageStore.styleConfigs) {
+    if (!st.thumb) continue;
+    const url = await resolveCached(st.thumb);
+    if (url) next[st._uid] = url;
+  }
+  styleThumbs.value = next;
+}
+
+/** 某套风格该显示的参考图（解析好的 dataURL；没有就是空串） */
+function styleThumbOf(st: { _uid: string; thumb?: string }): string {
+  return styleThumbs.value[st._uid] || '';
+}
+
+/**
+ * 风格列表一变（上传 / 清除 / 切换配置）就重新解析。
+ * 监听拼出来的签名字符串：thumb 是数组里某个对象的字段，
+ * 直接 watch 数组拿不到这种深层变化。
+ */
+watch(
+  () => imageStore.styleConfigs.map((s) => `${s._uid}:${s.thumb || ''}`).join('|'),
+  () => { void loadStyleThumbs(); },
+  { immediate: true },
+);
 const importResult = ref('');
 const apiKeyVisible = ref(false);
 const imageKeyVisible = ref(false);
@@ -160,6 +207,69 @@ const fetchingLlmModels = ref(false);
 const llmModels = ref<string[]>([]);
 const llmModelError = ref('');
 const showLlmModels = ref(false);
+
+/*
+ * 拉取回来的模型列表：搜索 + 多选。
+ *
+ * 为什么需要：中转站一次返回上百个模型（gpt-* / claude-* / gemini-* 混在
+ * 一起），而用户真正要用的就五六个。以前只能"点一个 = 选一个 = 面板关掉"，
+ * 挑 6 个得重复 6 遍「拉取 → 翻找 → 点」。
+ * 现在：上面一个搜索框过滤，每条前面一个勾选框，底部一次把勾中的加进
+ * 这一家（baseUrl / 密钥自动继承），不用反复拉取。
+ */
+const llmModelQuery = ref('');
+const llmSelected = ref<Set<string>>(new Set());
+const llmAddMsg = ref('');
+
+const llmModelsFiltered = computed(() => {
+  const q = llmModelQuery.value.trim().toLowerCase();
+  if (!q) return llmModels.value;
+  return llmModels.value.filter((m) => m.toLowerCase().includes(q));
+});
+
+function isLlmSelected(m: string): boolean {
+  return llmSelected.value.has(m);
+}
+
+function toggleLlmSelected(m: string) {
+  const next = new Set(llmSelected.value);
+  if (next.has(m)) next.delete(m);
+  else next.add(m);
+  llmSelected.value = next;
+}
+
+/** 全选/全不选**当前筛选结果**（不是全部 —— 搜过之后全选应该只选搜出来的） */
+function toggleAllFiltered() {
+  const all = llmModelsFiltered.value;
+  const next = new Set(llmSelected.value);
+  const everySelected = all.length > 0 && all.every((m) => next.has(m));
+  if (everySelected) for (const m of all) next.delete(m);
+  else for (const m of all) next.add(m);
+  llmSelected.value = next;
+}
+
+const allFilteredSelected = computed(
+  () => llmModelsFiltered.value.length > 0 && llmModelsFiltered.value.every((m) => isLlmSelected(m)),
+);
+
+/** 把勾中的模型一次性加进当前这家运营商 */
+async function addSelectedLlmModels() {
+  const cur = api.currentConfig;
+  if (!cur) return;
+  const picked = [...llmSelected.value];
+  if (!picked.length) {
+    llmAddMsg.value = '先勾选要加入的模型';
+    return;
+  }
+  const { added, skipped } = await api.addModelsToProvider(cur._uid, picked);
+  llmAddMsg.value =
+    `已加入 ${added} 个模型` + (skipped ? `（${skipped} 个已存在，跳过）` : '') + '。可在上面「当前使用的模型」里选。';
+  if (added) {
+    llmSelected.value = new Set();
+    showLlmModels.value = false;
+  }
+  setTimeout(() => (llmAddMsg.value = ''), 4000);
+}
 
 onMounted(async () => {
   // 手机上先把次要分区折起来，进页面就是一份"目录"而不是七千像素的长表单
@@ -454,6 +564,12 @@ const imgProviderLabel: Record<string, string> = {
   'novelai-openai': 'NovelAI 中转（OpenAI 格式）',
   'dall-e': 'OpenAI 画图（DALL·E / gpt-image）',
   custom: '自定义接口',
+  /*
+   * 新增：自己电脑/局域网里部署的出图服务（ComfyUI 包装那一类）。
+   * 单独一项而不是让你去选「自定义接口」，因为两者协议不一样 ——
+   * 这类服务走 OpenAI 的 /v1/images/generations，用自定义的请求体会 422。
+   */
+  local: '本地部署（自建服务）',
 };
 
 function patchImage(patch: Record<string, unknown>) {
@@ -581,13 +697,9 @@ function useImageModel(model: string) {
   showImgModels.value = false;
 }
 
-function useLlmModel(model: string) {
-  if (currentConfig.value) {
-    currentConfig.value.model = model;
-    api.save();
-  }
-  showLlmModels.value = false;
-}
+// 注：原来这里有个 useLlmModel(model)（点一下就直接切换当前模型并关面板）。
+// 现在拉取面板改成"勾选多个 → 一次加入这家"，选中模型改由上方
+// 「当前使用的模型」下拉负责，所以这个函数没有调用点了，删掉。
 
 // 注：图片库的"下载 / 删除 / 清理"现在由 GalleryPanel 组件负责，
 // 这里不再需要本地的 downloadGenerated（已随第三份实现一起删掉）。
@@ -979,21 +1091,48 @@ function toggleApiKey() {
         {{ llmTestResult.ok ? '✅ ' : '❌ ' }}{{ llmTestResult.message }}
       </div>
 
-      <!-- 拉取到的模型列表 -->
+      <!-- 拉取到的模型列表：可搜索、可多选后批量加入这家 -->
       <div v-if="showLlmModels" class="model-panel">
         <div class="model-panel-head">
           <span v-if="fetchingLlmModels">正在请求模型列表…</span>
           <span v-else-if="llmModelError" class="err">拉取失败</span>
-          <span v-else>共 {{ llmModels.length }} 个可用模型，点击即可选用</span>
+          <span v-else>
+            共 {{ llmModels.length }} 个可用模型
+            <template v-if="llmModelQuery.trim()">
+              · 匹配 {{ llmModelsFiltered.length }} 个
+            </template>
+            · 勾选后一次加入
+          </span>
           <button class="mini-btn" @click="showLlmModels = false">关闭</button>
         </div>
-        <div v-if="llmModelError" class="model-error">{{ llmModelError }}</div>
-        <div v-else class="model-items">
-          <button v-for="m in llmModels" :key="m" class="model-row"
-            :class="{ active: currentConfig?.model === m }" @click="useLlmModel(m)">
-            {{ m }}
-          </button>
-        </div>
+
+        <template v-if="!llmModelError && llmModels.length">
+          <div class="model-tools">
+            <input type="text" v-model="llmModelQuery" class="model-search"
+              placeholder="搜索模型名，例如 claude / gpt / 4o" />
+            <button class="mini-btn" @click="toggleAllFiltered">
+              {{ allFilteredSelected ? '取消全选' : '全选当前' }}
+            </button>
+          </div>
+          <div v-if="!llmModelsFiltered.length" class="model-error">没有匹配「{{ llmModelQuery }}」的模型</div>
+          <div v-else class="model-items">
+            <button v-for="m in llmModelsFiltered" :key="m" class="model-row selectable"
+              :class="{ active: currentConfig?.model === m, picked: isLlmSelected(m) }"
+              @click="toggleLlmSelected(m)">
+              <span class="model-check">{{ isLlmSelected(m) ? '☑' : '☐' }}</span>
+              <span class="model-name">{{ m }}</span>
+              <span v-if="currentConfig?.model === m" class="model-tag">当前</span>
+            </button>
+          </div>
+          <div class="model-panel-foot">
+            <span class="dim">已勾选 {{ llmSelected.size }} 个</span>
+            <span v-if="llmAddMsg" class="ok-msg">{{ llmAddMsg }}</span>
+            <button class="mini-btn primary" :disabled="!llmSelected.size" @click="addSelectedLlmModels">
+              加入这家（{{ llmSelected.size }}）
+            </button>
+          </div>
+        </template>
+        <div v-else-if="llmModelError" class="model-error">{{ llmModelError }}</div>
       </div>
 
       <div class="row" v-if="currentConfig" style="margin-top: 8px;">
@@ -1084,9 +1223,22 @@ function toggleApiKey() {
         <div v-if="imageStore.currentApi.provider !== 'novelai'" class="row" style="margin-top: 8px;">
           <div class="col" style="flex: 2;">
             <label>请求地址（Base URL）<span class="hint-inline">中转站填到 /v1 即可，程序自动补全端点</span></label>
-            <p class="hint" style="margin: 6px 0 0;">填好地址和密钥后，点「📥 拉取模型列表」自动读取可用模型。</p>
+            <!--
+              本地部署单独给一句说明：
+              这类服务的地址经常被填成带 /v1 的形式（http://ip:8899/v1），
+              而我们自己会补 /v1/images/generations，两个一拼就成了
+              /v1/v1/images/generations —— 直接 404。所以这里明确要求填到端口。
+            -->
+            <p v-if="imageStore.currentApi.provider === 'local'" class="hint" style="margin: 6px 0 0;">
+              填到<strong>端口</strong>为止，别带 <code>/v1</code>。例如
+              <code>http://192.168.137.1:8899</code> ——
+              端点会自动拼成 <code>/v1/images/generations</code>。<br />
+              手机和电脑必须连同一个网络（或那台电脑的热点）；地址是 <code>http://</code>
+              也可以，程序已放开该限制。
+            </p>
+            <p v-else class="hint" style="margin: 6px 0 0;">填好地址和密钥后，点「📥 拉取模型列表」自动读取可用模型。</p>
             <input type="text" :value="imageStore.currentApi.baseUrl"
-              placeholder="https://api.example.com/v1"
+              :placeholder="imageStore.currentApi.provider === 'local' ? 'http://192.168.1.100:8899' : 'https://api.example.com/v1'"
               @change="patchImage({ baseUrl: ($event.target as HTMLInputElement).value })" />
           </div>
           <div class="col" style="flex: 2;">
@@ -1317,8 +1469,9 @@ function toggleApiKey() {
         <div v-for="st in imageStore.styleConfigs" :key="st._uid" class="style-card"
           :class="{ active: st._uid === imageStore.currentStyleId }"
           @click="imageStore.setCurrentStyle(st._uid)">
-          <div class="sc-thumb" :style="st.thumb ? { backgroundImage: `url(${st.thumb})` } : {}">
-            <span v-if="!st.thumb" class="sc-thumb-empty">🎨</span>
+          <div class="sc-thumb"
+            :style="styleThumbOf(st) ? { backgroundImage: `url(${styleThumbOf(st)})` } : {}">
+            <span v-if="!styleThumbOf(st)" class="sc-thumb-empty">🎨</span>
             <!-- 换风格参考图：点这个小按钮，不触发"选中风格" -->
             <button class="sc-pick"
               title="放一张风格参考图 —— 只是让你直观看这套画风的效果，不会影响出图方式"
@@ -2195,6 +2348,84 @@ function toggleApiKey() {
 }
 .mini-btn.danger {
   color: var(--danger);
+}
+.mini-btn.primary {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  font-weight: 600;
+}
+.mini-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* 拉取面板里的搜索 + 全选行 */
+.model-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.model-search {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  padding: 6px 9px;
+}
+/* 多选行：勾选框 + 名字 + 右侧"当前"标记 */
+.model-row.selectable {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.model-row .model-check {
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-dim);
+}
+.model-row.picked .model-check {
+  color: var(--accent);
+}
+.model-row .model-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-row.picked .model-name {
+  color: var(--text);
+}
+.model-row .model-tag {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
+  font-family: inherit;
+}
+.model-panel-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--code-bg);
+  font-size: 11px;
+}
+.model-panel-foot .dim {
+  color: var(--text-dim);
+}
+.model-panel-foot .ok-msg {
+  flex: 1;
+  color: #4ade80;
+  font-size: 10.5px;
+}
+.model-panel-foot .mini-btn:last-child {
+  margin-left: auto;
 }
 .model-panel {
   margin-top: 10px;

@@ -25,7 +25,18 @@ export interface TagEntry {
 export interface TagCategory {
   id: string;
   name: string;
-  /** 组装参考块时是否默认包含 */
+  /**
+   * 组装参考块时**默认**包含哪几类。
+   *
+   * 只有几个「通用底料」是 true：质量与风格、场景与背景、光线与氛围。
+   * 这些几乎每张图都用得上，而且不会把画面带偏。
+   *
+   * 其余（人数/面部/发色瞳色/服装/动作）默认**关**——
+   * 用户反馈"默认携带的可以只有基础的，不要太多"：
+   * 每类都塞进提示词会让参考块变得很长（几千字），
+   * 既占 token，又容易让模型把不相干的标签也写进画面。
+   * 需要哪类，在生图弹窗里勾上即可（也可以填自定义标签）。
+   */
   defaultOn: boolean;
   tags: TagEntry[];
 }
@@ -57,7 +68,7 @@ export const TAG_CATEGORIES: TagCategory[] = [
   {
     id: 'count',
     name: '人数与构图',
-    defaultOn: true,
+    defaultOn: false,
     tags: [
       { tag: '1girl', zh: '一名女性' },
       { tag: '1boy', zh: '一名男性' },
@@ -83,7 +94,7 @@ export const TAG_CATEGORIES: TagCategory[] = [
   {
     id: 'face',
     name: '面部与表情',
-    defaultOn: true,
+    defaultOn: false,
     tags: [
       { tag: 'smile', zh: '微笑' },
       { tag: 'grin', zh: '咧嘴笑' },
@@ -108,7 +119,7 @@ export const TAG_CATEGORIES: TagCategory[] = [
   {
     id: 'hair_eyes',
     name: '发色发型与瞳色',
-    defaultOn: true,
+    defaultOn: false,
     tags: [
       { tag: 'long hair', zh: '长发' },
       { tag: 'short hair', zh: '短发' },
@@ -177,7 +188,7 @@ export const TAG_CATEGORIES: TagCategory[] = [
   {
     id: 'clothing',
     name: '服装',
-    defaultOn: true,
+    defaultOn: false,
     tags: [
       { tag: 'dress', zh: '连衣裙' },
       { tag: 'long dress', zh: '长裙' },
@@ -231,7 +242,7 @@ export const TAG_CATEGORIES: TagCategory[] = [
   {
     id: 'pose',
     name: '动作与姿势',
-    defaultOn: true,
+    defaultOn: false,
     tags: [
       { tag: 'standing', zh: '站立' },
       { tag: 'sitting', zh: '坐着' },
