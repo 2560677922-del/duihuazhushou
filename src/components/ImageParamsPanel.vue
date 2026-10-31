@@ -12,7 +12,6 @@ import {
   ARTIST_PRESET_EXAMPLES,
   defaultSamplerFor,
 } from '../engine/novelai';
-import { DEFAULT_PROMPT_TEMPLATE } from '../engine/imageGen';
 import { useImageStore } from '../stores/image';
 import type { ImageConfigEntry } from '../stores/image';
 
@@ -28,6 +27,30 @@ const emit = defineEmits<{ changed: [] }>();
 
 function patch(p: Partial<ImageConfigEntry>) {
   imageStore.updateConfig(props.config._uid, p);
+  emit('changed');
+}
+
+/* ---------------- 提示词模板：存档 / 套用 ---------------- */
+
+/** 新存档的名字（留空则自动编号） */
+const tplName = ref('');
+
+/** 把当前模板存成一条具名存档 */
+async function saveTpl() {
+  await imageStore.savePromptTemplate(tplName.value);
+  tplName.value = '';
+  emit('changed');
+}
+
+/** 套用某条存档到当前风格 */
+async function applyTpl(uid: string) {
+  await imageStore.applyPromptTemplate(uid);
+  emit('changed');
+}
+
+/** 恢复内置默认模板 */
+async function resetTpl() {
+  await imageStore.resetPromptTemplate();
   emit('changed');
 }
 
@@ -74,10 +97,6 @@ function randomizeSeed() {
 
 function clearSeed() {
   patch({ seed: 0 });
-}
-
-function resetTemplate() {
-  patch({ promptTemplate: DEFAULT_PROMPT_TEMPLATE });
 }
 
 /** 当前尺寸是否命中预设 */
@@ -242,9 +261,9 @@ function sizeActive(w: number, h: number) {
         <label>
           给 LLM 的提示词模板
           <button class="mini-btn" @click="showTemplate = !showTemplate">
-            {{ showTemplate ? '收起' : '展开编辑' }}
+            {{ showTemplate ? '收起' : '编辑' }}
           </button>
-          <button class="mini-btn" @click="resetTemplate">恢复默认</button>
+          <button class="mini-btn" @click="resetTpl">恢复默认</button>
         </label>
         <textarea
           v-if="showTemplate"
@@ -254,10 +273,27 @@ function sizeActive(w: number, h: number) {
           @change="patch({ promptTemplate: ($event.target as HTMLTextAreaElement).value })"
         ></textarea>
         <p v-else class="preview-box">{{ (config.promptTemplate || '').slice(0, 160) }}…</p>
+
+        <!-- 我的模板：存几套，以后一键套回 -->
+        <div class="tpl-shelf">
+          <div class="tpl-save-row">
+            <input type="text" v-model="tplName" placeholder="给当前模板起个名（可留空）"
+              @keyup.enter="saveTpl" />
+            <button class="mini-btn" @click="saveTpl">存为我的模板</button>
+          </div>
+          <div v-if="imageStore.promptTemplates.length" class="tpl-list">
+            <div v-for="t in imageStore.promptTemplates" :key="t._uid" class="tpl-item">
+              <span class="tpl-name" :title="t.content">{{ t.name }}</span>
+              <button class="mini-btn" @click="applyTpl(t._uid)">套用</button>
+              <button class="mini-btn danger" @click="imageStore.removePromptTemplate(t._uid)">删</button>
+            </div>
+          </div>
+          <p v-else class="tip">还没有自己的模板。改好上面那份，点「存为我的模板」。</p>
+        </div>
+
         <p class="tip">
-          可用占位符：<code v-text="'{{contextText}}'"></code> 场景正文、
-          <code v-text="'{{contextLabel}}'"></code> 场景名称、
-          <code v-text="'{{artistTags}}'"></code> 固定画师串。
+          占位符：<code v-text="'{{contextText}}'"></code> 正文、
+          <code v-text="'{{contextLabel}}'"></code> 名称。
         </p>
       </div>
     </div>
@@ -434,6 +470,48 @@ function sizeActive(w: number, h: number) {
   margin: 0;
   max-height: 60px;
   overflow: hidden;
+}
+
+/* ---- 我的模板（存档 / 套用）---- */
+.tpl-shelf {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+.tpl-save-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.tpl-save-row input {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+}
+.tpl-save-row .mini-btn {
+  flex-shrink: 0;
+}
+.tpl-list {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+.tpl-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+}
+.tpl-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
 }
 .hint-box {
   font-size: 10px;

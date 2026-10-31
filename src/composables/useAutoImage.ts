@@ -10,6 +10,7 @@ import {
   parseImageMarkers,
   stripImageMarkers,
   type ImageAttachment,
+  type ParsedMarker,
 } from '../engine/imageMarker';
 import { generateImage } from '../engine/imageGen';
 import { useImageStore } from '../stores/image';
@@ -82,110 +83,7 @@ export function useAutoImage() {
         };
 
         try {
-          /*
-           * 自动配图这里也要走共用的解析：
-           * 生图接口里指定了 llmConfigId 就该用它，而不是无脑用当前对话模型。
-           */
-          const llmCfg = resolveImageLlmConfig();
-          const useLlm =
-            !imageStore.autoImage.skipOptimization && !!llmCfg?.apiKey && !!llmCfg?.baseUrl;
-
-          const result = await generateImage(
-            useLlm
-              ? {
-                  baseUrl: llmCfg!.baseUrl || '',
-                  apiKey: llmCfg!.apiKey,
-                  model: llmCfg!.model || '',
-                  temperature: llmCfg!.temperature ?? 0.7,
-                  maxTokens: 900,
-                }
-              : null,
-            {
-              provider: cfg.provider,
-              novelaiToken: cfg.novelaiToken,
-              novelaiModel: cfg.novelaiModel,
-              host: cfg.host || undefined,
-              baseUrl: cfg.baseUrl,
-              apiKey: cfg.apiKey,
-              endpoint: cfg.endpoint || undefined,
-              model: cfg.model,
-              ucPreset: cfg.ucPreset,
-              qualityToggle: cfg.qualityToggle,
-              cfgRescale: cfg.cfgRescale,
-              noiseSchedule: cfg.noiseSchedule,
-              sm: cfg.sm,
-              smDyn: cfg.smDyn,
-              autoSmea: cfg.autoSmea,
-              dynamicThresholding: cfg.dynamicThresholding,
-              sampler: cfg.sampler,
-              steps: cfg.steps,
-              width: cfg.width,
-              height: cfg.height,
-              cfgScale: cfg.cfgScale,
-              seed: 0, // 自动配图每次都要新图
-              artistTags: cfg.artistTags,
-              qualityTags: cfg.qualityTags,
-              negativePrompt: cfg.negativePrompt,
-              promptTemplate: cfg.promptTemplate,
-            },
-            {
-              contextMessages: [{ role: 'assistant', content: m.description }],
-              contextWindow: 1,
-              contextLabel,
-              /*
-               * 默认直接用模型给的画面描述（最省 token、也最贴合它选的位置）。
-               *
-               * 但开了"参考预设"就必须走一遍 LLM 优化 ——
-               * 预设内容是在优化那一步拼进 system 的，不优化就无从生效。
-               * 这里显式联动，避免出现"打开了开关却没反应"的困惑。
-               */
-              skipOptimization: !imageStore.autoImage.usePreset,
-              manualPrompt: imageStore.autoImage.usePreset ? undefined : m.description,
-              // 角色 DNA 直接拼进正向提示词，自动配图也能保持角色外观一致
-              dnaTags: dnaStore.selectedDnaTags() || undefined,
-              presetBlock: imageStore.autoImage.usePreset
-                ? buildPresetBlock(
-                    assetsStore.getCurrentPreset(),
-                    imageStore.autoImage.presetMaxChars,
-                    buildImageMacroContext(),
-                  ) || undefined
-                : undefined,
-            },
-          );
-
-          attachment.dataUrl = result.dataUrl;
-          // 记下完整提示词，供"重新生图"原样重发（description 只有截断版）
-          attachment.prompt = result.prompt;
-
-          // 按当前设置把图片落地：本地 dataURL（始终保留），另可上传到 GitHub 仓库
-          const stored = await persistGeneratedImage(
-            result.dataUrl,
-            `冒险/小说配图 ${m.description.slice(0, 40)}`,
-          );
-          // dataUrl 用**本地**副本：远端链接在受限网络下加载不出来，
-          // 只留链接就会变成占位符（raw.githubusercontent.com 常常解析不了）
-          attachment.dataUrl = stored.displayUrl;
-          attachment.remotePath = stored.remotePath;
-          attachment.remoteUrl = stored.remoteUrl;
-          attachment.storage = stored.uploaded ? 'github' : 'browser';
-          if (stored.error) attachment.uploadError = stored.error;
-
-          // 顺手存进图片库，方便统一管理和复用
-          await imageStore.addImage({
-            id: attachment.id,
-            dataUrl: stored.displayUrl,
-            prompt: result.prompt,
-            negativePrompt: result.negativePrompt || '',
-            provider: result.provider,
-            model: result.model,
-            seed: result.seed,
-            timestamp: Date.now(),
-            context: m.description.slice(0, 200),
-            // 小说功能已移除，配图统一归到冒险；原来这里是按
-            // "上下文标签里有没有『章』字"来猜，现在没必要猜了
-            scene: 'adventure',
-            entityId: attachment.id,
-          });
+          await generateOneMarker(attachment, m, cfg, contextLabel);
         } catch (e) {
           attachment.error = e instanceof Error ? e.message : String(e);
           error.value = attachment.error;
@@ -200,6 +98,122 @@ export function useAutoImage() {
     }
 
     return created;
+  }
+
+  /**
+   * 处理单个标记：调生图 → 落地 → 入库。
+   *
+   * 拆出来的原因（用户要求"以后好改、出 bug 好定位"）：
+   * processMarkers 只负责"找标记、限数量、报进度"，
+   * 每张图怎么生、怎么存是另一件事。自动配图出问题时，
+   * 报错一定在这个函数里，不用去循环里翻。
+   *
+   * 失败会抛 —— 由调用方记到 attachment.error。
+   */
+  async function generateOneMarker(
+    attachment: ImageAttachment,
+    m: ParsedMarker,
+    cfg: NonNullable<typeof imageStore.currentConfig>,
+    contextLabel: string,
+  ): Promise<void> {
+    /*
+     * 自动配图也要走共用的 LLM 解析：
+     * 生图接口里指定了 llmConfigId 就该用它，而不是无脑用当前对话模型。
+     */
+    const llmCfg = resolveImageLlmConfig();
+    const useLlm =
+      !imageStore.autoImage.skipOptimization && !!llmCfg?.apiKey && !!llmCfg?.baseUrl;
+
+    const result = await generateImage(
+      useLlm
+        ? {
+            baseUrl: llmCfg!.baseUrl || '',
+            apiKey: llmCfg!.apiKey,
+            model: llmCfg!.model || '',
+            temperature: llmCfg!.temperature ?? 0.7,
+            maxTokens: 900,
+          }
+        : null,
+      {
+        provider: cfg.provider,
+        novelaiToken: cfg.novelaiToken,
+        novelaiModel: cfg.novelaiModel,
+        host: cfg.host || undefined,
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        endpoint: cfg.endpoint || undefined,
+        model: cfg.model,
+        ucPreset: cfg.ucPreset,
+        qualityToggle: cfg.qualityToggle,
+        cfgRescale: cfg.cfgRescale,
+        noiseSchedule: cfg.noiseSchedule,
+        sm: cfg.sm,
+        smDyn: cfg.smDyn,
+        autoSmea: cfg.autoSmea,
+        dynamicThresholding: cfg.dynamicThresholding,
+        sampler: cfg.sampler,
+        steps: cfg.steps,
+        width: cfg.width,
+        height: cfg.height,
+        cfgScale: cfg.cfgScale,
+        seed: 0, // 自动配图每次都要新图
+        artistTags: cfg.artistTags,
+        qualityTags: cfg.qualityTags,
+        negativePrompt: cfg.negativePrompt,
+        promptTemplate: cfg.promptTemplate,
+      },
+      {
+        contextMessages: [{ role: 'assistant', content: m.description }],
+        contextWindow: 1,
+        contextLabel,
+        /*
+         * 默认直接用模型给的画面描述（最省 token、也最贴合它选的位置）。
+         * 开了"参考预设"就必须走一遍 LLM 优化 ——
+         * 预设内容是在优化那一步拼进 system 的，不优化就无从生效。
+         */
+        skipOptimization: !imageStore.autoImage.usePreset,
+        manualPrompt: imageStore.autoImage.usePreset ? undefined : m.description,
+        dnaTags: dnaStore.selectedDnaTags() || undefined,
+        presetBlock: imageStore.autoImage.usePreset
+          ? buildPresetBlock(
+              assetsStore.getCurrentPreset(),
+              imageStore.autoImage.presetMaxChars,
+              buildImageMacroContext(),
+            ) || undefined
+          : undefined,
+      },
+    );
+
+    attachment.dataUrl = result.dataUrl;
+    // 记下完整提示词，供"重新生图"原样重发（description 只有截断版）
+    attachment.prompt = result.prompt;
+
+    // 按当前设置把图片落地：本地 dataURL（始终保留），另可上传到 GitHub 仓库
+    const stored = await persistGeneratedImage(
+      result.dataUrl,
+      `冒险配图 ${m.description.slice(0, 40)}`,
+    );
+    // dataUrl 用本地副本：远端链接在受限网络下加载不出来会变成占位符
+    attachment.dataUrl = stored.displayUrl;
+    attachment.remotePath = stored.remotePath;
+    attachment.remoteUrl = stored.remoteUrl;
+    attachment.storage = stored.uploaded ? 'github' : 'browser';
+    if (stored.error) attachment.uploadError = stored.error;
+
+    // 顺手存进图片库，方便统一管理和复用
+    await imageStore.addImage({
+      id: attachment.id,
+      dataUrl: stored.displayUrl,
+      prompt: result.prompt,
+      negativePrompt: result.negativePrompt || '',
+      provider: result.provider,
+      model: result.model,
+      seed: result.seed,
+      timestamp: Date.now(),
+      context: m.description.slice(0, 200),
+      scene: 'adventure',
+      entityId: attachment.id,
+    });
   }
 
   return {

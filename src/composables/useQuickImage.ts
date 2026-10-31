@@ -11,7 +11,8 @@
 // 两者都走同一套生成与存储，只是触发的发起方不同。
 
 import { ref } from 'vue';
-import { generateImage } from '../engine/imageGen';
+import { generateImage, cleanSceneText } from '../engine/imageGen';
+import type { ImageGenConfig, ImageGenOptions, ImageGenResult } from '../engine/imageGen';
 import { useImageStore } from '../stores/image';
 import { useDnaStore } from '../stores/characterDna';
 import { useStorageSettingsStore } from '../stores/storageSettings';
@@ -22,7 +23,6 @@ import type { ImageAttachment } from '../engine/imageMarker';
 import { buildPresetBlock } from '../engine/presetContent';
 import { useAssetsStore } from '../stores/assets';
 import { resolveImageLlmConfig, buildImageMacroContext } from './imageLlm';
-import { cleanSceneText } from '../engine/imageGen';
 
 /**
  * 超长文本截断：**保住开头**（画面主体）+ 结尾（情绪/收束），砍中间。
@@ -94,117 +94,29 @@ export function useQuickImage() {
     error.value = '';
 
     /*
-     * 先把"不是画面"的东西剔掉，再按"头重脚轻"的方式截断。
-     * 见下面 contextMessages 处的说明。
+     * 先把"不是画面"的东西剔掉，再按"头重脚轻"的方式截断
+     * （为什么这么做见 buildGenOptions 里的说明）。
      */
     const sceneText = headTail(cleanSceneText(text), 6000, 0.7);
 
     try {
-      /*
-       * 提示词优化用的模型：优先生图接口里指定的 llmConfigId，
-       * 没指定才用当前对话模型（见 composables/imageLlm.ts 的说明）。
-       */
       const llm = resolveImageLlmConfig();
       // 指定了 rawPrompt 就走手动模式，不让 LLM 改写
       const manual = override?.rawPrompt?.trim();
       const useLlm = !manual && !!llm?.apiKey;
+
       const result = await generateImage(
         useLlm ? llm : null,
-        {
-          ...cfg,
-          // 用生图配置里的尺寸/步数等，不额外覆盖
-        } as any,
-        {
-          /*
-           * ★ 上下文怎么给，决定了"配图贴不贴这段剧情"。
-           *
-           * 以前是 `text.slice(-3000)` —— 只取**末尾** 3000 字。
-           * 对短消息没事，但真实会话里动辄三四千字，开头那段
-           * （"银发少女推开石门…"）正好是**画面主体最集中的地方**，
-           * 被切掉之后模型只剩结尾的对话和过渡，只能瞎猜——
-           * 这就是"点历史消息的配图会乱配、而最新一条正常"的原因。
-           *
-           * 现在的做法：
-           *   1. 先 cleanSceneText 去掉思维链/代码/元话语（那类内容占比很大）；
-           *   2. 净化后仍然超长时，**保留开头 70% + 结尾 30%** ——
-           *      画面描写通常在开头，情绪/收束在结尾，两头都留住；
-           *      中间那些重复的过程叙述丢掉的代价最小。
-           */
-          contextMessages: [{ role: 'assistant', content: sceneText }],
-          contextWindow: 1,
-          contextLabel,
-          /*
-           * 关键：这里**不跳过** LLM 优化 —— 用户要的就是
-           * "llm 自动优化提示词"。用标记描述直出的话画质和贴合度都差一截。
-           * 只有在没配 LLM（或明确要求手动）时才退回直接使用文本。
-           */
-          skipOptimization: !useLlm,
-          manualPrompt: useLlm ? undefined : manual || text.slice(-500),
-          tagReference: storageSettings.tagReferenceEnabled
-            ? buildTagReference({
-                enabledCategories: storageSettings.tagCategories,
-                perCategory: storageSettings.tagPerCategory,
-              })
-            : undefined,
-          dnaBlock: dnaStore.selectedDnaBlock() || undefined,
-          // 预设参考：默认关闭，开关在「设置 → 提示词处理」旁边
-          presetBlock: imageStore.autoImage.usePreset
-            ? buildPresetBlock(assetsStore.getCurrentPreset(), imageStore.autoImage.presetMaxChars, buildImageMacroContext()) || undefined
-            : undefined,
-          dnaTags: dnaStore.selectedDnaTags() || undefined,
-        },
+        cfg as any,
+        buildGenOptions({ text, sceneText, contextLabel, useLlm, manual }),
       );
 
-      // 落地：按设置存本地或上传 GitHub
-      const stored = await persistGeneratedImage(result.dataUrl, `配图 ${contextLabel}`);
-
-      /*
-       * 图片本体进**图片资产库**，会话里只留一个 assetId 引用。
-       *
-       * 为什么这么做：会话数据要同步、要落盘、要进 GitHub 备份。
-       * 里面塞图片的话，体积随图量一路涨，聊天页越来越慢 ——
-       * 这正是"越用越卡"的一半原因。
-       */
-      /*
-       * 存图片资产库。**失败不能抛** ——
-       * 图已经生成出来了，存不进去也该让用户看到图（退回存 dataUrl 兜底）。
-       * 之前是裸 await，存库一失败整次配图就报错，用户以为生成失败。
-       */
-      let assetId = '';
-      try {
-        assetId = await addAsset(result.dataUrl, {
-          prompt: result.prompt,
-          negativePrompt: result.negativePrompt,
-          provider: result.provider,
-          model: result.model,
-          seed: result.seed,
-        description: result.prompt.slice(0, 120),
-          origin: 'auto',
-          scene: 'adventure',
-          entityId: 'manual',
-        });
-      } catch (e) {
-        console.warn('[配图] 存图片库失败，退回内联方式：', e);
-      }
-
-      const attachment: ImageAttachment = {
-        // 重新生图时复用原 id，updater 就能原地替换而不是多插一张
-        id: override?.reuse?.id ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        markdownIndex: override?.reuse?.markdownIndex ?? index,
-        // description 供界面显示和正文标记，所以截断；完整提示词另存 prompt
-        description: result.prompt.slice(0, 120),
-        prompt: result.prompt,
-        // ★ 会话里只存引用，不存图片本体
-        // 存库失败（assetId 为空）就退回内联 dataUrl，至少这轮能显示
-        assetId: assetId || undefined,
-        dataUrl: assetId ? undefined : stored.displayUrl || result.dataUrl,
-        remotePath: stored.remotePath,
-        remoteUrl: stored.remoteUrl,
-        storage: stored.uploaded ? 'github' : 'browser',
-        uploadError: stored.error,
-        configName: cfg.name,
-        createdAt: Date.now(),
-      };
+      const attachment = await toAttachment(result, {
+        cfg,
+        contextLabel,
+        index,
+        reuse: override?.reuse,
+      });
 
       status.value = '配图已生成';
       setTimeout(() => (status.value = ''), 2500);
@@ -215,6 +127,117 @@ export function useQuickImage() {
     } finally {
       busyFor.value = null;
     }
+  }
+
+  /**
+   * 组装给引擎的选项。
+   *
+   * 单独拆出来是因为这段全是"读各种设置拼一个对象"，
+   * 塞在 generateFor 里会让主流程（生成 → 落库 → 组装附件）淹没在配置里。
+   */
+  function buildGenOptions(args: {
+    text: string;
+    sceneText: string;
+    contextLabel: string;
+    useLlm: boolean;
+    manual?: string;
+  }): ImageGenOptions {
+    const { text, sceneText, contextLabel, useLlm, manual } = args;
+    return {
+      /*
+       * ★ 上下文怎么给，决定了"配图贴不贴这段剧情"。
+       *
+       * 以前是 text.slice(-3000) —— 只取末尾 3000 字。
+       * 真实会话动辄三四千字，开头那段（"银发少女推开石门…"）
+       * 正好是画面主体最集中的地方，被切掉后模型只剩结尾的对话，
+       * 只能瞎猜 —— 这就是"历史消息配图乱配、最新一条正常"的原因。
+       *
+       * 现在：先 cleanSceneText 去掉思维链/代码，超长时保留开头 70% + 结尾 30%。
+       */
+      contextMessages: [{ role: 'assistant', content: sceneText }],
+      contextWindow: 1,
+      contextLabel,
+      // 不跳过 LLM 优化：用户要的就是"llm 自动优化提示词"
+      skipOptimization: !useLlm,
+      manualPrompt: useLlm ? undefined : manual || text.slice(-500),
+      tagReference: storageSettings.tagReferenceEnabled
+        ? buildTagReference({
+            enabledCategories: storageSettings.tagCategories,
+            perCategory: storageSettings.tagPerCategory,
+          })
+        : undefined,
+      dnaBlock: dnaStore.selectedDnaBlock() || undefined,
+      presetBlock: imageStore.autoImage.usePreset
+        ? buildPresetBlock(
+            assetsStore.getCurrentPreset(),
+            imageStore.autoImage.presetMaxChars,
+            buildImageMacroContext(),
+          ) || undefined
+        : undefined,
+      dnaTags: dnaStore.selectedDnaTags() || undefined,
+    };
+  }
+
+  /**
+   * 把生成结果落地成附件：存磁盘 → 进图片资产库 → 组装引用。
+   *
+   * 拆出来的原因同上：这里有"存库失败也不能抛"这类容错，
+   * 混在生图主流程里很容易被后来的改动破坏。
+   */
+  async function toAttachment(
+    result: ImageGenResult,
+    ctx: {
+      cfg: ImageGenConfig & { name?: string };
+      contextLabel: string;
+      index: number;
+      reuse?: ImageAttachment;
+    },
+  ): Promise<ImageAttachment> {
+    const { cfg, contextLabel, index, reuse } = ctx;
+
+    // 落地：按设置存本地或上传 GitHub
+    const stored = await persistGeneratedImage(result.dataUrl, `配图 ${contextLabel}`);
+
+    /*
+     * 图片本体进图片资产库，会话里只留 assetId 引用 ——
+     * 会话数据要同步/落盘/备份，塞图片会让体积随图量一路涨。
+     *
+     * **失败不能抛**：图已经生成出来了，存不进库也该让用户看到
+     * （退回内联 dataUrl 兜底）。以前是裸 await，存库一失败整次配图报错。
+     */
+    let assetId = '';
+    try {
+      assetId = await addAsset(result.dataUrl, {
+        prompt: result.prompt,
+        negativePrompt: result.negativePrompt,
+        provider: result.provider,
+        model: result.model,
+        seed: result.seed,
+        description: result.prompt.slice(0, 120),
+        origin: 'auto',
+        scene: 'adventure',
+        entityId: 'manual',
+      });
+    } catch (e) {
+      console.warn('[配图] 存图片库失败，退回内联方式：', e);
+    }
+
+    return {
+      // 重新生图时复用原 id，updater 就能原地替换而不是多插一张
+      id: reuse?.id ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      markdownIndex: reuse?.markdownIndex ?? index,
+      // description 供界面显示和正文标记（会截断）；完整提示词另存 prompt
+      description: result.prompt.slice(0, 120),
+      prompt: result.prompt,
+      assetId: assetId || undefined,
+      dataUrl: assetId ? undefined : stored.displayUrl || result.dataUrl,
+      remotePath: stored.remotePath,
+      remoteUrl: stored.remoteUrl,
+      storage: stored.uploaded ? 'github' : 'browser',
+      uploadError: stored.error,
+      configName: cfg.name,
+      createdAt: Date.now(),
+    };
   }
 
   /**

@@ -598,6 +598,76 @@ const history = computed<ChatMessage[]>(() => {
   return out;
 });
 
+/**
+ * 组装"重新生成"时的历史：截到被替换那条之前。
+ *
+ * 为什么单独抽出来：重新生成时模型不该看到自己的旧答案，
+ * 否则它会倾向重复它。这段"按 id 截断再展开"的逻辑放在
+ * sendAction 里会让主流程多一个分支，拆出来主函数只剩一行调用。
+ */
+function historyForRegenerate(replaceId: string): ChatMessage[] {
+  const s = currentSession.value;
+  if (!s) return history.value;
+  const idx = s.actions.findIndex((a) => a.id === replaceId);
+  const out: ChatMessage[] = [];
+  if (s.sceneDescription) out.push({ role: 'assistant', content: s.sceneDescription });
+  s.actions.slice(0, idx < 0 ? s.actions.length : idx).forEach((a) => {
+    if (a.user?.trim()) out.push({ role: 'user', content: a.user });
+    if (a.ai?.trim()) out.push({ role: 'assistant', content: a.ai });
+  });
+  return out;
+}
+
+/**
+ * 组装发给模型的最终消息列表。
+ *
+ * 失败时把原因写进 errorMessage 并返回 null —— 调用方（sendAction）
+ * 看到 null 直接 return，不用关心具体是哪一步没过。
+ */
+function buildFinalMessages(baseHistory: ChatMessage[], action: string): ChatMessage[] | null {
+  const presetRaw = assets.getCurrentPreset();
+  if (!presetRaw) {
+    errorMessage.value = '请先选择一个预设（在「资产」页导入并启用）';
+    return null;
+  }
+  const preset = OpenAIPreset.fromJSON(presetRaw);
+  const character = assets.getCurrentCharacter();
+  const worldBooks = assets.getCurrentWorldBooks().map((w) =>
+    WorldBook.fromJSON(w).toStandaloneJSON(),
+  );
+  /*
+   * 正则要不要作用在"发给模型的上下文"上，由用户选（设置 → 数据与上下文）。
+   * 关掉（默认）= 跑正则：带 promptOnly 的规则生效、markdownOnly 的跳过；
+   * 打开 = 原文直发，连提示词类正则也不跑。
+   */
+  const regexScripts = storageSettings.llmContextRaw
+    ? []
+    : assets.getCurrentRegexScripts();
+
+  const result = assemblePrompt({
+    preset,
+    characterCard: character,
+    worldBooks,
+    regexScripts,
+    chatHistory: [...baseHistory, { role: 'user' as const, content: action }],
+    contextWindowTokens: api.currentConfig?.contextWindow,
+    userLookbackTokens: api.currentConfig?.userLookbackTokens,
+  });
+
+  // 告诉模型可以用 [[IMG: 描述]] 自行选择配图位置（只作本次请求的附加指令）
+  if (imageStore.autoImage.enabled) {
+    const msgs = result.finalMessages;
+    const tail = msgs[msgs.length - 1];
+    if (tail) {
+      msgs[msgs.length - 1] = {
+        ...tail,
+        content: tail.content + imageMarkerInstruction(true),
+      };
+    }
+  }
+  return result.finalMessages;
+}
+
 async function sendAction() {
   /*
    * 早退也必须清掉「正在替换哪一条」。
@@ -676,71 +746,11 @@ async function sendAction() {
     }
   };
 
-  const baseHistory = replaceId
-    ? (() => {
-        const s = currentSession.value;
-        if (!s) return history.value;
-        const idx = s.actions.findIndex((a) => a.id === replaceId);
-        const out: ChatMessage[] = [];
-        if (s.sceneDescription) out.push({ role: 'assistant', content: s.sceneDescription });
-        s.actions.slice(0, idx < 0 ? s.actions.length : idx).forEach((a) => {
-          if (a.user?.trim()) out.push({ role: 'user', content: a.user });
-          if (a.ai?.trim()) out.push({ role: 'assistant', content: a.ai });
-        });
-        return out;
-      })()
-    : history.value;
+  const baseHistory = replaceId ? historyForRegenerate(replaceId) : history.value;
 
   try {
-    // 组装 Prompt
-    const presetRaw = assets.getCurrentPreset();
-    if (!presetRaw) {
-      errorMessage.value = '请先选择一个预设（在「资产」页导入并启用）';
-      return;
-    }
-    const preset = OpenAIPreset.fromJSON(presetRaw);
-    const character = assets.getCurrentCharacter();
-    const worldBooks = assets.getCurrentWorldBooks().map((w) =>
-      WorldBook.fromJSON(w).toStandaloneJSON(),
-    );
-    /*
-     * 正则要不要作用在"发给模型的上下文"上，由用户选（设置 → 数据与上下文）。
-     *
-     * 关掉（默认）= 跑正则：带 promptOnly 的规则生效、markdownOnly 的跳过
-     *   —— 也就是"只改显示的美化规则不会污染上下文"。
-     * 打开 = 原文直发：连提示词类正则也不跑，交给模型的是原始文本。
-     */
-    const regexScripts = storageSettings.llmContextRaw
-      ? []
-      : assets.getCurrentRegexScripts();
-
-    const historyWithUser = [
-      ...baseHistory,
-      { role: 'user' as const, content: action },
-    ];
-
-    const result = assemblePrompt({
-      preset,
-      characterCard: character,
-      worldBooks,
-      regexScripts,
-      chatHistory: historyWithUser,
-      contextWindowTokens: api.currentConfig?.contextWindow,
-      userLookbackTokens: api.currentConfig?.userLookbackTokens,
-    });
-
-    // 告诉模型可以用 [[IMG: 描述]] 自行选择配图位置。
-    // 这句只作为本次请求的附加指令，不会写进会话记录。
-    if (imageStore.autoImage.enabled) {
-      const msgs = result.finalMessages;
-      const tail = msgs[msgs.length - 1];
-      if (tail) {
-        msgs[msgs.length - 1] = {
-          ...tail,
-          content: tail.content + imageMarkerInstruction(true),
-        };
-      }
-    }
+    const finalMessages = buildFinalMessages(baseHistory, action);
+    if (!finalMessages) return;
 
     // 调用 API
     const cfg = api.currentConfig;
@@ -755,7 +765,7 @@ async function sendAction() {
 
     await streamChatCompletion(
       { ...cfg },
-      result.finalMessages,
+      finalMessages,
       {
         onToken: (d) => {
           streamOutput.value += d;

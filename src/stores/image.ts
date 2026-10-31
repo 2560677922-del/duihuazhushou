@@ -139,6 +139,26 @@ export interface GeneratedImage {
   entityId: string;
 }
 
+/**
+ * 用户自己保存的「提示词模板」。
+ *
+ * 为什么要单独建库（用户要求）：
+ *   内置的 DEFAULT_PROMPT_TEMPLATE 是程序给的默认值，会被改动覆盖；
+ *   而用户常常想"留几套自己的写法"（写实一套、二次元一套、安静场景一套），
+ *   以后一键套回去。以前只能在风格条目里改那一份，改了就没了。
+ *
+ * 和 ImageStyleEntry.promptTemplate 的关系：
+ *   风格条目里存的仍是"当前真正生效的那一份"（引擎只读它）；
+ *   这里只是**可选的存档**，套用时把它写进当前风格。
+ *   所以删掉存档不会影响正在用的配置。
+ */
+export interface PromptTemplateEntry {
+  _uid: string;
+  name: string;
+  content: string;
+  createdAt: number;
+}
+
 /** 引擎用的合并默认值（API + 风格各取默认后合并） */
 export const DEFAULT_CONFIG: ImageConfigEntry = {
   ...{
@@ -404,6 +424,56 @@ export const useImageStore = defineStore('image', () => {
    */
   const quickAiOnly = ref(true);
 
+  /**
+   * 用户保存的提示词模板库（可多套，一键套用）。
+   * 空数组 = 只用内置默认 / 当前风格里那份。
+   */
+  const promptTemplates = ref<PromptTemplateEntry[]>([]);
+
+  /** 把当前风格里的模板存成一个具名存档 */
+  async function savePromptTemplate(name: string): Promise<PromptTemplateEntry | undefined> {
+    const style = currentStyle.value;
+    if (!style) return undefined;
+    const content = (style.promptTemplate || DEFAULT_PROMPT_TEMPLATE).trim();
+    if (!content) return undefined;
+    const entry: PromptTemplateEntry = {
+      _uid: genId('tpl'),
+      name: (name || '').trim() || `模板 ${promptTemplates.value.length + 1}`,
+      content,
+      createdAt: Date.now(),
+    };
+    promptTemplates.value = [entry, ...promptTemplates.value];
+    await save();
+    return entry;
+  }
+
+  /** 套用某个存档到当前风格（立刻生效） */
+  async function applyPromptTemplate(uid: string) {
+    const tpl = promptTemplates.value.find((t) => t._uid === uid);
+    const style = currentStyle.value;
+    if (!tpl || !style) return;
+    await updateStyle(style._uid, { promptTemplate: tpl.content });
+  }
+
+  async function removePromptTemplate(uid: string) {
+    promptTemplates.value = promptTemplates.value.filter((t) => t._uid !== uid);
+    await save();
+  }
+
+  async function renamePromptTemplate(uid: string, name: string) {
+    const tpl = promptTemplates.value.find((t) => t._uid === uid);
+    if (!tpl) return;
+    tpl.name = name.trim() || tpl.name;
+    await save();
+  }
+
+  /** 恢复内置默认模板 */
+  async function resetPromptTemplate() {
+    const style = currentStyle.value;
+    if (!style) return;
+    await updateStyle(style._uid, { promptTemplate: DEFAULT_PROMPT_TEMPLATE });
+  }
+
   const currentApi = computed(() =>
     apiConfigs.value.find((c) => c._uid === currentApiId.value),
   );
@@ -482,6 +552,7 @@ export const useImageStore = defineStore('image', () => {
       quickStrength,
       storedContextWindow,
       storedAiOnly,
+      storedTemplates,
     ] = await Promise.all([
       store.getItem<Partial<ImageApiEntry>[]>('imageApiConfigs'),
       store.getItem<Partial<ImageStyleEntry>[]>('imageStyleConfigs'),
@@ -497,6 +568,7 @@ export const useImageStore = defineStore('image', () => {
       store.getItem<number>('quickReferenceStrength'),
       store.getItem<number>('quickContextWindow'),
       store.getItem<boolean>('quickAiOnly'),
+      store.getItem<PromptTemplateEntry[]>('promptTemplates'),
     ]);
 
     let apis = (storedApis ?? []).map(migrateApi);
@@ -541,6 +613,7 @@ export const useImageStore = defineStore('image', () => {
         ? Math.max(1, Math.min(20, storedContextWindow))
         : 5;
     quickAiOnly.value = storedAiOnly !== false;
+    promptTemplates.value = Array.isArray(storedTemplates) ? storedTemplates : [];
 
     // 一份都没有就建一套默认的，保证界面和生图都能用
     let needSave = false;
@@ -580,6 +653,7 @@ export const useImageStore = defineStore('image', () => {
       store.setItem('quickReferenceStrength', quickReferenceStrength.value),
       store.setItem('quickContextWindow', quickContextWindow.value),
       store.setItem('quickAiOnly', quickAiOnly.value),
+      store.setItem('promptTemplates', promptTemplates.value),
     ]);
   }
 
@@ -768,6 +842,12 @@ export const useImageStore = defineStore('image', () => {
     quickReferenceStrength,
     quickContextWindow,
     quickAiOnly,
+    promptTemplates,
+    savePromptTemplate,
+    applyPromptTemplate,
+    removePromptTemplate,
+    renamePromptTemplate,
+    resetPromptTemplate,
     updateQuickContext,
     currentConfig,
     imagesForEntity,
