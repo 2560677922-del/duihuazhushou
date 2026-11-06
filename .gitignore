@@ -13,6 +13,9 @@ data/
 .idea/
 Thumbs.db
 
+# WorkBuddy 本地工作记录（逐日 memory 日志），不进仓库
+.workbuddy/
+
 # 标签翻译脚本的密钥
 .env-translate
 
