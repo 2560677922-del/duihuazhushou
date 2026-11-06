@@ -92,6 +92,11 @@ async function boot() {
     import('./bridge/nativeBridge').then((m) => m.installNativeBridge()).catch((e) => {
       console.warn('[原生桥接] 加载失败（不影响网页使用）：', e);
     });
+    // 一次性数据迁移通道（原生 → web 分页拉取，只读导出）。
+    // 与业务桥分开：迁移用完就可以删，不会长期挂在页面上。
+    import('./bridge/dataExport').then((m) => m.installDataExport()).catch((e) => {
+      console.warn('[数据迁移] 加载失败（不影响网页使用）：', e);
+    });
   } catch (e) {
     console.warn('[原生桥接] 初始化失败（不影响网页使用）：', e);
   }

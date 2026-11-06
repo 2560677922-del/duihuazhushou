@@ -41,6 +41,10 @@ class SettingsActivity : Activity() {
 
         findViewById<TextView>(R.id.set_back).setOnClickListener { finish() }
         findViewById<TextView>(R.id.set_reset).setOnClickListener { reset() }
+        // 数据迁移：独立页面，这里只做入口（迁移逻辑不塞进设置页）
+        findViewById<TextView>(R.id.set_migrate).setOnClickListener {
+            startActivity(android.content.Intent(this, com.dbpg.duihuazhushou.data.MigrationActivity::class.java))
+        }
 
         // 字号 12.0 ~ 24.0 sp，按 0.1 步进
         sizeBar.max = 120

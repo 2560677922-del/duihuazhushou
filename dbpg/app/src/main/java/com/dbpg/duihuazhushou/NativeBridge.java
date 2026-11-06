@@ -59,4 +59,36 @@ public final class NativeBridge {
             android.util.Log.w("DHP", "原生图图失败", t);
         }
     }
+
+    // ------------------------------------------------------------------
+    // 一次性数据迁移回调（web → 原生）
+    //
+    // 迁移是"原生主动要、web 回调给"的分页流程：原生 evaluateJavascript 调
+    // __dhpData.index()/session()/asset()，web 处理完调这四个方法把结果送回来。
+    // 每页只过一个会话/一张图，避免一次性把几十 MB base64 塞进一个字符串。
+    // ------------------------------------------------------------------
+
+    @JavascriptInterface
+    public void onMigrationIndex(String token, String json) {
+        com.dbpg.duihuazhushou.data.MigrationCoordinator.INSTANCE
+                .onIndex(token == null ? "" : token, json == null ? "{}" : json);
+    }
+
+    @JavascriptInterface
+    public void onMigrationSession(String token, String id, String json) {
+        com.dbpg.duihuazhushou.data.MigrationCoordinator.INSTANCE
+                .onSession(token == null ? "" : token, id == null ? "" : id, json == null ? "" : json);
+    }
+
+    @JavascriptInterface
+    public void onMigrationCharacter(String token, String uid, String json) {
+        com.dbpg.duihuazhushou.data.MigrationCoordinator.INSTANCE
+                .onCharacter(token == null ? "" : token, uid == null ? "" : uid, json == null ? "" : json);
+    }
+
+    @JavascriptInterface
+    public void onMigrationAsset(String token, String id, String dataUrl) {
+        com.dbpg.duihuazhushou.data.MigrationCoordinator.INSTANCE
+                .onAsset(token == null ? "" : token, id == null ? "" : id, dataUrl == null ? "" : dataUrl);
+    }
 }

@@ -187,6 +187,17 @@
             android:textSize="14sp" />
 
         <TextView
+            android:id="@+id/set_migrate"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:background="#161A22"
+            android:padding="14dp"
+            android:text="数据迁移（网页 → 原生）"
+            android:textColor="#8FA6C8"
+            android:textSize="14sp" />
+
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"

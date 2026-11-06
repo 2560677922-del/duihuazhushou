@@ -6,7 +6,9 @@ dist/
 .vite/
 
 # 本地持久化数据目录：包含 API Key 等敏感信息，开源/推送时不要提交
-data/
+# 只忽略仓库根目录的 data/，不能写成 data/ —— 否则会连 Android 源码包
+# com/dbpg/duihuazhushou/data/ 一起忽略，新加的类根本提交不上去
+/data/
 
 # 编辑器与系统文件
 .vscode/

@@ -63,6 +63,13 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.DHP.Content" />
 
+        <!-- 一次性数据迁移：把网页 IndexedDB 里的会话/角色/图片复制到原生存储 -->
+        <activity
+            android:name=".data.MigrationActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
+
         <!-- 原生外观设置：字号/行距/气泡宽度/隐藏思维链 -->
         <activity
             android:name=".appearance.SettingsActivity"
