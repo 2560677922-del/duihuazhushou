@@ -644,7 +644,19 @@ onMounted(async () => {
      */
     useCharacter: async (rawJson: string) => {
       try {
-        const obj = await assets.importCharacter(JSON.parse(rawJson));
+        const raw = JSON.parse(rawJson);
+        const name = (raw?.data?.name ?? raw?.name ?? '').toString().trim();
+
+        /*
+         * 按名字去重。
+         *
+         * 原生角色库每次点「用它开聊」都会把卡发过来；如果直接 import，
+         * 同一张卡会被重复建档，用几次角色库就变成一列同名副本。
+         * 同名直接复用已有条目（角色卡本身不合并、不覆盖）。
+         */
+        let obj = name ? assets.characters.find((c: any) => c?.name === name) : undefined;
+        if (!obj) obj = await assets.importCharacter(raw);
+
         assets.currentCharacterId = obj._uid;
         await assets.save();
         await adventure.addSession(obj.name || '新的冒险', '');
