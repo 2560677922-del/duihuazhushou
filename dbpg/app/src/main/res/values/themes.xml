@@ -34,4 +34,23 @@
         <item name="android:textSize">13sp</item>
         <item name="android:background">?android:attr/selectableItemBackground</item>
     </style>
+
+    <!-- 详情页分段标题 -->
+    <style name="DetailSectionTitle">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:paddingTop">16dp</item>
+        <item name="android:textColor">#8FA6C8</item>
+        <item name="android:textSize">12sp</item>
+    </style>
+
+    <!-- 详情页分段正文：可选中的正文，行距略松 -->
+    <style name="DetailSectionBody">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:paddingTop">6dp</item>
+        <item name="android:textColor">#D6DCE8</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:lineSpacingMultiplier">1.35</item>
+    </style>
 </resources>

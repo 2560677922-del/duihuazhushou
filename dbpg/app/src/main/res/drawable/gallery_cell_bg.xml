@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图片库格子：小圆角，配 clipToOutline 裁剪缩略图 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#1B2029" />
+    <corners android:radius="6dp" />
+</shape>

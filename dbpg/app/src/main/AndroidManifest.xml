@@ -5,7 +5,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- 不用申请存储权限：所有文件都写在 App 私有目录（filesDir），不需要 WRITE_EXTERNAL_STORAGE -->
+    <!-- 只有 Android 9 及以下「保存到相册」才需要；Android 10+ 走 MediaStore 免权限 -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <!-- 图片本身写在 App 私有目录（免权限）；仅「保存到相册」在 Android 9 及以下需要写权限 -->
 
     <application
         android:allowBackup="true"
@@ -51,9 +56,35 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.DHP.Content" />
 
+        <!-- 角色卡详情（全屏）：分段展示设定，可翻备用开场白 -->
+        <activity
+            android:name=".character.CharacterDetailActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
+
         <!-- 原生外观设置：字号/行距/气泡宽度/隐藏思维链 -->
         <activity
             android:name=".appearance.SettingsActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
+        <!-- 原生会话列表：底部「聊天」tab 落地页，点一条切会话并进原生聊天 -->
+        <activity
+            android:name=".session.SessionListActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
+
+        <!-- 原生图片库：生成图 + 聊天图，网格预览、全屏查看、保存相册 -->
+        <activity
+            android:name=".gallery.GalleryActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
+
+        <activity
+            android:name=".gallery.ImageViewerActivity"
             android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.DHP.Content" />

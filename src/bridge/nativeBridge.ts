@@ -80,6 +80,48 @@ function isNativeAvailable(): boolean {
   return typeof (window as any).AndroidNative !== 'undefined';
 }
 
+/**
+ * 会话列表（返回 **字符串**）。
+ *
+ * 为什么不是对象：Android 的 evaluateJavascript 只能把返回值序列化成 JSON，
+ * 直接返回对象在原生端会变成 "[object Object]"。这里统一 stringify，
+ * 原生端用 JSONTokener 解一层就是干净的 JSON。
+ */
+function getSessions(): string {
+  const adventure = useAdventureStore();
+  try {
+    return JSON.stringify(
+      adventure.sessions.map((s) => ({
+        id: s.id,
+        title: s.title || '',
+        count: s.actions?.length || 0,
+        updatedAt: s.updatedAt || s.createdAt || 0,
+        current: s.id === adventure.currentSessionId,
+      })),
+    );
+  } catch (e) {
+    console.warn('[原生桥接] 读取会话列表失败', e);
+    return '[]';
+  }
+}
+
+/**
+ * 切到指定会话，并让网页拉起原生聊天。
+ *
+ * 只做「切换 + 打开」，不新建、不删除 —— 会话的增删仍归网页管，
+ * 原生列表是只读视图，避免两边各写一份导致状态打架。
+ */
+async function openSession(id: string): Promise<void> {
+  const adventure = useAdventureStore();
+  if (!id || !adventure.sessions.some((s) => s.id === id)) return;
+  await adventure.switchSession(id);
+  try {
+    (window as any).AndroidNative?.openNativeChat('');
+  } catch (e) {
+    console.warn('[原生桥接] 打开原生聊天失败', e);
+  }
+}
+
 let buttonInjected = false;
 function injectEntryButton(): void {
   if (buttonInjected || !isNativeAvailable()) return;
@@ -114,7 +156,7 @@ function injectEntryButton(): void {
 
 /** 在 app 启动后调用（见 main.ts）。 */
 export function installNativeBridge(): void {
-  (window as any).__dhpNative = { getSnapshot, isNativeAvailable };
+  (window as any).__dhpNative = { getSnapshot, getSessions, openSession, isNativeAvailable };
   // WebView 注入 AndroidNative 略晚于页面脚本执行，轮询一小会儿确保按钮出现
   let tries = 0;
   const timer = setInterval(() => {

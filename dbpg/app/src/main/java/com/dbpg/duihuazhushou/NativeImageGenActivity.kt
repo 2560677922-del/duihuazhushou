@@ -43,6 +43,10 @@ class NativeImageGenActivity : Activity() {
         results = findViewById(R.id.gen_results)
 
         findViewById<TextView>(R.id.gen_close).setOnClickListener { finish() }
+        // 生成完想回看历史图：直接进原生图片库，不用绕网页
+        findViewById<TextView>(R.id.gen_gallery).setOnClickListener {
+            startActivity(android.content.Intent(this, com.dbpg.duihuazhushou.gallery.GalleryActivity::class.java))
+        }
         runBtn.setOnClickListener { run() }
 
         // 若网页桥曾把上次的配置放到 Intent 里（可选），这里回填

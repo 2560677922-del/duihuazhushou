@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图片库单格：外层留 2dp 缝，内层正方形裁圆角 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:padding="2dp">
+
+    <com.dbpg.duihuazhushou.gallery.SquareImageView
+        android:id="@+id/gallery_thumb"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/gallery_cell_bg"
+        android:clipToOutline="true"
+        android:contentDescription="生成的图片"
+        android:scaleType="centerCrop" />
+</FrameLayout>

@@ -131,10 +131,8 @@ public final class MainActivity extends Activity {
     private void bindBottomNav(View nav) {
         TextView chat = nav.findViewById(R.id.nav_chat);
         chat.setTextColor(0xFF7FB2FF);
-        chat.setOnClickListener(v -> {
-            // 已经停在网页上，这里只是给个反馈，避免"点了没反应"的错觉
-            Toast.makeText(this, "当前就是聊天页", Toast.LENGTH_SHORT).show();
-        });
+        chat.setOnClickListener(v ->
+                startActivity(new Intent(this, com.dbpg.duihuazhushou.session.SessionListActivity.class)));
 
         nav.findViewById(R.id.nav_character).setOnClickListener(v ->
                 startActivity(new Intent(this, com.dbpg.duihuazhushou.character.CharacterListActivity.class)));

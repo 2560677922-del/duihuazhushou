@@ -4,16 +4,12 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
-import android.text.method.ScrollingMovementMethod
 import android.view.View
-import android.view.ViewGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.dbpg.duihuazhushou.MainActivity
 import com.dbpg.duihuazhushou.R
-import org.json.JSONObject
 
 /**
  * 原生角色卡库。
@@ -29,9 +25,6 @@ class CharacterListActivity : Activity() {
     private companion object {
         const val REQ_IMPORT = 2001
         const val BG = 0xFF0F1115.toInt()
-        const val PANEL = 0xFF171A21.toInt()
-        const val TEXT = 0xFFE6EAF2.toInt()
-        const val MUTED = 0xFF8FA6C8.toInt()
     }
 
     private lateinit var repo: CharacterRepository
@@ -110,44 +103,18 @@ class CharacterListActivity : Activity() {
         }.start()
     }
 
-    // ------------------------------------------------------------ 详情弹窗
+    // ------------------------------------------------------------ 详情页
 
+    /** 解析成功 → 进全屏详情页；坏卡只给删除选项，避免详情页再崩一次。 */
     private fun showDetail(item: CharacterFile) {
-        val card = item.card
-        if (card == null) {
+        if (item.card == null) {
             confirmDelete(item, "这张卡解析失败，可能不是角色卡。要删除它吗？")
             return
         }
-
-        val body = buildString {
-            append(card.description.ifBlank { "（没有描述）" })
-            if (card.scenario.isNotBlank()) append("\n\n场景：").append(card.scenario)
-            if (card.tags.isNotEmpty()) append("\n\n标签：").append(card.tags.joinToString(" "))
-            val extra = card.alternateGreetings.size
-            if (extra > 0) append("\n\n备用开场白：").append(extra).append(" 条")
-            append("\n\n开场白：\n").append(card.firstMessage.ifBlank { "（没有开场白）" })
-        }
-
-        val text = TextView(this).apply {
-            setText(body)
-            setTextColor(TEXT)
-            textSize = 14f
-            setLineSpacing(0f, 1.35f)
-            setPadding(dp(20), dp(8), dp(20), dp(8))
-            movementMethod = ScrollingMovementMethod()
-        }
-        val scroll = android.widget.ScrollView(this).apply {
-            setBackgroundColor(PANEL)
-            addView(text, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        }
-
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle(card.name)
-            .setView(scroll)
-            .setPositiveButton("用它开聊") { _, _ -> startChat(card) }
-            .setNeutralButton("删除") { _, _ -> confirmDelete(item, "删除后本地文件就没了，确定删除《${card.name}》？") }
-            .setNegativeButton("关闭", null)
-            .show()
+        startActivity(
+            Intent(this, CharacterDetailActivity::class.java)
+                .putExtra(CharacterDetailActivity.EXTRA_PATH, item.file.absolutePath)
+        )
     }
 
     private fun confirmDelete(item: CharacterFile, message: String) {
@@ -160,23 +127,6 @@ class CharacterListActivity : Activity() {
             }
             .setNegativeButton("取消", null)
             .show()
-    }
-
-    // ------------------------------------------------------------ 交给网页
-
-    /**
-     * 把卡回传给网页：导入 → 建档 → 建一个新会话 → 网页会自己拉起原生聊天。
-     * 网页里这一步由 `window.__dhpApp.useCharacter(json)` 实现（见 nativeBridge.ts）。
-     */
-    private fun startChat(card: com.dbpg.stcore.character.CharacterCard) {
-        val web = MainActivity.getWebView()
-        if (web == null) {
-            Toast.makeText(this, "网页还在启动，请稍后再试", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val json = JSONObject.quote(CharacterJson.toV2(card))
-        web.evaluateJavascript("window.__dhpApp && window.__dhpApp.useCharacter($json);", null)
-        finish()
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
