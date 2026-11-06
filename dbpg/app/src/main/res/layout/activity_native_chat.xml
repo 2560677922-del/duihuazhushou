@@ -33,6 +33,15 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/chat_gen"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="8dp"
+            android:text="生图"
+            android:textColor="#8FA6C8"
+            android:textSize="14sp" />
+
+        <TextView
             android:id="@+id/chat_import"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

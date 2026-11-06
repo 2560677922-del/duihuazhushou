@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  原生「标签生图」试验页：走纯 Kotlin 原生生图管线（OkHttp + ZIP 解压 + 私有目录落盘）。
+  这是把网页 Tags 页的「生图动作」搬到原生的最小可用版本：
+  标签/提示词先手填，后续可接标签库做选择器。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/app_bg">
+
+    <!-- 顶栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="原生生图（试验）"
+            android:textColor="#E6ECF7"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/gen_close"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="8dp"
+            android:text="关闭"
+            android:textColor="#8FA6C8"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:padding="12dp"
+        android:clipToPadding="false">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <EditText
+                android:id="@+id/gen_url"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="中转站地址，如 https://api.xxx.com/v1/images/generations"
+                android:textColorHint="#5C6678"
+                android:textColor="#E6ECF7"
+                android:textSize="14sp"
+                android:inputType="textUri"
+                android:maxLines="2" />
+
+            <EditText
+                android:id="@+id/gen_key"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="API Key（可留空）"
+                android:textColorHint="#5C6678"
+                android:textColor="#E6ECF7"
+                android:textSize="14sp"
+                android:inputType="text" />
+
+            <EditText
+                android:id="@+id/gen_model"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="模型，如 flux / dall-e-3"
+                android:textColorHint="#5C6678"
+                android:textColor="#E6ECF7"
+                android:textSize="14sp"
+                android:inputType="text" />
+
+            <EditText
+                android:id="@+id/gen_size"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="尺寸，如 1024x1024"
+                android:textColorHint="#5C6678"
+                android:textColor="#E6ECF7"
+                android:textSize="14sp"
+                android:inputType="text" />
+
+            <EditText
+                android:id="@+id/gen_prompt"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minLines="3"
+                android:gravity="top|start"
+                android:hint="标签 / 提示词"
+                android:textColorHint="#5C6678"
+                android:textColor="#E6ECF7"
+                android:textSize="14sp"
+                android:inputType="textMultiLine|textCapSentences" />
+
+            <TextView
+                android:id="@+id/gen_run"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center"
+                android:padding="12dp"
+                android:text="生成"
+                android:textColor="#0D1018"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:background="#6EA8FE" />
+
+            <TextView
+                android:id="@+id/gen_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textColor="#8FA6C8"
+                android:textSize="13sp" />
+
+            <!-- 结果：本地路径解码出来的缩略图 -->
+            <LinearLayout
+                android:id="@+id/gen_results"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="vertical" />
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

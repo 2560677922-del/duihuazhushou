@@ -81,6 +81,7 @@ class NativeChatActivity : Activity() {
         val close = findViewById<TextView>(R.id.chat_close)
         val send = findViewById<TextView>(R.id.chat_send)
         val importBtn = findViewById<TextView>(R.id.chat_import)
+        val genBtn = findViewById<TextView>(R.id.chat_gen)
 
         imageCache = ImageFileCache(this)
         val bubbleMax = (resources.displayMetrics.widthPixels * 0.82f).toInt()
@@ -93,6 +94,7 @@ class NativeChatActivity : Activity() {
         close.setOnClickListener { finish() }
         send.setOnClickListener { sendMessage() }
         importBtn.setOnClickListener { pickJsonl() }
+        genBtn.setOnClickListener { startActivity(Intent(this, NativeImageGenActivity::class.java)) }
     }
 
     override fun onResume() {

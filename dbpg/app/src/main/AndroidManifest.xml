@@ -35,6 +35,14 @@
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.DHP" />
+
+        <!-- 原生「标签生图」试验页：纯 Kotlin 生图管线（OkHttp + ZIP 解压 + 落盘） -->
+        <activity
+            android:name=".NativeImageGenActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP" />
     </application>
 
 </manifest>
