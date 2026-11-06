@@ -85,6 +85,17 @@ async function boot() {
   /* 按键音效：全局代理，一次挂上，以后新加的按钮自动有声音 */
   installSoundFeedback();
 
+  // 原生聊天桥接：只在 App 的 WebView 里激活（window.AndroidNative 存在时
+  // 才会出现"原生聊天"入口按钮），网页版 / 普通浏览器里完全无感。
+  // 放进 .then 之后、等 pinia 真正就绪，桥里读取 store 才不会拿到空值。
+  try {
+    import('./bridge/nativeBridge').then((m) => m.installNativeBridge()).catch((e) => {
+      console.warn('[原生桥接] 加载失败（不影响网页使用）：', e);
+    });
+  } catch (e) {
+    console.warn('[原生桥接] 初始化失败（不影响网页使用）：', e);
+  }
+
   // 外观（背景/主色）单独加载并立即应用，避免先闪一下默认配色
   try {
     await useAppearanceStore().load();

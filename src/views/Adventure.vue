@@ -449,6 +449,8 @@ watch(
 );
 onUnmounted(() => {
   if (genClock) clearInterval(genClock);
+  // 组件卸载时摘掉全局句柄，避免原生端调用到已失效的闭包
+  delete (window as any).__dhpApp;
 });
 /** 当前会话正在生成（别的会话在跑时不显示） */
 const generatingHere = computed(
@@ -613,6 +615,26 @@ onMounted(async () => {
     console.error('加载失败:', e);
   }
   loaded.value = true;
+
+  /*
+   * 原生聊天桥接句柄。
+   *
+   * 原生端（NativeChatActivity）通过 MainActivity 里的 WebView 调
+   * window.__dhpApp.sendUserMessage(text) 来回传用户消息。
+   * 这里直接复用本页既有的 sendAction()（内部走 beginGeneration /
+   * 草稿 / 落库那条真实生成链路），避免原生端另写一份引擎逻辑。
+   *
+   * 注意：只暴露"发消息"一个动作，读快照走 window.__dhpNative.getSnapshot()
+   * （在 bridge/nativeBridge.ts 里挂），两条通道职责分开、互不耦合。
+   */
+  (window as any).__dhpApp = {
+    sendUserMessage: (text: string) => {
+      const t = (text || '').toString().trim();
+      if (!t) return;
+      userInput.value = t;
+      void sendAction();
+    },
+  };
 
   /*
    * 选中要打开的那个会话。
@@ -2142,7 +2164,31 @@ function handleImageGenerated(dataUrl: string) {
   overflow-wrap: anywhere;
   min-width: 0;
   max-width: 100%;
-  overflow-x: clip;
+  /*
+   * 横向锁死用 hidden 而不是 clip：
+   * clip 是 2022 年才稳定的值，老版本 Android System WebView 不认，
+   * 等于没锁死 —— 这正是上一版「超框修复」在手机上失效的根因。
+   * 用 hidden 在所有 WebView 都生效；msg-content 不是吸底输入框的祖先，
+   * 不会破坏 input-area 的 position:sticky。
+   */
+  overflow-x: hidden;
+}
+/* 美化正则会注入带显式宽度的自定义 div / 表格 / 图片，逐层封顶，
+   保证任何注入内容都越不过气泡宽度（hidden 之外再兜一层） */
+.msg-content :deep(*) {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.msg-content :deep(img) {
+  height: auto;
+}
+.msg-content :deep(pre) {
+  /* 长代码只在块内横滚，不把父级顶宽 */
+  overflow-x: auto;
+}
+.msg-content :deep(table) {
+  table-layout: fixed;
+  width: 100%;
 }
 .cursor {
   animation: blink 1s steps(2) infinite;

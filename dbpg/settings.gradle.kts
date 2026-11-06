@@ -21,3 +21,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "dbpg"
 include(":app")
+// 纯 Kotlin 的 SillyTavern 兼容引擎（正则/变量/宏/思维链/图片标记）。
+// 被 :app 的原生聊天界面复用，也自带 JVM 单测验证与原 web 引擎语义一致。
+include(":stcore")

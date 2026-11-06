@@ -1,0 +1,192 @@
+package com.dbpg.stcore
+
+/**
+ * 文本内插图标记（对应 web imageMarker.ts）。
+ * 约定：模型在正文插入 [[IMG: 画面描述]]，应用在其位置生成/插入图片。
+ *
+ * 这里只保留原生渲染真正需要的子集：解析标记、剥离标记、把正文切成「文本/图片」块。
+ * 图片自身存储、版本管理那套（图片资产库）不在引擎层，由调用方通过 dataUrl 提供。
+ */
+
+data class NativeImage(
+    val id: String,
+    val dataUrl: String? = null,
+    val assetId: String? = null,
+    val remoteUrl: String? = null,
+    val description: String = "配图",
+    /** AI 插标记时记录的段落序号；用户直接配图的没有。 */
+    val markdownIndex: Int? = null,
+)
+
+/** 匹配 [[IMG: 描述]] / ［［IMG: 描述］］（含全角方括号）。 */
+val IMAGE_MARKER_RE: Regex = Regex("\\[\\[\\s*IMG\\s*[:：]\\s*([^\\]]+?)\\s*\\]\\]", RegexOption.IGNORE_CASE)
+
+data class ParsedMarker(val description: String, val markdownIndex: Int, val index: Int)
+
+fun parseImageMarkers(text: String): List<ParsedMarker> {
+    val out = mutableListOf<ParsedMarker>()
+    if (text.isEmpty()) return out
+    val paras = mutableListOf<Pair<Int, Int>>() // (start, end) 不含边界空行
+    val re = Regex("\\n\\s*\\n")
+    var last = 0
+    re.findAll(text).forEach { mm ->
+        paras.add(last to mm.range.first)
+        last = mm.range.last + 1
+    }
+    paras.add(last to text.length)
+    val paraText = paras.map { text.substring(it.first, it.second) }
+    val hasContent = paraText.map { stripImageMarkers(it).trim().isNotEmpty() }
+    val renderNo = mutableListOf<Int>()
+    var counter = -1
+    for (i in paras.indices) {
+        if (hasContent[i]) counter++
+        renderNo.add(counter)
+    }
+    IMAGE_MARKER_RE.findAll(text).forEach { m ->
+        var pi = paras.indexOfFirst { m.range.first >= it.first && m.range.first < it.second }
+        if (pi < 0) pi = paras.size - 1
+        var idx = renderNo[pi]
+        if (!hasContent[pi]) {
+            for (i in pi downTo 0) {
+                if (hasContent[i]) { idx = renderNo[i]; break }
+            }
+            if (idx < 0) idx = 0
+        }
+        out.add(ParsedMarker(m.groupValues[1].trim(), maxOf(0, idx), m.range.first))
+    }
+    return out
+}
+
+/** 剥掉所有插图标记（必须用于要送给大模型 / 统计 token 的文本）。 */
+fun stripImageMarkers(text: String): String {
+    if (text.isEmpty()) return text
+    return text
+        .replace(IMAGE_MARKER_RE, "")
+        // 内嵌 base64 图片的 markdown：整段删掉（用 [^)] 避免 O(n²) 回溯卡死）
+        .replace(Regex("!\\[[^\\]]*\\]\\(\\s*data:image/[a-z+]+;base64,[^)]{100,}\\)", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("[ \\t]+\\n"), "\n")
+        .replace(Regex("\\n{3,}"), "\n\n")
+}
+
+fun hasImageMarker(text: String): Boolean {
+    if (text.isEmpty()) return false
+    return IMAGE_MARKER_RE.containsMatchIn(text)
+}
+
+sealed class ContentBlock {
+    data class Text(val text: String, val index: Int) : ContentBlock()
+    data class Image(val image: NativeImage?, val description: String, val index: Int, val ordinal: Int) : ContentBlock()
+}
+
+/**
+ * 把正文切成「段落块」，并在标记所在位置插入图片块。
+ * 与 web buildContentBlocks 对齐：按顺序配对标记与图片、兜底补末图、合并相邻文本块。
+ */
+fun buildContentBlocks(text: String, attachments: List<NativeImage> = emptyList()): List<ContentBlock> {
+    val blocks = mutableListOf<ContentBlock>()
+    if (text.isEmpty()) return blocks
+    val parts = text.split(Regex("\\n\\s*\\n"))
+    var index = 0
+    var imageOrdinal = 0
+    val used = mutableSetOf<String>()
+    val queue = attachments.toMutableList()
+    var consumed = 0
+
+    fun pick(desc: String, atIndex: Int): NativeImage? {
+        if (consumed >= queue.size) {
+            val spare = attachments.firstOrNull { !used.contains(it.id) }
+            if (spare != null) { used.add(spare.id); return spare }
+            return null
+        }
+        while (consumed < queue.size && used.contains(queue[consumed].id)) consumed++
+        val byOrder = if (consumed < queue.size) queue[consumed] else null
+        if (byOrder == null) return null
+        val exact = attachments.firstOrNull { !used.contains(it.id) && it.markdownIndex == atIndex && it.description == desc }
+        if (exact != null) {
+            used.add(exact.id)
+            if (byOrder.id == exact.id) consumed++
+            return exact
+        }
+        used.add(byOrder.id)
+        consumed++
+        return byOrder
+    }
+
+    for (part in parts) {
+        val markers = parseImageMarkers(part)
+        if (markers.isEmpty()) {
+            if (part.trim().isNotEmpty()) {
+                blocks.add(ContentBlock.Text(part, index))
+                index++
+            }
+            continue
+        }
+        var cursor = 0
+        IMAGE_MARKER_RE.findAll(part).forEach { m ->
+            val before = part.substring(cursor, m.range.first)
+            if (before.trim().isNotEmpty()) blocks.add(ContentBlock.Text(before, index))
+            val description = m.groupValues[1].trim()
+            blocks.add(ContentBlock.Image(pick(description, index), description, index, imageOrdinal++))
+            cursor = m.range.last + 1
+        }
+        val rest = part.substring(cursor)
+        if (rest.trim().isNotEmpty()) blocks.add(ContentBlock.Text(rest, index))
+        index++
+    }
+
+    for (a in attachments) {
+        if (used.contains(a.id)) continue
+        used.add(a.id)
+        blocks.add(ContentBlock.Image(a, a.description, maxOf(0, index - 1), imageOrdinal++))
+    }
+
+    // 合并相邻文本块，别把 HTML 美化产物（含空行的 <style>/<div>）切碎成可见正文。
+    val merged = mutableListOf<ContentBlock>()
+    for (b in blocks) {
+        val last = merged.lastOrNull()
+        if (b is ContentBlock.Text && last is ContentBlock.Text) {
+            (merged[merged.size - 1] as ContentBlock.Text)
+            // 以新对象替换，避免原列表引用问题
+            merged[merged.size - 1] = ContentBlock.Text(last.text + "\n\n" + b.text, last.index)
+        } else {
+            merged.add(b)
+        }
+    }
+    return merged
+}
+
+/**
+ * 原生界面的一站式变换：剥思维链 → 跑显示正则 → 展开变量宏 → 剥图片标记 → 切块。
+ * 对应 web 的 displayText + buildContentBlocks 组合。
+ */
+fun transformForDisplay(
+    text: String,
+    attachments: List<NativeImage>,
+    scripts: List<RawScript>,
+    vars: VariableTables?,
+    ctx: MacroContext?,
+    hideReasoning: Boolean,
+    reasoningCutMarker: String?,
+    /** 这条消息距最新一条的深度（0 = 最新）。显示路径逐条传，对齐 web displayText 的 depthOverride。 */
+    depthOverride: Int = 0,
+): List<ContentBlock> {
+    var out = text
+    if (hideReasoning) out = cleanOutput(out, reasoningCutMarker)
+    if (scripts.isNotEmpty()) {
+        val (msgs) = runRegex(
+            listOf(ChatMessage(Role.ASSISTANT, out)),
+            scripts,
+            RegexEngineOptions(
+                placement = RegexPlacementFilter(ai = true, reasoning = true),
+                forDisplay = true,
+                macroContext = ctx,
+                variables = vars,
+                depthOverride = depthOverride,
+            ),
+        )
+        out = msgs.first().content
+    }
+    if (vars != null) out = readVariables(out, vars)
+    out = stripImageMarkers(out)
+    return buildContentBlocks(out, attachments)
+}

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  单条消息气泡。user 靠右、assistant 靠左，靠容器 gravity 切换。
+  文本用 TextView 原生渲染，图片用 ImageView 原生加载 —— 不再依赖 WebView。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingTop="4dp"
+    android:paddingBottom="4dp">
+
+    <LinearLayout
+        android:id="@+id/bubble"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:maxWidth="280dp"
+        android:padding="10dp"
+        android:background="@drawable/bubble_bg">
+
+        <TextView
+            android:id="@+id/msg_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#E6ECF7"
+            android:textSize="15sp"
+            android:lineSpacingExtra="2dp" />
+
+        <!-- 图片容器：原生聊天里最占地方的就是配图，单独一列堆叠 -->
+        <LinearLayout
+            android:id="@+id/msg_images"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="6dp" />
+    </LinearLayout>
+</FrameLayout>

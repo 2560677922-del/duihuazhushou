@@ -27,6 +27,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 原生聊天界面：由网页桥 AndroidNative.openNativeChat 拉起，不对外暴露 -->
+        <activity
+            android:name=".NativeChatActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP" />
     </application>
 
 </manifest>

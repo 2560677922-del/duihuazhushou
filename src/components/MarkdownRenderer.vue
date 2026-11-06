@@ -29,6 +29,8 @@ const html = computed(() => md.render(props.content));
   /* 美化正则输出的 <pre> 代码块很长，别让它把消息气泡撑出屏幕 */
   min-width: 0;
   max-width: 100%;
+  /* 双保险：老 WebView 不认 overflow-x:clip，用 hidden 全平台生效 */
+  overflow-x: hidden;
 }
 .markdown-body :deep(p) {
   margin: 0 0 8px;

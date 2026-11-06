@@ -71,6 +71,13 @@ public final class MainActivity extends Activity {
     private android.webkit.ValueCallback<Uri[]> pendingPick;
     private long lastBackPress = 0;
 
+    /**
+     * 让其它组件（原生聊天界面）能拿到当前 WebView，把消息/快照回传给网页侧。
+     * 应用只有一个 WebView，背景化时也不会被销毁，所以持一份静态引用是安全的。
+     */
+    private static WebView sWebView;
+    public static WebView getWebView() { return sWebView; }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -158,6 +165,10 @@ public final class MainActivity extends Activity {
         w.setDownloadListener(new AppDownloadListener());
         // 把 WebView 一起传进去：出图这类慢请求要靠它回调结果（见 FileBridge.httpAsync）
         w.addJavascriptInterface(new FileBridge(this, w), "dhp");
+        // 原生聊天桥：网页侧通过 window.AndroidNative 打开原生聊天界面，
+        // 原生界面再通过这份 WebView 把消息/快照回传网页（复用既有生成逻辑）。
+        w.addJavascriptInterface(new NativeBridge(this), "AndroidNative");
+        sWebView = w;
         return w;
     }
 
