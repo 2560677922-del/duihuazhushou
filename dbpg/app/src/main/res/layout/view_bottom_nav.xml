@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 底部原生导航：聊天（网页）/ 角色 / 生图 / 设置。
+     只做入口，不承载业务逻辑，避免和 WebView 里的路由互相打架。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/bottom_nav"
+    android:layout_width="match_parent"
+    android:layout_height="56dp"
+    android:orientation="horizontal"
+    android:background="#171A21">
+
+    <TextView
+        android:id="@+id/nav_chat"
+        style="@style/BottomNavItem"
+        android:text="聊天" />
+
+    <TextView
+        android:id="@+id/nav_character"
+        style="@style/BottomNavItem"
+        android:text="角色" />
+
+    <TextView
+        android:id="@+id/nav_image"
+        style="@style/BottomNavItem"
+        android:text="生图" />
+
+    <TextView
+        android:id="@+id/nav_settings"
+        style="@style/BottomNavItem"
+        android:text="设置" />
+</LinearLayout>

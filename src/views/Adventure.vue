@@ -634,6 +634,28 @@ onMounted(async () => {
       userInput.value = t;
       void sendAction();
     },
+
+    /*
+     * 原生角色卡库点「用它开聊」时走这里。
+     *
+     * 原生只负责读文件、解析 PNG/JSON，拿到的是标准 V2 JSON；
+     * 建档、选中、建会话这些仍由网页 store 做（单一数据源，避免两套角色库）。
+     * 建完会话后主动拉起原生聊天，用户点一下卡就直接进对话。
+     */
+    useCharacter: async (rawJson: string) => {
+      try {
+        const obj = await assets.importCharacter(JSON.parse(rawJson));
+        assets.currentCharacterId = obj._uid;
+        await assets.save();
+        await adventure.addSession(obj.name || '新的冒险', '');
+        const native = (window as any).AndroidNative;
+        if (native && typeof native.openNativeChat === 'function') {
+          native.openNativeChat('');
+        }
+      } catch (e) {
+        console.error('原生角色卡导入失败', e);
+      }
+    },
   };
 
   /*

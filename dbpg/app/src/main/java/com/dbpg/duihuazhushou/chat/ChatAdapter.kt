@@ -13,6 +13,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.dbpg.duihuazhushou.R
+import com.dbpg.duihuazhushou.appearance.AppearanceConfig
 import com.dbpg.duihuazhushou.richtext.RichTextRenderer
 import com.dbpg.stcore.richtext.RichTextParser
 
@@ -27,7 +28,20 @@ import com.dbpg.stcore.richtext.RichTextParser
  *   2. ViewHolder 复用：气泡背景每次重建（避免共享 Drawable 被染色）
  *   3. 文本宽度用 TextView.maxWidth 封顶（LinearLayout 的 maxWidth 不生效）
  */
-class ChatAdapter(private val bubbleMaxWidthPx: Int) : ListAdapter<ChatItem, ChatAdapter.VH>(DIFF) {
+class ChatAdapter(
+    private var config: AppearanceConfig,
+    private val screenWidthPx: Int,
+) : ListAdapter<ChatItem, ChatAdapter.VH>(DIFF) {
+
+    /** 气泡最大宽度：按屏宽百分比算，改设置不用重建 Adapter。 */
+    private val bubbleMaxWidthPx: Int
+        get() = (screenWidthPx * config.bubbleWidthPercent / 100).coerceAtLeast(screenWidthPx / 3)
+
+    /** 从设置页回来时调用：立刻套用新的字号/行距/宽度。 */
+    fun updateConfig(cfg: AppearanceConfig) {
+        config = cfg
+        notifyDataSetChanged()
+    }
 
     companion object {
         private val DIFF = object : DiffUtil.ItemCallback<ChatItem>() {
@@ -79,8 +93,10 @@ class ChatAdapter(private val bubbleMaxWidthPx: Int) : ListAdapter<ChatItem, Cha
             density,
         )
 
-        // 2) 文本：maxWidth 封顶 + Spannable 渲染
+        // 2) 文本：maxWidth 封顶 + Spannable 渲染（字号/行距跟随外观设置）
         holder.text.maxWidth = bubbleMaxWidthPx
+        holder.text.textSize = config.textSizeSp
+        holder.text.setLineSpacing(0f, config.lineSpacing)
         val content = if (item.streaming) item.content + "▍" else item.content
         if (content.isBlank()) {
             holder.text.visibility = View.GONE

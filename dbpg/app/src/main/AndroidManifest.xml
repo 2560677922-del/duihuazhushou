@@ -43,6 +43,20 @@
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.DHP" />
+
+        <!-- 原生角色卡库：扫描/导入 ST 的 .png/.json 卡，点击后交回网页建档 -->
+        <activity
+            android:name=".character.CharacterListActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
+
+        <!-- 原生外观设置：字号/行距/气泡宽度/隐藏思维链 -->
+        <activity
+            android:name=".appearance.SettingsActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
     </application>
 
 </manifest>

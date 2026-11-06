@@ -64,6 +64,8 @@ public final class MainActivity extends Activity {
     private static final String ASSETS_WEB = "www";
 
     private static final int REQ_PICK_FILE = 1001;
+    /** 底部原生导航高度（dp），与 view_bottom_nav.xml 保持一致 */
+    private static final int NAV_HEIGHT_DP = 56;
     private static final int BG_COLOR = 0xFF0F1115; // 与 Web 版主题色一致，避免启动闪白
 
     private WebView webView;
@@ -108,10 +110,44 @@ public final class MainActivity extends Activity {
         root.addView(errorView, fill);
 
         webView = createWebView();
-        root.addView(webView, fill);
+        // 底部留出原生导航的高度：WebView 变矮而不是被遮住，
+        // 这样网页里的 100vh 仍然等于可见区域，不会挡掉输入框。
+        FrameLayout.LayoutParams webLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        webLp.bottomMargin = dp(NAV_HEIGHT_DP);
+        root.addView(webView, webLp);
+
+        View nav = getLayoutInflater().inflate(R.layout.view_bottom_nav, root, false);
+        FrameLayout.LayoutParams navLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(NAV_HEIGHT_DP), Gravity.BOTTOM);
+        root.addView(nav, navLp);
+        bindBottomNav(nav);
 
         setContentView(root);
         loadApp();
+    }
+
+    /** 原生导航栏：只跳转，不承载业务（聊天仍走 WebView 里的页面）。 */
+    private void bindBottomNav(View nav) {
+        TextView chat = nav.findViewById(R.id.nav_chat);
+        chat.setTextColor(0xFF7FB2FF);
+        chat.setOnClickListener(v -> {
+            // 已经停在网页上，这里只是给个反馈，避免"点了没反应"的错觉
+            Toast.makeText(this, "当前就是聊天页", Toast.LENGTH_SHORT).show();
+        });
+
+        nav.findViewById(R.id.nav_character).setOnClickListener(v ->
+                startActivity(new Intent(this, com.dbpg.duihuazhushou.character.CharacterListActivity.class)));
+
+        nav.findViewById(R.id.nav_image).setOnClickListener(v ->
+                startActivity(new Intent(this, NativeImageGenActivity.class)));
+
+        nav.findViewById(R.id.nav_settings).setOnClickListener(v ->
+                startActivity(new Intent(this, com.dbpg.duihuazhushou.appearance.SettingsActivity.class)));
+    }
+
+    private int dp(int v) {
+        return Math.round(v * getResources().getDisplayMetrics().density);
     }
 
     private WebView createWebView() {

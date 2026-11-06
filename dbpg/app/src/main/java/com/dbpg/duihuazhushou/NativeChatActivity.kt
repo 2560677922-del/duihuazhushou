@@ -12,6 +12,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.dbpg.duihuazhushou.appearance.Appearance
+import com.dbpg.duihuazhushou.appearance.AppearanceConfig
 import com.dbpg.duihuazhushou.chat.ChatAdapter
 import com.dbpg.duihuazhushou.chat.ChatItem
 import com.dbpg.duihuazhushou.chat.ChatLogLoader
@@ -62,6 +64,7 @@ class NativeChatActivity : Activity() {
     private lateinit var input: EditText
     private lateinit var titleView: TextView
     private lateinit var imageCache: ImageFileCache
+    private lateinit var appearance: AppearanceConfig
 
     private val handler = Handler(Looper.getMainLooper())
     private var lastRaw: String? = null
@@ -84,8 +87,9 @@ class NativeChatActivity : Activity() {
         val genBtn = findViewById<TextView>(R.id.chat_gen)
 
         imageCache = ImageFileCache(this)
-        val bubbleMax = (resources.displayMetrics.widthPixels * 0.82f).toInt()
-        adapter = ChatAdapter(bubbleMax)
+        // 外观设置（字号/行距/气泡宽度/隐藏思维链）全部由原生侧决定
+        appearance = Appearance.load(this)
+        adapter = ChatAdapter(appearance, resources.displayMetrics.widthPixels)
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
 
@@ -100,6 +104,12 @@ class NativeChatActivity : Activity() {
     override fun onResume() {
         super.onResume()
         alive = true
+        // 从设置页返回：套用新外观（不改动会话数据，只重排气泡）
+        val latest = Appearance.load(this)
+        if (latest != appearance) {
+            appearance = latest
+            adapter.updateConfig(latest)
+        }
         startPolling()
     }
 
@@ -179,7 +189,7 @@ class NativeChatActivity : Activity() {
                     scripts = config.scripts,
                     vars = config.variables,
                     ctx = config.macroContext,
-                    hideReasoning = config.hideReasoning,
+                    hideReasoning = appearance.hideReasoning,
                     reasoningCutMarker = config.reasoningCutMarker.ifEmpty { null },
                     depthOverride = n - 1 - i,
                 )
