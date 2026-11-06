@@ -48,7 +48,7 @@ export function buildChatLogText(title: string, entries: ChatLogEntry[]): string
   const tables = variables.snapshot();
 
   /** 单条文本的处理：原文模式直接返回，否则走显示语义 */
-  const process = (text: string): string => {
+  const process = (text: string, depth = 0): string => {
     if (!text) return '';
     const out = raw
       ? text
@@ -57,6 +57,7 @@ export function buildChatLogText(title: string, entries: ChatLogEntry[]): string
           cutMarker: settings.reasoningCutMarker,
           scripts,
           variables: tables,
+          depth,
         });
     return stripImageMarkers(out)
       .replace(/[ \t]+$/gm, '')
@@ -69,8 +70,9 @@ export function buildChatLogText(title: string, entries: ChatLogEntry[]): string
     lines.push(title);
     lines.push('');
   }
-  for (const e of entries) {
-    const body = process(e.text);
+  for (const [i, e] of entries.entries()) {
+    // 导出也要带上真实消息深度，否则 minDepth 类的美化正则在 TXT 里表现不一致
+    const body = process(e.text, entries.length - 1 - i);
     if (!body) continue;
     lines.push(e.role === 'user' ? '我：' : '——');
     lines.push(body);

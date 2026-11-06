@@ -105,9 +105,13 @@ const displayKey = computed(() =>
   ].join('~'),
 );
 
-function displayText(text: string): string {
+/**
+ * @param depth 这条消息距最新一条的深度（0 = 最新）。
+ *   ST 的 minDepth/maxDepth 按它判断；不传就当最新一条。
+ */
+function displayText(text: string, depth = 0): string {
   if (!text) return '';
-  const key = `${displayKey.value}\u0000${text}`;
+  const key = `${displayKey.value}\u0000${depth}\u0000${text}`;
   const hit = displayCache.get(key);
   if (hit !== undefined) return hit;
 
@@ -134,11 +138,14 @@ function displayText(text: string): string {
            * {{char}} / {{user}}。不展开就会原样留在正文里，看起来像没替换。
            */
           macroContext: buildMacroContext(),
-          // 美化正则的替换串里也允许 {{getvar::x}}（只读）
-          variables: tables,
-        },
-      );
-      out = msgs[0]?.content ?? out;
+            // 美化正则的替换串里也允许 {{getvar::x}}（只读）
+            variables: tables,
+            // 显示路径只有一条消息，必须显式告诉引擎它在对话里的真实深度，
+            // 否则 minDepth >= 1 的 ST 脚本永远不生效
+            depthOverride: depth,
+          },
+        );
+        out = msgs[0]?.content ?? out;
     }
     /* 只读展开变量宏；写宏抹成空串，绝不在这里改状态 */
     out = readVariables(out, tables);
@@ -657,6 +664,17 @@ async function loadSampleAssets() {
 }
 
 const currentSession = computed(() => adventure.currentSession);
+
+/**
+ * 第 index 条消息距最新一条的深度（0 = 最新）。
+ *
+ * 给显示类正则用：ST 的 minDepth / maxDepth 是按聊天位置算的，
+ * 而显示路径一次只处理一条消息，引擎自己算不出它在第几条。
+ */
+function msgDepth(index: number): number {
+  const n = currentSession.value?.actions.length ?? 1;
+  return Math.max(0, n - 1 - index);
+}
 
 /**
  * 生图弹窗要用的「上下文消息」——**按真实角色**展开。
@@ -1331,7 +1349,7 @@ function handleImageGenerated(dataUrl: string) {
           </div>
 
           <!-- 对话历史 -->
-          <div v-for="a in currentSession?.actions ?? []" :key="a.id" class="message-group">
+          <div v-for="(a, ai) in currentSession?.actions ?? []" :key="a.id" class="message-group">
             <!-- 用户侧：删掉自己那句时**不动** AI 的回复，反之亦然 -->
             <div v-if="a.user" class="message user">
               <div class="msg-role">🧑 你</div>
@@ -1389,7 +1407,7 @@ function handleImageGenerated(dataUrl: string) {
                 </template>
                 <ContentWithImages
                   v-else
-                  :content="displayText(a.ai)"
+                  :content="displayText(a.ai, msgDepth(ai))"
                   :attachments="a.images"
                   removable
                   regenerable

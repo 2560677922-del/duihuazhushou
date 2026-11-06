@@ -127,12 +127,21 @@ data/ 已被 .gitignore 忽略（里面有 API 密钥，绝不能提交）。
 五、测试
 --------------------------------------------------
 
-逻辑测试（146 项通过，含正则语义、PNG 解析、提示词组装、宏替换、
-变量引擎、空占位符定位、美化正则合块、巨型 base64 回溯防护）：
+逻辑测试（151 项通过，含正则语义、PNG 解析、提示词组装、宏替换、
+变量引擎、空占位符定位、美化正则合块、消息深度、巨型 base64 回溯防护）：
     npx tsx scripts/novelai-check.mts
 
 冒烟测试：
     npx tsx scripts/smoke.mjs
+
+★ 正则兼容性自检（导入新的 SillyTavern 正则组后**建议跑一次**）：
+    npx tsx scripts/regex-compat.mts                     读 data/app-data.json 里所有来源
+    npx tsx scripts/regex-compat.mts 我的正则.json     指定 ST 导出的组或脚本数组
+    npx tsx scripts/regex-compat.mts 我的正则.json 样本.txt
+  逐条列出 flags / placement / 时机 / 深度范围，以及在「显示·最新」
+  「显示·历史」「发给模型」各路径会不会执行、命中几处。
+  最该看「完全静默」一栏：那些就是"有的正则没匹配上"的元凶。
+  只读工具，不改数据、不连网络。
 
 类型检查：
     npx vue-tsc --noEmit
@@ -262,6 +271,18 @@ data/ 已被 .gitignore 忽略（里面有 API 密钥，绝不能提交）。
 · v-html 会解析 HTML 和 <style>，但**不会执行 <script>**。
   想靠 JS 做弹窗/交互的美化正则在这套渲染下不会工作；
   请用 <details>、<dialog open>、CSS :target 之类纯 HTML/CSS 方案。
+  （脚本标签本身会作为 HTML 块完整保留，不影响正则命中。）
+
+· 显示路径一次只把**一条**消息交给 runRegex，引擎算不出它在第几条。
+  ST 的 minDepth/maxDepth 按聊天位置判断，所以 Adventure.vue 会用
+  msgDepth(index) 把真实深度传成 depthOverride；useDisplayText 和
+  chatLog 导出也一样。漏传的话所有 minDepth>=1 的脚本在界面上永远
+  静默失效（实测用户那条 minDepth:1 的规则命中 0 处）。
+  提示词组装传的是整个 history，不传 depthOverride，按数组下标算。
+
+· findRegex 编译失败以前是静默 continue，现在会 console.warn 打出
+  脚本名和原因。带 /.../flags 写法的解析要带 i 标志，否则大写 flag
+  会把整条正则误认成裸 pattern 字面量，编译"成功"却永远匹配不上。
 
 ========================================================================
 九、UI 方向（2026-10 决定，待细化）

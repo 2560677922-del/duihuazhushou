@@ -101,6 +101,16 @@ export interface RegexEngineOptions {
    * 美化类正则常靠读状态做弹窗/样式；这里只读，写宏一律抹成空串。
    */
   variables?: VariableTables;
+  /**
+   * 覆盖「这条消息距最新一条的深度」（0 = 最新）。
+   *
+   * ST 的 minDepth / maxDepth 按消息在聊天里的位置算。提示词组装一次传
+   * 整个 history，引擎用数组下标就能算对；但**显示路径每次只传一条消息**，
+   * 下标算出来恒为 0，于是任何 minDepth >= 1 的导入脚本在界面上永远不生效
+   * （实测：用户那条 minDepth:1 的行动选项规则命中 0 处）。
+   * 显示类调用方必须把真实深度传进来。
+   */
+  depthOverride?: number;
 }
 
 interface RawScript {
@@ -150,7 +160,14 @@ function parseRegex(raw: string): { source: string; flags: string } {
   if (hit) return hit;
   let pattern = raw;
   let flags = 'g';
-  const m = raw.match(/^\/(.+)\/([a-z]*)$/s);
+  /*
+   * 加 i：ST 的 regexFromString 用 /(\/?)(.+)\1([a-z]*)/i 解析，
+   * 带 i 时 [a-z] 也能吃到大写 flag（gU / gX 之类）。
+   * 以前不带 i，遇到 /pattern/gU 会整条被当成裸 pattern 字面量，
+   * 编译"成功"却永远匹配不上 —— 属于最难查的一类静默失效。
+   * 非法 flag 会在 compileRegex 里抛错并打出脚本名。
+   */
+  const m = raw.match(/^\/(.+)\/([a-z]*)$/si);
   if (m) {
     pattern = m[1];
     /*
@@ -423,7 +440,8 @@ export function runRegex(
     const rawFind = s.find_regex ?? s.findRegex ?? '';
     const replaceTemplate = s.replace_string ?? s.replaceString ?? '';
     const name = s.name || s.scriptName || '(未命名)';
-    const trims = trimList(s);
+    // ST 的 filterString 会对每条 Trim Out 先跑一次宏替换，这里对齐
+    const trims = trimList(s).map((t) => substituteKnownMacros(t, ctx));
 
     const subMode = Number(s.substituteRegex ?? s.substitute_regex ?? SUBSTITUTE_REGEX.NONE) || 0;
     const find = resolveFindPattern(rawFind, subMode, ctx);
@@ -431,7 +449,17 @@ export function runRegex(
     let regex: RegExp;
     try {
       regex = compileRegex(find);
-    } catch {
+    } catch (e) {
+      /*
+       * 以前这里静默 continue，用户只看到"这条正则没反应"，
+       * 却不知道是 findRegex 写错了 / 用了 WebView 不支持的 flag。
+       * 现在把脚本名和原因打出来，排查不用再靠猜。
+       */
+      console.warn(
+        `[正则] 脚本「${name}」编译失败，已跳过：`,
+        e instanceof Error ? e.message : String(e),
+        '| findRegex:', find.slice(0, 120),
+      );
       hits.push({
         id: String(s.id ?? name),
         scriptName: name,
@@ -464,8 +492,9 @@ export function runRegex(
         (applyToSlash && isSlash);
       if (!touch) continue;
 
-      // 深度范围：从最后一条往回数，最后一条是 0
-      const depthFromEnd = work.length - 1 - mi;
+      // 深度范围：从最后一条往回数，最后一条是 0。
+      // 显示路径只有一条消息，必须由调用方给出它在整段对话里的真实深度。
+      const depthFromEnd = options.depthOverride ?? work.length - 1 - mi;
       if (!inDepthRange(s, depthFromEnd)) continue;
 
       regex.lastIndex = 0;

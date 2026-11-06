@@ -99,9 +99,10 @@ export function useDisplayText() {
    * 记忆化是必要的：模板里 `:content="displayText(m.ai)"` 每次重渲染都会调用，
    * 而内部要跑正则引擎。几十轮对话 + 流式每秒重渲染数次 → 手机上必然卡。
    */
-  function displayText(text: string): string {
+  /** @param depth 这条消息距最新一条的深度（0 = 最新），给 minDepth/maxDepth 用 */
+  function displayText(text: string, depth = 0): string {
     if (!text) return '';
-    const key = version.value + '\u0000' + text;
+    const key = version.value + '\u0000' + depth + '\u0000' + text;
     const hit = cache.get(key);
     if (hit !== undefined) return hit;
 
@@ -129,6 +130,7 @@ export function useDisplayText() {
             macroContext: buildMacroContext(),
             // 美化正则的替换串里也允许 {{getvar::x}}（只读）
             variables: tables,
+            depthOverride: depth,
           },
         );
         out = msgs[0]?.content ?? out;
@@ -165,6 +167,8 @@ export function displayTextWith(
     scripts: any[];
     /** 只读展开变量宏；不传则保留 {{getvar::}} 原样 */
     variables?: VariableTables;
+    /** 这条消息距最新一条的深度（0 = 最新） */
+    depth?: number;
   },
 ): string {
   if (!text) return '';
@@ -179,6 +183,7 @@ export function displayTextWith(
           placement: { ai: true, reasoning: true },
           forDisplay: true,
           variables: opts.variables,
+          depthOverride: opts.depth ?? 0,
         },
       );
       out = msgs[0]?.content ?? out;

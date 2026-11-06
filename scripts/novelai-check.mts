@@ -1567,5 +1567,67 @@ check('合块不影响插图位置与 ordinal', () => {
   assert.deepEqual(imgs.map((b) => (b.kind === 'image' ? b.ordinal : -1)), [0, 1]);
 });
 
+console.log('\n=== ST 正则兼容性：深度 / flags / Trim Out ===');
+
+check('显示路径传 depthOverride 后 minDepth:1 的脚本能生效', () => {
+  const s = [{
+    id: 'd', scriptName: '深度规则', findRegex: 'XYZ', replaceString: 'OK',
+    placement: [2], markdownOnly: true, minDepth: 1, maxDepth: null,
+  }];
+  const fresh = runRegex([{ role: 'assistant', content: 'XYZ' }], s,
+    { placement: { ai: true }, forDisplay: true, depthOverride: 0 });
+  assert.equal(fresh.messages[0].content, 'XYZ', '最新一条不该命中 minDepth:1');
+  const older = runRegex([{ role: 'assistant', content: 'XYZ' }], s,
+    { placement: { ai: true }, forDisplay: true, depthOverride: 3 });
+  assert.equal(older.messages[0].content, 'OK', '历史消息应该命中');
+});
+
+check('提示词组装不传 depthOverride 时仍按数组下标算深度', () => {
+  const s = [{
+    id: 'd', scriptName: '深度规则', findRegex: 'XYZ', replaceString: 'OK',
+    placement: [2], minDepth: 1, maxDepth: null,
+  }];
+  const { messages } = runRegex(
+    [{ role: 'assistant', content: 'XYZ' }, { role: 'assistant', content: 'XYZ' }], s,
+    { placement: { ai: true } },
+  );
+  assert.equal(messages[0].content, 'OK', '较老那条应满足 minDepth:1');
+  assert.equal(messages[1].content, 'XYZ', '最新那条不该命中');
+});
+
+check('带斜杠的写法：pattern 里的 / 不被误当分隔符', () => {
+  const { messages } = runRegex(
+    [{ role: 'assistant', content: 'a/b' }],
+    [{ scriptName: '斜杠', findRegex: '/(a\\/b)/gi', replaceString: '[$1]', placement: [2] }],
+    { placement: { ai: true } },
+  );
+  assert.equal(messages[0].content, '[a/b]');
+});
+
+check('Trim Out 里的宏会先展开（ST filterString 语义）', () => {
+  const { messages } = runRegex(
+    [{ role: 'assistant', content: 'foobar' }],
+    [{
+      scriptName: 'T', findRegex: 'foobar', replaceString: '$0',
+      trimStrings: ['{{char}}'], placement: [2],
+    }],
+    { placement: { ai: true }, macroContext: { char: 'oo' } as any },
+  );
+  assert.equal(messages[0].content, 'fbar');
+});
+
+check('单条 findRegex 编译失败不会拖垮整批脚本', () => {
+  const { messages, hits } = runRegex(
+    [{ role: 'assistant', content: 'ABC' }],
+    [
+      { scriptName: '坏的', findRegex: '/(/g', replaceString: 'X', placement: [2] },
+      { scriptName: '好的', findRegex: 'ABC', replaceString: 'OK', placement: [2] },
+    ],
+    { placement: { ai: true } },
+  );
+  assert.equal(messages[0].content, 'OK');
+  assert.equal(hits.length, 2, '坏脚本也要留下可排查的记录');
+});
+
 console.log(`\n=== 通过 ${passed} 项检查 ===`);
 if (process.exitCode) console.error('存在失败项');
