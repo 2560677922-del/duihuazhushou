@@ -1884,6 +1884,14 @@ function handleImageGenerated(dataUrl: string) {
 .chat-area {
   flex: 1;
   overflow-y: auto;
+  /*
+   * ★ 横向锁死。美化正则可能吐出整份 CSS/HTML 或超长 <pre> 代码块，
+   * 内容宽度会把 flex 容器撑出视口，整页变得能左右拖（用户反馈的「超框」）。
+   * 用 clip 而不是 hidden：clip 不创建滚动容器，不会破坏下面手机端
+   * input-area 的 position:sticky。
+   */
+  overflow-x: clip;
+  min-width: 0;
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -1995,6 +2003,9 @@ function handleImageGenerated(dataUrl: string) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* flex 子项默认 min-width:auto，会被长代码块撑开；锁到父容器宽度 */
+  min-width: 0;
+  max-width: 100%;
   /*
    * 跳渲染（手机上最有效的一招）。
    *
@@ -2031,6 +2042,8 @@ function handleImageGenerated(dataUrl: string) {
   flex-direction: column;
   gap: var(--md-space-1, 4px);
   padding: 12px 16px;
+  min-width: 0;
+  max-width: 100%;
   /* M3 shape-l：16px。尾巴那一角下面单独收小 */
   border-radius: var(--md-shape-l, 16px);
   max-width: 85%;
@@ -2106,7 +2119,12 @@ function handleImageGenerated(dataUrl: string) {
 .msg-content {
   font-size: 14px;
   line-height: 1.6;
+  /* 连 --dream-parallel-xxx 这种超长无空格标识符也要能断 */
   word-break: break-word;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: clip;
 }
 .cursor {
   animation: blink 1s steps(2) infinite;
@@ -2417,9 +2435,11 @@ function handleImageGenerated(dataUrl: string) {
     overflow: visible;
     min-height: 0;
   }
-  /* 手机上整页由文档滚动，chat-area 不再自己内滚 */
+  /* 手机上整页由文档滚动，chat-area 不再自己内滚；
+     但横向仍要 clip，否则长代码块会把整页撑宽、能左右拖 */
   .chat-area {
     overflow-y: visible;
+    overflow-x: clip;
   }
 
   /* 输入区吸底：手机上键盘弹出/手势条遮挡时，

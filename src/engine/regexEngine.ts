@@ -382,24 +382,42 @@ export function runRegex(
     const declared: number[] = Array.isArray(s.placement) ? s.placement : [];
     const placements = declared.length ? declared : [REGEX_PLACEMENT.AI_OUTPUT];
 
+    /*
+     * placement=0 是 ST 的 MD_DISPLAY。官方文档标了 deprecated，但**大量
+     * 老美化正则还在用**，语义就是「只改显示」。
+     * 以前 REGEX_PLACEMENT 里没有 0，命中它的脚本整条被跳过 —— 用户
+     * 看到的就是"有的正则就是不生效"。（实测复现：结果原样没替换。）
+     */
+    const legacyMdDisplay = placements.includes(0);
+    if (legacyMdDisplay && !forDisplay && !dry) continue;
+
     const applyToUser = placement.user && placements.includes(REGEX_PLACEMENT.USER_INPUT);
-    const applyToAI = placement.ai && placements.includes(REGEX_PLACEMENT.AI_OUTPUT);
+    const applyToAI =
+      placement.ai && (placements.includes(REGEX_PLACEMENT.AI_OUTPUT) || legacyMdDisplay);
     const applyToWI = placement.worldInfo && placements.includes(REGEX_PLACEMENT.WORLD_INFO);
     const applyToReasoning = placement.reasoning && placements.includes(REGEX_PLACEMENT.REASONING);
     const applyToSlash = placement.slash && placements.includes(REGEX_PLACEMENT.SLASH_COMMAND);
     if (!applyToUser && !applyToAI && !applyToWI && !applyToReasoning && !applyToSlash) continue;
 
-    // 执行时机筛选。
-    //
-    // markdownOnly / promptOnly 是一对互斥语义，按调用方的目的取一个方向：
-    //   发给大模型（默认）：跑通用的 + promptOnly，跳过 markdownOnly
-    //   界面显示（forDisplay）：跑通用的 + markdownOnly，跳过 promptOnly
+    /*
+     * 执行时机筛选。
+     *
+     * ST 的 getRegexedString 是 **OR** 语义：
+     *   (markdownOnly && isMarkdown) || (promptOnly && isPrompt) || (通用 && 都不是)
+     * 所以一条**同时**标了 markdownOnly 和 promptOnly 的脚本，在显示和生成
+     * 两条路径上都会跑。导入的 ST 正则里这种双标并不少见（实测用户那份
+     * 9 条里就有 2 条），以前这里写 `if (promptOnly) continue`，显示时把
+     * 整条跳过了 —— 表现正是"部分正则没匹配上"。
+     *
+     * 本项目保留自己的语义（显示跑通用+仅显示，生成跑通用+仅提示词），
+     * 只把双标脚本补回两边，不改其它行为。
+     */
     const markdownOnly = s.markdownOnly ?? s.markdown_only ?? false;
     const promptOnly = s.promptOnly ?? s.prompt_only ?? false;
     if (forDisplay) {
-      if (promptOnly) continue;
+      if (promptOnly && !markdownOnly) continue;
     } else if (!dry) {
-      if (markdownOnly) continue;
+      if (markdownOnly && !promptOnly) continue;
     }
 
     const rawFind = s.find_regex ?? s.findRegex ?? '';

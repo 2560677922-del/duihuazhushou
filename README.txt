@@ -127,8 +127,8 @@ data/ 已被 .gitignore 忽略（里面有 API 密钥，绝不能提交）。
 五、测试
 --------------------------------------------------
 
-逻辑测试（139 项通过，含正则语义、PNG 解析、提示词组装、宏替换、
-变量引擎、空占位符定位、巨型 base64 回溯防护）：
+逻辑测试（146 项通过，含正则语义、PNG 解析、提示词组装、宏替换、
+变量引擎、空占位符定位、美化正则合块、巨型 base64 回溯防护）：
     npx tsx scripts/novelai-check.mts
 
 冒烟测试：
@@ -243,6 +243,25 @@ data/ 已被 .gitignore 忽略（里面有 API 密钥，绝不能提交）。
 · 底部标签栏高度是 --tabbar-h（63px）。
   进二级聊天页时 MainLayout 把它设成 0，
   所有按它定位的抽屉/吸底输入框会自动贴底，不用逐个改。
+
+· 美化正则吐出的是**一整份 HTML**（<style> 里几十条 CSS、<div>、<script>），
+  中间必然有空行。buildContentBlocks 以前按空行切段、每段各跑一次
+  MarkdownIt，于是 <style> 和 </style> 被分到两块，后一块渲染成
+  <p>.xxx { ... }<br></style></p> —— CSS 变成可见正文，长行还把整页
+  撑出屏幕。现在会合并相邻文本块（imageMarker.ts 末尾），别改回去。
+  相关：消息/正文/pre 上的 min-width:0 + overflow-x:clip 是「宽度锁死」，
+  用 clip 而非 hidden 是因为手机端输入区靠 position:sticky，
+  hidden 会变成滚动容器把它困住。
+
+· 显示类正则的时机筛选是 **OR 语义**，不是互斥开关：
+  一条同时标了 markdownOnly 和 promptOnly 的导入脚本，显示和生成
+  两条路径都要跑（ST 的 getRegexedString 就是这么写的）。
+  placement=0 是 ST 弃用但仍大量存在的 MD_DISPLAY，等价"只改显示"。
+  以前这两类脚本都被整条跳过，表现就是"部分正则没匹配上"。
+
+· v-html 会解析 HTML 和 <style>，但**不会执行 <script>**。
+  想靠 JS 做弹窗/交互的美化正则在这套渲染下不会工作；
+  请用 <details>、<dialog open>、CSS :target 之类纯 HTML/CSS 方案。
 
 ========================================================================
 九、UI 方向（2026-10 决定，待细化）

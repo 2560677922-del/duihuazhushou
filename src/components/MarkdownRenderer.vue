@@ -25,6 +25,10 @@ const html = computed(() => md.render(props.content));
   line-height: 1.7;
   color: var(--text);
   word-break: break-word;
+  overflow-wrap: anywhere;
+  /* 美化正则输出的 <pre> 代码块很长，别让它把消息气泡撑出屏幕 */
+  min-width: 0;
+  max-width: 100%;
 }
 .markdown-body :deep(p) {
   margin: 0 0 8px;
@@ -56,6 +60,9 @@ const html = computed(() => md.render(props.content));
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 12px;
+  /* 长行只在代码块内部滚，不把父级 flex 容器撑宽 */
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
   margin: 8px 0;
 }

@@ -456,7 +456,30 @@ export function buildContentBlocks(
     });
   }
 
-  return blocks;
+  /*
+   * ★ 合并相邻的文本块，别把 HTML 美化产物切碎。
+   *
+   * 上面按空行切段后，每段都会单独丢给 MarkdownRenderer 做一次
+   * md.render()。而美化正则吐出来的是一整份 HTML —— <style> 里几十条
+   * CSS、<div>、甚至 <script>，中间必然有空行。于是 <style> 和
+   * </style> 被分到两个块：后一段被渲染成
+   *   <p>.dream-parallel-event-ui__summary { ... }<br></style></p>
+   * CSS 直接变成可见正文，长行还把容器撑出屏幕（用户反馈的「超框」）。
+   *
+   * 相邻文本块之间没有图片，合成一块不改变任何插图位置。
+   * MarkdownIt 的 type-1 HTML block（style/script/pre）本来就是读到
+   * 闭合标签才结束，合并后整段 HTML 就能完整保留、不再裸奔。
+   */
+  const merged: ContentBlock[] = [];
+  for (const b of blocks) {
+    const last = merged[merged.length - 1];
+    if (b.kind === 'text' && last && last.kind === 'text') {
+      last.text += '\n\n' + b.text;
+    } else {
+      merged.push(b.kind === 'text' ? { ...b } : b);
+    }
+  }
+  return merged;
 }
 
 /**

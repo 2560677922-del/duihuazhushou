@@ -1490,5 +1490,82 @@ check('变量版本串随内容变化（显示缓存能失效）', () => {
   assert.equal(variableVersion(a), variableVersion({ session: { x: '1' }, global: {} }));
 });
 
+console.log('\n=== 美化正则：漏匹配 / HTML 切碎 ===');
+
+const dualScript = [{
+  id: 'dual', scriptName: '双标', findRegex: 'XYZ', replaceString: 'OK',
+  placement: [2], markdownOnly: true, promptOnly: true,
+}];
+
+check('双标脚本（md + prompt）在显示路径也要跑', () => {
+  const { messages } = runRegex(
+    [{ role: 'assistant', content: 'XYZ' }], dualScript,
+    { placement: { ai: true, reasoning: true }, forDisplay: true },
+  );
+  assert.equal(messages[0].content, 'OK');
+});
+
+check('双标脚本在发给模型的路径也要跑（ST 是 OR 语义）', () => {
+  const { messages } = runRegex(
+    [{ role: 'assistant', content: 'XYZ' }], dualScript,
+    { placement: { ai: true } },
+  );
+  assert.equal(messages[0].content, 'OK');
+});
+
+check('仅 promptOnly 的脚本在显示路径仍然跳过', () => {
+  const { messages } = runRegex(
+    [{ role: 'assistant', content: 'XYZ' }],
+    [{ ...dualScript[0], markdownOnly: false }],
+    { placement: { ai: true }, forDisplay: true },
+  );
+  assert.equal(messages[0].content, 'XYZ');
+});
+
+check('仅 markdownOnly 的脚本在提示词路径仍然跳过', () => {
+  const { messages } = runRegex(
+    [{ role: 'assistant', content: 'XYZ' }],
+    [{ ...dualScript[0], promptOnly: false }],
+    { placement: { ai: true } },
+  );
+  assert.equal(messages[0].content, 'XYZ');
+});
+
+check('placement=0（ST MD_DISPLAY）显示时生效、生成时跳过', () => {
+  const p0 = [{ ...dualScript[0], placement: [0], markdownOnly: false, promptOnly: false }];
+  const shown = runRegex(
+    [{ role: 'assistant', content: 'XYZ' }], p0,
+    { placement: { ai: true }, forDisplay: true },
+  );
+  assert.equal(shown.messages[0].content, 'OK');
+  const sent = runRegex([{ role: 'assistant', content: 'XYZ' }], p0, { placement: { ai: true } });
+  assert.equal(sent.messages[0].content, 'XYZ');
+});
+
+check('HTML 美化产物的相邻文本块合并，style 标签不再被切开', () => {
+  const html = [
+    '<style>',
+    '.dream-parallel-event-ui__star { animation-name: twinkle; }',
+    '',
+    '.dream-parallel-event-ui__summary { gap: 0.46rem; }',
+    '</style>',
+    '',
+    '<div class="dream-parallel-event-ui">卡片内容</div>',
+  ].join('\n');
+  const blocks = buildContentBlocks(html, []);
+  assert.equal(blocks.length, 1, '含空行的 HTML 必须合成一整块');
+  const text = blocks[0].kind === 'text' ? blocks[0].text : '';
+  assert.ok(text.includes('<style>') && text.includes('</style>'), '开闭标签要在同一块');
+});
+
+check('合块不影响插图位置与 ordinal', () => {
+  const blocks = buildContentBlocks(
+    '段落一\n\n[[IMG: 图一]]\n\n段落二\n\n[[IMG: 图二]]', [],
+  );
+  const imgs = blocks.filter((b) => b.kind === 'image');
+  assert.equal(imgs.length, 2);
+  assert.deepEqual(imgs.map((b) => (b.kind === 'image' ? b.ordinal : -1)), [0, 1]);
+});
+
 console.log(`\n=== 通过 ${passed} 项检查 ===`);
 if (process.exitCode) console.error('存在失败项');
