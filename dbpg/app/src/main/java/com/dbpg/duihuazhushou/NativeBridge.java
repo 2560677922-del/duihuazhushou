@@ -91,4 +91,36 @@ public final class NativeBridge {
         com.dbpg.duihuazhushou.data.MigrationCoordinator.INSTANCE
                 .onAsset(token == null ? "" : token, id == null ? "" : id, dataUrl == null ? "" : dataUrl);
     }
+
+    // ------------------------------------------------------------------
+    // 生成通道回调（web ST 引擎 → 原生聊天界面）
+    //
+    // 原生把"当前版本的对话"交给 web 组装并发请求，web 边收边把**全文**
+    // （不是增量，已节流到 80ms 一次）回传过来。原生直接整段替换，
+    // 不需要自己拼接，也就不会因为丢块导致文字错位。
+    // ------------------------------------------------------------------
+
+    @JavascriptInterface
+    public void onGenDelta(String requestId, String text) {
+        com.dbpg.duihuazhushou.chat.GenBridge.INSTANCE
+                .onGenDelta(requestId == null ? "" : requestId, text == null ? "" : text);
+    }
+
+    @JavascriptInterface
+    public void onGenDone(String requestId, String full) {
+        com.dbpg.duihuazhushou.chat.GenBridge.INSTANCE
+                .onGenDone(requestId == null ? "" : requestId, full == null ? "" : full);
+    }
+
+    @JavascriptInterface
+    public void onGenError(String requestId, String message) {
+        com.dbpg.duihuazhushou.chat.GenBridge.INSTANCE
+                .onGenError(requestId == null ? "" : requestId, message == null ? "" : message);
+    }
+
+    @JavascriptInterface
+    public void onGenStopped(String requestId) {
+        com.dbpg.duihuazhushou.chat.GenBridge.INSTANCE
+                .onGenStopped(requestId == null ? "" : requestId);
+    }
 }

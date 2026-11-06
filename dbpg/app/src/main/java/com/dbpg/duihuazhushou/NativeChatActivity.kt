@@ -1,13 +1,12 @@
 package com.dbpg.duihuazhushou
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.util.Log
-import android.webkit.WebView
+import android.view.View
 import android.widget.EditText
+import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -15,293 +14,125 @@ import androidx.recyclerview.widget.RecyclerView
 import com.dbpg.duihuazhushou.appearance.Appearance
 import com.dbpg.duihuazhushou.appearance.AppearanceConfig
 import com.dbpg.duihuazhushou.chat.ChatAdapter
+import com.dbpg.duihuazhushou.chat.ChatController
 import com.dbpg.duihuazhushou.chat.ChatItem
 import com.dbpg.duihuazhushou.chat.ChatLogLoader
 import com.dbpg.duihuazhushou.chat.ImageFileCache
-import com.dbpg.stcore.ContentBlock
-import com.dbpg.stcore.MacroContext
-import com.dbpg.stcore.NativeImage
-import com.dbpg.stcore.RawScript
-import com.dbpg.stcore.VariableTables
-import com.dbpg.stcore.buildScript
-import com.dbpg.stcore.transformForDisplay
-import org.json.JSONArray
+import com.dbpg.duihuazhushou.gallery.ImageViewerActivity
+import com.dbpg.duihuazhushou.session.SessionRepo
 import org.json.JSONObject
 
 /**
- * 原生聊天界面（原生外壳 + RecyclerView 气泡）。
+ * 原生聊天界面。
  *
- * 分工（尽量解耦，避免层层嵌套）：
- *   - 本类：只做「取快照 / 解析配置 / 跑 ST 显示变换 / 组装 ChatItem / 发消息」这几件事
- *   - ChatAdapter：纯渲染（富文本 + 图片 + 对齐）
- *   - RichTextRenderer：把 stcore 的样式数据映射成 Spannable（渲染细节）
- *   - ChatLogLoader / ImageFileCache：数据来源与图片落盘
+ * 这里**只做界面**：把控件事件转给 [ChatController]，把它的回调画出来。
+ * 会话怎么存、消息怎么改、生成怎么发，全都不在本类 —— 那些在
+ * ChatController / SessionEditor / SessionHistory / GenBridge 里。
  *
- * 数据流：
- *   打开：网页 AndroidNative.openNativeChat(JSON) 带快照进来。
- *   刷新：前台时每 800ms 让 WebView 执行 window.__dhpNative.getSnapshot() 拉最新（导入 jsonl 时暂停）。
- *   发送：输入框内容交给 window.__dhpApp.sendUserMessage，复用网页既有生成链路。
+ * 数据源已经换成原生 [com.dbpg.stcore.session.SessionDoc]（不再每 800ms
+ * 轮询网页快照）；网页只在"组装提示词 + 发 API"这一步被调用。
  */
-class NativeChatActivity : Activity() {
+class NativeChatActivity : Activity(), ChatController.Sink {
 
     companion object {
+        const val EXTRA_SESSION_ID = "session_id"
+        /** 兜底：本地还没有这份会话时用它构造一份。 */
         const val EXTRA_SNAPSHOT = "snapshot"
-        private const val REQ_JSONL = 1001
-        private const val POLL_MS = 800L
-    }
 
-    /** 与网页 displayText 一一对应的显示配置。 */
-    private data class DisplayConfig(
-        val hideReasoning: Boolean,
-        val reasoningCutMarker: String,
-        val scripts: List<RawScript>,
-        val variables: VariableTables,
-        val macroContext: MacroContext,
-    )
+        private const val REQ_JSONL = 1001
+
+        private const val M_EDIT = 1
+        private const val M_REGEN = 2
+        private const val M_DELETE = 3
+        private const val M_BRANCH = 4
+    }
 
     private lateinit var list: RecyclerView
     private lateinit var adapter: ChatAdapter
     private lateinit var input: EditText
     private lateinit var titleView: TextView
-    private lateinit var imageCache: ImageFileCache
+    private lateinit var sendBtn: TextView
+    private lateinit var stopBtn: TextView
     private lateinit var appearance: AppearanceConfig
+    private lateinit var controller: ChatController
 
-    private val handler = Handler(Looper.getMainLooper())
-    private var lastRaw: String? = null
-    private var renderSeq = 0
-    private var alive = false
-
-    /** 导入 jsonl 后暂停快照刷新，避免两边互相覆盖。 */
+    /** 导入 jsonl 后进入只读预览：此时不显示会话操作条。 */
     private var viewingLog = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_native_chat)
+        SessionRepo.init(this)
 
         list = findViewById(R.id.chat_list)
         input = findViewById(R.id.chat_input)
         titleView = findViewById(R.id.chat_title)
+        sendBtn = findViewById(R.id.chat_send)
+        stopBtn = findViewById(R.id.chat_stop)
         val close = findViewById<TextView>(R.id.chat_close)
-        val send = findViewById<TextView>(R.id.chat_send)
         val importBtn = findViewById<TextView>(R.id.chat_import)
         val genBtn = findViewById<TextView>(R.id.chat_gen)
+        val engineBtn = findViewById<TextView>(R.id.chat_engine)
 
-        imageCache = ImageFileCache(this)
-        // 外观设置（字号/行距/气泡宽度/隐藏思维链）全部由原生侧决定
         appearance = Appearance.load(this)
-        adapter = ChatAdapter(appearance, resources.displayMetrics.widthPixels)
+        adapter = ChatAdapter(appearance, resources.displayMetrics.widthPixels, adapterListener)
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
 
-        applySnapshot(intent.getStringExtra(EXTRA_SNAPSHOT), fromPoll = false)
+        controller = ChatController(applicationContext, ImageFileCache(this), this)
+
+        val sessionId = resolveSessionId()
+        if (sessionId.isBlank()) {
+            Toast.makeText(this, "没有指定会话", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
+        controller.open(sessionId, intent.getStringExtra(EXTRA_SNAPSHOT))
 
         close.setOnClickListener { finish() }
-        send.setOnClickListener { sendMessage() }
+        sendBtn.setOnClickListener { submitInput() }
+        stopBtn.setOnClickListener { controller.stop() }
         importBtn.setOnClickListener { pickJsonl() }
         genBtn.setOnClickListener { startActivity(Intent(this, NativeImageGenActivity::class.java)) }
+        engineBtn.setOnClickListener {
+            startActivity(Intent(this, com.dbpg.duihuazhushou.engine.EngineSettingsActivity::class.java))
+        }
+    }
+
+    /**
+     * 会话 id 从哪来：
+     *   1. 会话列表点进来 → EXTRA_SESSION_ID
+     *   2. 老入口（网页「原生聊天」按钮）→ 快照里的 sessionId
+     */
+    private fun resolveSessionId(): String {
+        intent.getStringExtra(EXTRA_SESSION_ID)?.let { if (it.isNotBlank()) return it }
+        val snap = intent.getStringExtra(EXTRA_SNAPSHOT)?.trim()
+        if (snap.isNullOrEmpty()) return ""
+        return runCatching { JSONObject(snap).optString("sessionId", "") }.getOrDefault("")
     }
 
     override fun onResume() {
         super.onResume()
-        alive = true
-        // 从设置页返回：套用新外观（不改动会话数据，只重排气泡）
         val latest = Appearance.load(this)
         if (latest != appearance) {
             appearance = latest
             adapter.updateConfig(latest)
         }
-        startPolling()
+        controller.applyAppearance(latest)
+        // 网页设置里可能换了预设 / 正则 / 生图接口，回来跟上
+        controller.refreshConfig()
     }
 
-    override fun onPause() {
-        super.onPause()
-        alive = false
-        handler.removeCallbacksAndMessages(null)
+    override fun onDestroy() {
+        super.onDestroy()
+        // 正在生成就退出：已经吐出来的正文先存下来，别让用户白等
+        controller.release()
     }
 
-    // ------------------------------------------------------------ 轮询网页快照
-    private fun startPolling() {
-        val runnable = object : Runnable {
-            override fun run() {
-                if (!alive) return
-                if (!viewingLog) {
-                    val wv = MainActivity.getWebView()
-                    if (wv != null) {
-                        val seq = ++renderSeq
-                        wv.evaluateJavascript(
-                            "window.__dhpNative && window.__dhpNative.getSnapshot ? window.__dhpNative.getSnapshot() : null",
-                        ) { js ->
-                            if (alive && seq == renderSeq && js != null && js != "null") {
-                                applySnapshot(js, fromPoll = true)
-                            }
-                        }
-                    }
-                }
-                if (alive) handler.postDelayed(this, POLL_MS)
-            }
-        }
-        handler.postDelayed(runnable, POLL_MS)
-    }
+    // ------------------------------------------------------------ ChatController.Sink
 
-    // ------------------------------------------------------------ 解析快照
-    private fun applySnapshot(raw: String?, fromPoll: Boolean) {
-        val text = raw?.trim()
-        if (text.isNullOrEmpty() || text == "{}" || text == "null") {
-            if (!fromPoll) submit(emptyList(), scrollToBottom = false)
-            return
-        }
-        if (fromPoll && text == lastRaw) return
-        lastRaw = text
-        try {
-            val root = JSONObject(text)
-            val config = parseConfig(root.optJSONObject("config"))
-            val items = buildItems(root.optJSONArray("messages"), config)
-            val title = root.optJSONObject("config")?.optString("title").orEmpty()
-            if (title.isNotEmpty()) titleView.text = title
-            submit(items, scrollToBottom = false)
-        } catch (e: Exception) {
-            Log.w("DHP", "解析原生聊天快照失败", e)
-        }
-    }
-
-    /** 把快照消息转换成 UI 列表项：AI 消息跑 ST 显示变换，图片转本地路径。 */
-    private fun buildItems(arr: JSONArray?, config: DisplayConfig): List<ChatItem> {
-        if (arr == null || arr.length() == 0) return emptyList()
-        val n = arr.length()
-        val out = ArrayList<ChatItem>(n)
-        for (i in 0 until n) {
-            val o = arr.optJSONObject(i) ?: continue
-            val role = o.optString("role", "assistant")
-            val content = o.optString("content", "")
-            val streaming = o.optBoolean("streaming", false)
-            val images = readImages(o.optJSONArray("images"))
-
-            val displayText: String
-            val displayImages: List<NativeImage>
-            if (role == "user") {
-                // 用户消息原样显示（display 链路只针对 AI 输出）
-                displayText = content
-                displayImages = images
-            } else {
-                val blocks = transformForDisplay(
-                    text = content,
-                    attachments = images,
-                    scripts = config.scripts,
-                    vars = config.variables,
-                    ctx = config.macroContext,
-                    hideReasoning = appearance.hideReasoning,
-                    reasoningCutMarker = config.reasoningCutMarker.ifEmpty { null },
-                    depthOverride = n - 1 - i,
-                )
-                displayText = joinText(blocks)
-                displayImages = blocks.filterIsInstance<ContentBlock.Image>().mapNotNull { it.image }
-            }
-
-            val paths = displayImages.mapNotNull { imageCache.pathFor(it.dataUrl) }
-            out.add(ChatItem(id = "snap:$i", role = role, content = displayText, imagePaths = paths, streaming = streaming))
-        }
-        return out
-    }
-
-    private fun readImages(arr: JSONArray?): List<NativeImage> {
-        if (arr == null) return emptyList()
-        val out = ArrayList<NativeImage>(arr.length())
-        for (j in 0 until arr.length()) {
-            val io = arr.optJSONObject(j) ?: continue
-            out.add(
-                NativeImage(
-                    id = io.optString("id", ""),
-                    dataUrl = io.optString("dataUrl", "").ifEmpty { null },
-                    description = io.optString("description", ""),
-                    markdownIndex = io.optInt("markdownIndex", 0),
-                ),
-            )
-        }
-        return out
-    }
-
-    private fun joinText(blocks: List<ContentBlock>): String {
-        val sb = StringBuilder()
-        for (b in blocks) if (b is ContentBlock.Text) {
-            val t = b.text.trim()
-            if (t.isNotEmpty()) {
-                if (sb.isNotEmpty()) sb.append("\n\n")
-                sb.append(t)
-            }
-        }
-        return sb.toString()
-    }
-
-    private fun parseConfig(o: JSONObject?): DisplayConfig {
-        if (o == null) return DisplayConfig(false, "", emptyList(), VariableTables(), MacroContext())
-        val scripts = mutableListOf<RawScript>()
-        o.optJSONArray("scripts")?.let { arr ->
-            for (i in 0 until arr.length()) {
-                val s = arr.optJSONObject(i) ?: continue
-                runCatching { scripts.add(buildScript(jsonToMap(s))) }
-            }
-        }
-        val mc = o.optJSONObject("macroContext")
-        val macro = MacroContext(
-            char = mc?.optString("char")?.notEmpty(),
-            user = mc?.optString("user")?.notEmpty(),
-            persona = mc?.optString("persona")?.notEmpty(),
-            description = mc?.optString("description")?.notEmpty(),
-            scenario = mc?.optString("scenario")?.notEmpty(),
-            original = mc?.optString("original")?.notEmpty(),
-            mesExample = mc?.optString("mes_example")?.notEmpty(),
-            chat = mc?.optString("chat")?.notEmpty(),
-            currentMessage = mc?.optString("currentMessage")?.notEmpty(),
-            lastMessage = mc?.optString("lastMessage")?.notEmpty(),
-        )
-        return DisplayConfig(
-            hideReasoning = o.optBoolean("hideReasoning", false),
-            reasoningCutMarker = o.optString("reasoningCutMarker", ""),
-            scripts = scripts,
-            variables = parseVariables(o.optJSONObject("variables")),
-            macroContext = macro,
-        )
-    }
-
-    private fun String.notEmpty(): String? = if (isNotEmpty()) this else null
-
-    private fun parseVariables(o: JSONObject?): VariableTables {
-        val session = mutableMapOf<String, String>()
-        val global = mutableMapOf<String, String>()
-        o?.optJSONObject("session")?.let { fillVars(it, session) }
-        o?.optJSONObject("global")?.let { fillVars(it, global) }
-        return VariableTables(session, global)
-    }
-
-    private fun fillVars(o: JSONObject, out: MutableMap<String, String>) {
-        val keys = o.keys()
-        while (keys.hasNext()) {
-            val k = keys.next()
-            out[k] = o.optString(k, "")
-        }
-    }
-
-    /** org.json 递归转 Map，喂给 stcore.buildScript。 */
-    private fun jsonToMap(o: JSONObject): Map<String, Any?> {
-        val map = mutableMapOf<String, Any?>()
-        val keys = o.keys()
-        while (keys.hasNext()) {
-            val k = keys.next()
-            map[k] = jsonToObj(o.get(k))
-        }
-        return map
-    }
-
-    private fun jsonToObj(v: Any?): Any? = when (v) {
-        is JSONObject -> jsonToMap(v)
-        is JSONArray -> List(v.length()) { i -> jsonToObj(v.get(i)) }
-        is Int, is Boolean, is String -> v
-        is Double -> if (v % 1.0 == 0.0) v.toInt() else v
-        else -> v?.toString()
-    }
-
-    // ------------------------------------------------------------ 列表更新
-    private fun submit(items: List<ChatItem>, scrollToBottom: Boolean) {
+    override fun onItems(items: List<ChatItem>, scrollToBottom: Boolean) {
+        if (viewingLog) return
         val shouldScroll = scrollToBottom || !list.canScrollVertically(1)
         adapter.submitList(items) {
             if (shouldScroll && items.isNotEmpty()) {
@@ -310,7 +141,103 @@ class NativeChatActivity : Activity() {
         }
     }
 
-    // ------------------------------------------------------------ 导入 jsonl
+    override fun onTitle(title: String) {
+        if (!viewingLog) titleView.text = title
+    }
+
+    override fun onGenerating(active: Boolean) {
+        sendBtn.visibility = if (active) View.GONE else View.VISIBLE
+        stopBtn.visibility = if (active) View.VISIBLE else View.GONE
+        // 输入框不禁用：用户可以边等边把下一句打好
+    }
+
+    override fun onToast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    override fun onBranchCreated(sessionId: String, title: String) {
+        Toast.makeText(this, "已分成新会话：$title", Toast.LENGTH_SHORT).show()
+        controller.open(sessionId)
+    }
+
+    // ------------------------------------------------------------ 列表交互
+
+    private val adapterListener = object : ChatAdapter.Listener {
+        override fun onImageClick(item: ChatItem, path: String) {
+            startActivity(
+                Intent(this@NativeChatActivity, ImageViewerActivity::class.java)
+                    .putExtra(ImageViewerActivity.EXTRA_PATH, path),
+            )
+        }
+
+        override fun onVariantSwitch(item: ChatItem, delta: Int) {
+            controller.switchVariant(item.actionId, delta)
+        }
+
+        override fun onActionMenu(item: ChatItem, anchor: View) {
+            showActionMenu(item, anchor)
+        }
+    }
+
+    private fun showActionMenu(item: ChatItem, anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        if (item.role == "user") {
+            popup.menu.add(0, M_EDIT, 0, "编辑这句")
+            popup.menu.add(0, M_DELETE, 1, "删除这句")
+        } else {
+            popup.menu.add(0, M_REGEN, 0, "重新生成")
+            popup.menu.add(0, M_EDIT, 1, "编辑这条回复")
+            popup.menu.add(0, M_BRANCH, 2, "从这里分支出新会话")
+            popup.menu.add(0, M_DELETE, 3, "删除这条回复")
+        }
+        popup.setOnMenuItemClickListener { mi ->
+            when (mi.itemId) {
+                M_EDIT -> if (item.role == "user") editText("编辑你的话", item.content) {
+                    controller.editUser(item.actionId, it)
+                } else editText("编辑这条回复", item.content) {
+                    controller.editAi(item.actionId, it)
+                }
+                M_REGEN -> controller.regenerate(item.actionId)
+                M_BRANCH -> controller.branchFrom(item.actionId)
+                M_DELETE -> if (item.role == "user") {
+                    controller.deleteUser(item.actionId)
+                } else {
+                    controller.deleteAi(item.actionId)
+                }
+            }
+            true
+        }
+        popup.show()
+    }
+
+    /** 简单文本编辑弹窗（原生，不用 WebView 的 prompt）。 */
+    private fun editText(title: String, initial: String, onOk: (String) -> Unit) {
+        val box = EditText(this).apply {
+            setText(initial)
+            setSelection(initial.length)
+            minLines = 3
+            maxLines = 12
+            setPadding(36, 24, 36, 24)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(box)
+            .setPositiveButton("保存") { _, _ -> onOk(box.text.toString()) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    // ------------------------------------------------------------ 发送
+
+    private fun submitInput() {
+        val text = input.text.toString().trim()
+        if (text.isEmpty()) return
+        input.setText("")
+        controller.send(text)
+    }
+
+    // ------------------------------------------------------------ 导入 jsonl（只读预览）
+
     private fun pickJsonl() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -332,19 +259,7 @@ class NativeChatActivity : Activity() {
         }
         viewingLog = true
         titleView.text = "聊天记录（${items.size} 条）"
-        submit(items, scrollToBottom = true)
+        adapter.submitList(items) { list.scrollToPosition(items.size - 1) }
         Toast.makeText(this, "已加载 ${items.size} 条", Toast.LENGTH_SHORT).show()
-    }
-
-    // ------------------------------------------------------------ 发送消息
-    private fun sendMessage() {
-        val text = input.text.toString().trim()
-        if (text.isEmpty()) return
-        input.setText("")
-        val wv: WebView = MainActivity.getWebView() ?: return
-        val escaped = JSONObject.quote(text)
-        wv.evaluateJavascript(
-            "window.__dhpApp && window.__dhpApp.sendUserMessage ? window.__dhpApp.sendUserMessage($escaped) : null",
-        ) {}
     }
 }

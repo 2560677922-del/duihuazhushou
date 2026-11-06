@@ -20,7 +20,8 @@ import com.dbpg.stcore.richtext.RichTextParser
 /**
  * 聊天列表适配器（RecyclerView）。
  *
- * 只做渲染：文本 → RichTextRenderer（Spannable），图片 → 本地路径解码，气泡 → 对齐+配色。
+ * 只做渲染 + 把点击回调出去：文本 → RichTextRenderer（Spannable），
+ * 图片 → 本地路径解码，版本条/操作入口 → 回调给 Activity。
  * 不碰网络、不碰会话逻辑，数据全部来自 [ChatItem]。
  *
  * 顺滑三要点：
@@ -31,7 +32,15 @@ import com.dbpg.stcore.richtext.RichTextParser
 class ChatAdapter(
     private var config: AppearanceConfig,
     private val screenWidthPx: Int,
+    private val listener: Listener,
 ) : ListAdapter<ChatItem, ChatAdapter.VH>(DIFF) {
+
+    /** 一张/一组配图被点击 */
+    interface Listener {
+        fun onImageClick(item: ChatItem, path: String)
+        fun onVariantSwitch(item: ChatItem, delta: Int)
+        fun onActionMenu(item: ChatItem, anchor: View)
+    }
 
     /** 气泡最大宽度：按屏宽百分比算，改设置不用重建 Adapter。 */
     private val bubbleMaxWidthPx: Int
@@ -51,10 +60,20 @@ class ChatAdapter(
         private const val COLOR_USER = 0xFF2A4B7C.toInt()
         private const val COLOR_AI = 0xFF232A3A.toInt()
         private const val COLOR_SYS = 0xFF2E3440.toInt()
+        private const val COLOR_DIM = 0xFF7F8DA6.toInt()
     }
 
-    class VH(root: FrameLayout, val bubble: LinearLayout, val text: TextView, val images: LinearLayout) :
-        RecyclerView.ViewHolder(root)
+    class VH(
+        root: FrameLayout,
+        val bubble: LinearLayout,
+        val text: TextView,
+        val images: LinearLayout,
+        val meta: LinearLayout,
+        val verOlder: TextView,
+        val verNo: TextView,
+        val verNewer: TextView,
+        val more: TextView,
+    ) : RecyclerView.ViewHolder(root)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val v = LayoutInflater.from(parent.context).inflate(R.layout.item_chat_message, parent, false)
@@ -63,6 +82,11 @@ class ChatAdapter(
             v.findViewById(R.id.bubble),
             v.findViewById(R.id.msg_text),
             v.findViewById(R.id.msg_images),
+            v.findViewById(R.id.msg_meta),
+            v.findViewById(R.id.msg_ver_older),
+            v.findViewById(R.id.msg_ver_no),
+            v.findViewById(R.id.msg_ver_newer),
+            v.findViewById(R.id.msg_more),
         )
     }
 
@@ -119,8 +143,37 @@ class ChatAdapter(
                 iv.scaleType = ImageView.ScaleType.FIT_CENTER
                 iv.adjustViewBounds = true
                 ImageLoader.load(path, bubbleMaxWidthPx)?.let { iv.setImageBitmap(it) }
+                // 点图放大：以前这里没有监听，图片只能"看着"，点不动
+                iv.setOnClickListener { listener.onImageClick(item, path) }
                 holder.images.addView(iv)
             }
+        }
+
+        // 4) 版本条 / 操作入口
+        val hasVariants = !isUser && item.variantCount > 1
+        val canOperate = item.actionId.isNotEmpty() && !isSystem
+        if (!hasVariants && !canOperate) {
+            holder.meta.visibility = View.GONE
+        } else {
+            holder.meta.visibility = View.VISIBLE
+            holder.verOlder.visibility = if (hasVariants) View.VISIBLE else View.GONE
+            holder.verNewer.visibility = if (hasVariants) View.VISIBLE else View.GONE
+            holder.verNo.visibility = if (hasVariants) View.VISIBLE else View.GONE
+            if (hasVariants) {
+                // 显示成「第 n / 共 m 版」，1 是最新
+                holder.verNo.text = "${item.variantIndex + 1}/${item.variantCount}"
+                holder.verOlder.alpha = if (item.variantIndex < item.variantCount - 1) 1f else 0.3f
+                holder.verNewer.alpha = if (item.variantIndex > 0) 1f else 0.3f
+                holder.verOlder.setOnClickListener {
+                    if (item.variantIndex < item.variantCount - 1) listener.onVariantSwitch(item, +1)
+                }
+                holder.verNewer.setOnClickListener {
+                    if (item.variantIndex > 0) listener.onVariantSwitch(item, -1)
+                }
+            }
+            holder.more.visibility = if (canOperate) View.VISIBLE else View.GONE
+            holder.more.setTextColor(COLOR_DIM)
+            holder.more.setOnClickListener { listener.onActionMenu(item, it) }
         }
     }
 

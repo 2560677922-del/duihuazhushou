@@ -2,6 +2,10 @@
 <!--
   单条消息气泡。user 靠右、assistant 靠左，靠容器 gravity 切换。
   文本用 TextView 原生渲染，图片用 ImageView 原生加载 —— 不再依赖 WebView。
+
+  底部一行是「版本 ‹ 2/3 › + ⋯ 操作」：
+    · 只有一个版本时整行隐藏（不占位、不绘制）；
+    · ⋯ 只在会话消息上出现，jsonl 预览这类只读内容没有操作。
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -33,5 +37,58 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:layout_marginTop="6dp" />
+
+        <!-- 底部元信息：版本切换 + 操作入口 -->
+        <LinearLayout
+            android:id="@+id/msg_meta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center_vertical|end"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/msg_ver_older"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:text="‹"
+                android:textColor="#7F8DA6"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/msg_ver_no"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="26dp"
+                android:gravity="center"
+                android:textColor="#7F8DA6"
+                android:textSize="10sp" />
+
+            <TextView
+                android:id="@+id/msg_ver_newer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:text="›"
+                android:textColor="#7F8DA6"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/msg_more"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:paddingStart="8dp"
+                android:paddingTop="2dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="2dp"
+                android:text="⋯ 操作"
+                android:textColor="#7F8DA6"
+                android:textSize="10sp" />
+        </LinearLayout>
     </LinearLayout>
 </FrameLayout>

@@ -54,6 +54,14 @@ class ImageGenService(context: Context) {
         }
     }
 
+    /**
+     * 同步版：直接返回结果，供已经在后台线程的调用方用（自动配图批量出图）。
+     *
+     * 不走 [generate] 的回调是因为自动配图要"一张接一张、失败就换端点重试"，
+     * 用回调得套 CountDownLatch，反而更容易写错；调用方本来就在 IO 线程。
+     */
+    fun generateSync(req: Request): List<ImageStore.StoredImage> = doGenerate(req)
+
     private fun doGenerate(req: Request): List<ImageStore.StoredImage> {
         val body = ImageRequestBuilder.buildOpenAiJson(
             model = req.model,

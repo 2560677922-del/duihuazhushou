@@ -36,6 +36,15 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/session_import"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="10dp"
+            android:text="导入"
+            android:textColor="#7FB2FF"
+            android:textSize="14sp" />
+
+        <TextView
             android:id="@+id/session_refresh"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -64,7 +73,7 @@
             android:gravity="center"
             android:lineSpacingExtra="6dp"
             android:padding="32dp"
-            android:text="还没有会话\n\n回网页点「开始冒险」新建一个，这里就会出现"
+            android:text="还没有会话\n\n点右上角「导入」，把网页里已有的会话搬过来"
             android:textColor="#6C7A90"
             android:textSize="14sp"
             android:visibility="gone" />

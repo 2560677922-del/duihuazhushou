@@ -97,6 +97,10 @@ async function boot() {
     import('./bridge/dataExport').then((m) => m.installDataExport()).catch((e) => {
       console.warn('[数据迁移] 加载失败（不影响网页使用）：', e);
     });
+    // 纯生成通道：原生把"当前版本的对话"交过来，这里只组装 + 发请求，不写会话。
+    import('./bridge/generateService').then((m) => m.installGenerateService()).catch((e) => {
+      console.warn('[生成通道] 加载失败（不影响网页使用）：', e);
+    });
   } catch (e) {
     console.warn('[原生桥接] 初始化失败（不影响网页使用）：', e);
   }

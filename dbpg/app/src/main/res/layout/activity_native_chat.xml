@@ -33,6 +33,15 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/chat_engine"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="8dp"
+            android:text="引擎"
+            android:textColor="#8FA6C8"
+            android:textSize="14sp" />
+
+        <TextView
             android:id="@+id/chat_gen"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -55,7 +64,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:padding="8dp"
-            android:text="返回网页"
+            android:text="返回"
             android:textColor="#8FA6C8"
             android:textSize="14sp" />
     </LinearLayout>
@@ -107,5 +116,20 @@
             android:textColor="#6EA8FE"
             android:textSize="15sp"
             android:textStyle="bold" />
+
+        <!-- 生成中替换「发送」：同一位置，避免多塞一个按钮把输入框挤窄 -->
+        <TextView
+            android:id="@+id/chat_stop"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="14dp"
+            android:paddingEnd="6dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:text="停止"
+            android:textColor="#E06C75"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
     </LinearLayout>
 </LinearLayout>
