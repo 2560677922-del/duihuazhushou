@@ -101,6 +101,7 @@ function buildMessages(
   userInput: string,
   imageInstruction: boolean,
   imageMax: number,
+  sessionId: string,
 ): ChatMessage[] | null {
   const assets = useAssetsStore();
   const presetRaw = assets.getCurrentPreset();
@@ -126,7 +127,12 @@ function buildMessages(
     chatHistory,
     contextWindowTokens: api.currentConfig?.contextWindow,
     userLookbackTokens: api.currentConfig?.userLookbackTokens,
-    variables: variables.snapshot(undefined),
+    /*
+     * ★ 必须用**原生会话 id**。
+     *   用 `snapshot()` 的默认值会落到"网页当前会话"上 —— 那个 id 跟原生不是同一个，
+     *   结果是 `{{getvar::x}}` 全读成空，而且发出去之前 `runWrites` 刚写的值也看不到。
+     */
+    variables: variables.snapshot(sessionId || undefined),
   });
 
   const msgs = result.finalMessages;
@@ -197,7 +203,7 @@ async function generate(reqJson: string): Promise<void> {
         : imageStore.autoImage.enabled;
     const imageMax = req.imageInstructionMax ?? imageStore.autoImage.maxPerReply;
 
-    const finalMessages = buildMessages(history, cleanInput, wantImage, imageMax);
+    const finalMessages = buildMessages(history, cleanInput, wantImage, imageMax, sessionId);
     if (!finalMessages) {
       callNative('onGenError', requestId, '还没有启用预设，请先在「资产」里选一个');
       return;
