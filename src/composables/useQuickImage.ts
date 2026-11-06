@@ -166,7 +166,7 @@ export function useQuickImage() {
             perCategory: storageSettings.tagPerCategory,
           })
         : undefined,
-      dnaBlock: dnaStore.selectedDnaBlock() || undefined,
+      dnaBlock: dnaStore.dnaBlock() || undefined,
       presetBlock: imageStore.autoImage.usePreset
         ? buildPresetBlock(
             assetsStore.getCurrentPreset(),
@@ -174,7 +174,7 @@ export function useQuickImage() {
             buildImageMacroContext(),
           ) || undefined
         : undefined,
-      dnaTags: dnaStore.selectedDnaTags() || undefined,
+      dnaTags: dnaStore.dnaTags() || undefined,
     };
   }
 

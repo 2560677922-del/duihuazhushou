@@ -450,6 +450,33 @@ function goBack() {
   void router.push('/adventure');
 }
 
+/* ---------------- 会话改名 ---------------- */
+
+/** 是否正在改标题 */
+const renaming = ref(false);
+const renameText = ref('');
+const renameInput = ref<HTMLInputElement | null>(null);
+
+function startRename() {
+  if (!currentSession.value) return;
+  renaming.value = true;
+  renameText.value = currentSession.value.title || '';
+  void nextTick(() => {
+    renameInput.value?.focus();
+    renameInput.value?.select();
+  });
+}
+
+async function commitRename() {
+  if (!renaming.value) return;
+  renaming.value = false;
+  await adventure.updateSessionTitle(renameText.value);
+}
+
+function cancelRename() {
+  renaming.value = false;
+}
+
 /**
  * 导出这段冒险的对话记录。
  *
@@ -1016,7 +1043,15 @@ function handleImageGenerated(dataUrl: string) {
             重新点一遍"冒险"，语义上不对（用户想的是"返回"，不是"换 tab"）。
           -->
           <button class="back-btn" @click="goBack" title="返回会话列表">‹</button>
-          <h2>{{ currentSession?.title || '冒险' }}</h2>
+          <!--
+            标题可点＝改名。
+            以前这一幕完全没有改名入口，所有会话都叫「新冒险」（用户报的）。
+          -->
+          <input v-if="renaming" ref="renameInput" class="hdr-rename" v-model="renameText"
+            maxlength="40" @keyup.enter="commitRename" @keyup.esc="cancelRename" @blur="commitRename" />
+          <h2 v-else class="hdr-title" @click="startRename" title="点一下改名">
+            {{ currentSession?.title || '冒险' }}
+          </h2>
           <!-- 当前模型：点一下切换（运营商 → 模型 两级） -->
           <ModelPicker />
         </div>
@@ -1595,6 +1630,29 @@ function handleImageGenerated(dataUrl: string) {
 }
 .back-btn:active {
   transform: scale(0.94);
+}
+/* 会话标题：可点改名 */
+.hdr-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  max-width: 42vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+  padding: 2px 6px;
+  border-radius: 5px;
+}
+.hdr-title:hover {
+  background: var(--panel-2);
+}
+.hdr-rename {
+  font-size: 15px;
+  font-weight: 600;
+  max-width: 42vw;
+  padding: 2px 6px;
+  border-radius: 5px;
 }
 .session-title {
   font-size: 12px;

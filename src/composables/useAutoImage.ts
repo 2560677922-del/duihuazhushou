@@ -173,7 +173,7 @@ export function useAutoImage() {
          */
         skipOptimization: !imageStore.autoImage.usePreset,
         manualPrompt: imageStore.autoImage.usePreset ? undefined : m.description,
-        dnaTags: dnaStore.selectedDnaTags() || undefined,
+        dnaTags: dnaStore.dnaTags() || undefined,
         presetBlock: imageStore.autoImage.usePreset
           ? buildPresetBlock(
               assetsStore.getCurrentPreset(),

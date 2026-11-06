@@ -43,10 +43,21 @@ function setEntryKeys(e: any, value: string) {
   }));
 }
 function entryDisabled(e: any): boolean {
-  return e?.disabled === true || e?.disable === true;
+  // 三种写法都要认（本应用写 disabled，ST 用 enabled/disable）
+  const truthy = (v: any) => v === true || v === 1 || v === 'true' || v === '1';
+  const falsy = (v: any) => v === false || v === 0 || v === 'false' || v === '0';
+  return truthy(e?.disabled) || truthy(e?.disable) || falsy(e?.enabled);
 }
 function setEntryDisabled(e: any, off: boolean) {
+  /*
+   * 三处都写，保持自洽。
+   *
+   * 之前只写 `disabled`，而引擎读的是 `disable`/`enabled` ——
+   * 取消勾选完全没效果（用户复现）。现在写入时把标准字段一起同步，
+   * 以后不管谁读哪个字段，看到的都是同一个状态。
+   */
   e.disabled = off;
+  e.enabled = !off;
   if ('disable' in e) e.disable = off;
   emit('changed');
 }

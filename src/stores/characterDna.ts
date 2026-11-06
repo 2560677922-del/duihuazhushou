@@ -6,68 +6,78 @@ import { createDna, buildDnaBlock, mergeDnaTags } from '../engine/characterDna';
 
 // 角色 DNA store：独立于世界书/预设的另一类资产。
 //
-// 生图时会用到两部分：
-//   selectedIds —— 界面上勾选的，作用于弹窗里的手动生图
-//   pinnedId    —— 常驻锚定的那一条，自动配图（[[IMG]] 标记）也会带上
-// 这样日常写作时不用每次去勾，自动配图也能保持角色一致。
+// ★ 生效规则（只有一个开关：enabled）
+//   勾上的每一条 DNA 都会进入**所有**生图请求 ——
+//   弹窗手动生图、会话里「🎨 配图」、自动配图（[[IMG]] 标记）都一样。
+//   没勾的完全不参与。
+//
+//   以前有两套开关（selectedIds 只管弹窗、pinnedId 管自动配图作兜底），
+//   用户看到的就是"一个小对号 + 一个常驻按钮"，两个开关互相影响、
+//   谁也说不清哪条到底生效（用户报的）。现在统一成 enabled：
+//   勾选 = 生效，取消勾选 = 不生效，没有任何隐藏兜底。
+//
+//   为什么引擎层不用改：buildDnaBlock / mergeDnaTags 本来就只收
+//   enabled !== false 的条目，之前是 UI 没把开关接到这个字段上。
 
 export const useDnaStore = defineStore('characterDna', () => {
   const items = ref<CharacterDna[]>([]);
-  /** 弹窗里勾选的 DNA */
-  const selectedIds = ref<string[]>([]);
-  /** 常驻锚定：自动配图也会用 */
-  const pinnedId = ref<string | undefined>(undefined);
 
   const all = computed(() => items.value);
-  const enabled = computed(() => items.value.filter((d) => d.enabled !== false));
-  const selected = computed(() =>
-    items.value.filter((d) => selectedIds.value.includes(d._uid)),
-  );
-  const pinned = computed(() => items.value.find((d) => d._uid === pinnedId.value));
 
-  /** 自动配图使用的 DNA 块：常驻锚定的那条 */
-  function autoDnaBlock(): string {
-    return pinned.value ? buildDnaBlock([pinned.value]) : '';
-  }
+  /** 勾选（启用）的 DNA —— 所有生图都只带这些 */
+  const enabledItems = computed(() => items.value.filter((d) => d.enabled !== false));
 
-  /** 弹窗使用的 DNA 块：勾选的条目（没勾选就退回常驻那条） */
-  function selectedDnaBlock(): string {
-    const list = selected.value.length > 0 ? selected.value : pinned.value ? [pinned.value] : [];
-    return buildDnaBlock(list);
+  /** 自动配图/手动生图共用的 DNA 块 */
+  function dnaBlock(): string {
+    return buildDnaBlock(enabledItems.value);
   }
 
   /** 合并成纯标签（手动提示词模式用） */
-  function selectedDnaTags(): string {
-    const list = selected.value.length > 0 ? selected.value : pinned.value ? [pinned.value] : [];
-    return mergeDnaTags(list);
+  function dnaTags(): string {
+    return mergeDnaTags(enabledItems.value);
   }
 
   async function load() {
-    const [list, sel, pin] = await Promise.all([
+    const [list, migrated] = await Promise.all([
       store.getItem<CharacterDna[]>('characterDnaList'),
-      store.getItem<string[]>('characterDnaSelected'),
-      store.getItem<string | undefined>('characterDnaPinned'),
+      store.getItem<boolean>('characterDnaUnifiedSwitch'),
     ]);
     items.value = list ?? [];
-    selectedIds.value = sel ?? [];
-    pinnedId.value = pin ?? undefined;
+
+    // 老数据迁移：把过去的「勾选 / 常驻」合并成 enabled，跑一次就够
+    if (!migrated) {
+      await migrateLegacySwitch();
+      await store.setItem('characterDnaUnifiedSwitch', true);
+    }
 
     if (items.value.length === 0) {
       const first = createDna('主角');
       items.value = [first];
-      pinnedId.value = first._uid;
       await save();
-    } else if (pinnedId.value && !items.value.some((d) => d._uid === pinnedId.value)) {
-      pinnedId.value = undefined;
     }
   }
 
-  async function save() {
-    await Promise.all([
-      store.setItem('characterDnaList', items.value),
-      store.setItem('characterDnaSelected', selectedIds.value),
-      store.setItem('characterDnaPinned', pinnedId.value),
+  /**
+   * 老版本有两个开关，迁移规则：
+   *   - 有勾选过 → 勾选的那些启用
+   *   - 没勾选过但有常驻 → 常驻那条启用（它以前确实会生效）
+   *   - 两者都没有 → 保持原样（默认启用，和新建一致）
+   */
+  async function migrateLegacySwitch() {
+    const [sel, pin] = await Promise.all([
+      store.getItem<string[]>('characterDnaSelected'),
+      store.getItem<string | undefined>('characterDnaPinned'),
     ]);
+    const selected = sel ?? [];
+    if (selected.length === 0 && !pin) return;
+    for (const d of items.value) {
+      d.enabled = selected.length > 0 ? selected.includes(d._uid) : d._uid === pin;
+    }
+    await save();
+  }
+
+  async function save() {
+    await store.setItem('characterDnaList', items.value);
   }
 
   async function add(name = '新角色') {
@@ -79,8 +89,6 @@ export const useDnaStore = defineStore('characterDna', () => {
 
   async function remove(uid: string) {
     items.value = items.value.filter((d) => d._uid !== uid);
-    selectedIds.value = selectedIds.value.filter((x) => x !== uid);
-    if (pinnedId.value === uid) pinnedId.value = undefined;
     await save();
   }
 
@@ -90,6 +98,11 @@ export const useDnaStore = defineStore('characterDna', () => {
       Object.assign(d, patch, { updatedAt: Date.now() });
     }
     await save();
+  }
+
+  /** 唯一的开关入口 */
+  async function setEnabled(uid: string, on: boolean) {
+    await update(uid, { enabled: on });
   }
 
   async function duplicate(uid: string) {
@@ -103,36 +116,18 @@ export const useDnaStore = defineStore('characterDna', () => {
     return copy;
   }
 
-  async function toggleSelected(uid: string, on: boolean) {
-    selectedIds.value = on
-      ? [...new Set([...selectedIds.value, uid])]
-      : selectedIds.value.filter((x) => x !== uid);
-    await save();
-  }
-
-  async function setPinned(uid?: string) {
-    pinnedId.value = uid;
-    await save();
-  }
-
   return {
     items,
     all,
-    enabled,
-    selected,
-    selectedIds,
-    pinnedId,
-    pinned,
-    autoDnaBlock,
-    selectedDnaBlock,
-    selectedDnaTags,
+    enabledItems,
+    dnaBlock,
+    dnaTags,
     load,
     save,
     add,
     remove,
     update,
+    setEnabled,
     duplicate,
-    toggleSelected,
-    setPinned,
   };
 });

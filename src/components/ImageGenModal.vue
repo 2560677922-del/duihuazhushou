@@ -343,9 +343,9 @@ async function startGenerate() {
               .filter(Boolean)
               .join('\n\n')
           : undefined,
-      // 角色 DNA：锚定固定外观，优先级高于标签参考
-      dnaBlock: dnaStore.selectedDnaBlock() || undefined,
-      dnaTags: dnaStore.selectedDnaTags() || undefined,
+      // 角色 DNA：勾选（enabled）的那几条，锚定固定外观
+      dnaBlock: dnaStore.dnaBlock() || undefined,
+      dnaTags: dnaStore.dnaTags() || undefined,
     };
 
     const genResult = await generateImage(
@@ -686,13 +686,10 @@ function clearReference() {
             </div>
             <div v-if="dnaStore.items.length" class="dna-list">
               <label v-for="d in dnaStore.items" :key="d._uid" class="dna-item"
-                :class="{ on: dnaStore.selectedIds.includes(d._uid) }">
-                <input type="checkbox" :checked="dnaStore.selectedIds.includes(d._uid)"
-                  @change="dnaStore.toggleSelected(d._uid, ($event.target as HTMLInputElement).checked)" />
-                <span class="dna-name">
-                  {{ d.name }}
-                  <span v-if="dnaStore.pinnedId === d._uid" class="dna-pin">常驻</span>
-                </span>
+                :class="{ on: d.enabled !== false }">
+                <input type="checkbox" :checked="d.enabled !== false"
+                  @change="dnaStore.setEnabled(d._uid, ($event.target as HTMLInputElement).checked)" />
+                <span class="dna-name">{{ d.name }}</span>
                 <span class="dna-preview">{{ (d.dna || '(未填写)').slice(0, 60) }}</span>
               </label>
             </div>
@@ -700,8 +697,9 @@ function clearReference() {
               还没有角色 DNA。到「资产 → 角色 DNA」新建一条，写上角色的英文外观描述
               （如 <code>silver hair, red eyes</code>），生图时勾选即可锚定。
             </p>
-            <p v-if="!dnaStore.selectedIds.length && dnaStore.pinned" class="tip">
-              没有勾选，将使用常驻的「{{ dnaStore.pinned.name }}」。
+            <!-- 这里以前还有一句"没勾选就用常驻的那条" —— 现在没有隐藏兜底了：勾了就生效，没勾就不生效 -->
+            <p v-if="dnaStore.items.length && !dnaStore.enabledItems.length" class="tip">
+              当前没有勾选任何角色 DNA，生图不会锚定角色外观。
             </p>
           </section>
 

@@ -573,10 +573,26 @@ export const useAdventureStore = defineStore('adventure', {
       session.updatedAt = Date.now();
       await this.save();
     },
-    async updateSessionTitle(title: string) {
-      const session = this.currentSession;
+    /**
+     * 改会话名字。
+     *
+     * 以前这个方法只能改 currentSession，而且**没有任何界面调用它** ——
+     * 结果就是所有会话永远叫「新冒险」，用户完全没法区分（用户报的）。
+     * 现在支持传 sessionId（列表页要改非当前会话），并做去空格/空值保护。
+     *
+     * 故意**不动 updatedAt**：改名不算"有新活动"，
+     * 否则列表会因为它跳到最前面，用户会以为会话顺序乱了。
+     */
+    async updateSessionTitle(title: string, sessionId?: string) {
+      const session = sessionId
+        ? this.sessions.find((s) => s.id === sessionId)
+        : this.currentSession;
       if (!session) return;
-      session.title = title;
+      const next = (title || '').trim();
+      // 空名字不接受：列表里只剩「未命名会话」，不如保留原名
+      if (!next) return;
+      if (session.title === next) return;
+      session.title = next;
       await this.save();
     },
 

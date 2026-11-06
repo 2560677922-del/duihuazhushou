@@ -7,7 +7,7 @@
 //
 // 这样"进入对话"是一个明确的动作，进去之后界面就干净了 ——
 // 不会像以前那样：对话页里还塞着会话列表、侧栏、一堆配置入口。
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAdventureStore } from '../stores/adventure';
 import { useAssetsStore } from '../stores/assets';
@@ -190,6 +190,44 @@ async function askDelete(id: string) {
   pendingDelete.value = null;
   await adventure.removeSession(id);
 }
+
+/* ---------------- 改名 ---------------- */
+
+/** 正在改名的会话 id（null = 没有在改） */
+const renamingId = ref<string | null>(null);
+const renameText = ref('');
+/**
+ * 改名输入框的元素。
+ *
+ * 注意：这里在 v-for 里，用 `ref="name"` 会拿到**数组**（每个会话一个），
+ * 直接 .focus() 会报 "not a function"（实测）。所以用函数 ref 手动接住元素。
+ */
+const renameInput = ref<HTMLInputElement | null>(null);
+function bindRenameInput(el: any) {
+  renameInput.value = (el as HTMLInputElement) ?? null;
+}
+
+/** 点标题进入编辑；@click.stop 保证不会顺带把会话打开 */
+function startRename(s: any) {
+  renamingId.value = s.id;
+  renameText.value = s.title || '';
+  // 等输入框渲染出来再聚焦并全选，省得用户还得自己点一下
+  void nextTick(() => {
+    renameInput.value?.focus();
+    renameInput.value?.select();
+  });
+}
+
+async function commitRename() {
+  const id = renamingId.value;
+  if (!id) return;
+  renamingId.value = null;
+  await adventure.updateSessionTitle(renameText.value, id);
+}
+
+function cancelRename() {
+  renamingId.value = null;
+}
 </script>
 
 <template>
@@ -231,7 +269,20 @@ async function askDelete(id: string) {
         <div class="avatar" :style="avatarStyle(s.id)">{{ initialOf(s.title) }}</div>
         <div class="body">
           <div class="line1">
-            <span class="title">{{ s.title || '未命名会话' }}</span>
+            <!--
+              点标题＝改名（@click.stop 防止顺带打开会话）。
+              以前标题是死的，所有会话永远叫「新冒险」，完全没法区分。
+            -->
+            <input v-if="renamingId === s.id" :ref="bindRenameInput" class="rename-input"
+              v-model="renameText" maxlength="40"
+              @click.stop
+              @keyup.enter="commitRename"
+              @keyup.esc="cancelRename"
+              @blur="commitRename" />
+            <span v-else class="title" @click.stop="startRename(s)"
+              :title="'点一下改名：' + (s.title || '未命名会话')">
+              {{ s.title || '未命名会话' }}
+            </span>
             <span class="time">{{ fmtTime(s.updatedAt) }}</span>
           </div>
           <div class="line2">
@@ -363,6 +414,22 @@ async function askDelete(id: string) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* 可点：点一下改名 */
+  cursor: text;
+  border-radius: 4px;
+  padding: 0 2px;
+  margin: 0 -2px;
+}
+.title:hover {
+  background: var(--panel-2);
+}
+.rename-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 5px;
 }
 .time {
   flex-shrink: 0;

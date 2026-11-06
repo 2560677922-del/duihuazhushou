@@ -49,6 +49,28 @@ export function normalizeEntryList(entries: any): any[] {
   return [];
 }
 
+/**
+ * 条目是否被关掉。
+ *
+ * 踩过的坑（用户报的）：UI 上那个「小对号」取消勾选后写的是 `disabled`，
+ * 而这里以前只认 `disable` 和 `enabled` —— 于是**取消勾选完全不起作用**，
+ * 条目照样按关键词注入。用户只能把关键词改成不相关的词来绕开。
+ *
+ * 现在三种写法都认，并且容忍 0/1 和字符串（不同来源的 JSON 写法不一样）：
+ *   disabled: true / 1 / 'true'   → 关（本应用 UI 写的）
+ *   disable:  true / 1 / 'true'   → 关（SillyTavern 某些版本）
+ *   enabled:  false / 0 / 'false' → 关（SillyTavern 标准）
+ */
+export function isEntryDisabled(entry: any): boolean {
+  if (!entry) return false;
+  const truthy = (v: any) => v === true || v === 1 || v === 'true' || v === '1';
+  const falsy = (v: any) => v === false || v === 0 || v === 'false' || v === '0';
+  if (truthy(entry.disabled) || truthy(entry.disable)) return true;
+  // enabled 只在**明确**为假时才算关；缺省视为开
+  if (falsy(entry.enabled)) return true;
+  return false;
+}
+
 export function triggerWorldbook(
   worldBooks: any[],
   chatHistory: ChatMessage[],
@@ -75,7 +97,8 @@ export function triggerWorldbook(
         : [];
 
     for (const entry of list) {
-      if (entry.disable === true || entry.enabled === false) continue;
+      // 关掉的条目一律跳过（三种字段写法都认，见 isEntryDisabled 的说明）
+      if (isEntryDisabled(entry)) continue;
       const ext = entry.extensions ?? {};
 
       // 关键词有几种写法，必须全部认：

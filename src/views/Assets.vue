@@ -745,11 +745,11 @@ async function onCharFieldChange(c: any, f: any) {
                 <input type="text" v-model="item.note"
                   @change="dna.update(item._uid, { note: item.note })" />
               </div>
-              <label class="sw inline">
-                <input type="checkbox" :checked="dna.pinnedId === item._uid"
-                  @change="dna.setPinned(($event.target as HTMLInputElement).checked ? item._uid : undefined)" />
-                <span>设为常驻（自动配图也带上这条）</span>
-              </label>
+              <!--
+                这里以前还有个「设为常驻」复选框 —— 和卡片右上角的开关是两套逻辑
+                （一个管自动配图、一个管弹窗），用户看到的两个开关互相打架。
+                现在只有一个开关：卡片右上角那个，勾上就参与所有生图。
+              -->
             </div>
           </template>
 

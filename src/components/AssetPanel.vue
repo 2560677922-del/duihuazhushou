@@ -210,24 +210,18 @@ function groupOnCount(g: any): number {
           用户的反馈："我都有点看不懂哪个是开启了，已经有勾选了，
           就不要搞那个五角星了。"
           原因：勾选框和星号挨在一起，看起来像"两个开关"，分不清哪个是启用。
-          星号其实是另一个语义（常驻 = 自动配图也带上），但它太像状态标记了。
 
-          现在：**启用只看勾选框**；常驻状态用尾巴上一行小字表达，
-          切换入口放在勾选框右侧一个明确的文字按钮上（不抢状态视觉）。
+          现在：**只有一个勾选框**，它就是这个 DNA 是否参与生图。
+          以前的「常驻」是第二套开关（只管自动配图），两个开关互相影响，
+          谁也说不清哪条最终生效 —— 已删除，改成勾选即全生效。
         -->
         <label v-for="d in dna.items" :key="d._uid" class="checkbox-row">
           <input
             type="checkbox"
-            :checked="dna.selectedIds.includes(d._uid)"
-            @change="(e) => dna.toggleSelected(d._uid, (e.target as HTMLInputElement).checked)"
+            :checked="d.enabled !== false"
+            @change="(e) => dna.setEnabled(d._uid, (e.target as HTMLInputElement).checked)"
           />
           <span class="truncate" :title="d.dna || '(未填写描述)'">{{ d.name }}</span>
-          <span v-if="dna.pinnedId === d._uid" class="pin-tag">常驻</span>
-          <button
-            class="pin-text"
-            :title="dna.pinnedId === d._uid ? '取消常驻（自动配图也会带上这条）' : '设为常驻：自动配图也会带上这条'"
-            @click.prevent="dna.setPinned(dna.pinnedId === d._uid ? undefined : d._uid)"
-          >{{ dna.pinnedId === d._uid ? '取消常驻' : '设为常驻' }}</button>
         </label>
       </div>
     </div>
@@ -286,34 +280,6 @@ function groupOnCount(g: any): number {
   border: 1px solid var(--border);
   text-transform: none;
   letter-spacing: 0;
-}
-/* 常驻：用文字按钮 + 标签，不再用星号（星号会被误读成"启用状态"） */
-.pin-text {
-  border: 1px solid var(--border);
-  background: var(--panel-2);
-  border-radius: 999px;
-  padding: 1px 7px;
-  font-size: 9.5px;
-  line-height: 1.5;
-  color: var(--text-dim);
-  cursor: pointer;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-.pin-text:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-/* 已常驻的标记：一眼能看出"这条会跟着自动配图走" */
-.pin-tag {
-  font-size: 9.5px;
-  line-height: 1.5;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--warn) 18%, transparent);
-  color: var(--warn);
-  flex-shrink: 0;
-  white-space: nowrap;
 }
 .asset-select {
   font-size: 12px;
