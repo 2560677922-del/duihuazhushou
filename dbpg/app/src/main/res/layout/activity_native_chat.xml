@@ -3,6 +3,7 @@
   原生聊天界面布局。
   要点：整屏原生渲染，不用 WebView，从根本上解决老 Android WebView
   不支持 overflow-x: clip + 美化正则注入 HTML 导致的"聊天区横向溢出"。
+  消息列表用 RecyclerView：只复用可见项，长会话也顺滑、内存可控。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -10,7 +11,7 @@
     android:orientation="vertical"
     android:background="@color/app_bg">
 
-    <!-- 顶栏：标题 + 返回（返回直接 finish，回到网页聊天） -->
+    <!-- 顶栏：标题 + 导入 JSONL + 返回 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -32,6 +33,15 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/chat_import"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="8dp"
+            android:text="导入记录"
+            android:textColor="#8FA6C8"
+            android:textSize="14sp" />
+
+        <TextView
             android:id="@+id/chat_close"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -41,22 +51,18 @@
             android:textSize="14sp" />
     </LinearLayout>
 
-    <!-- 消息列表：原生气泡（ScrollView + 动态 LinearLayout，零额外依赖），永不横向溢出 -->
-    <ScrollView
-        android:id="@+id/chat_scroll"
+    <!-- 消息列表：RecyclerView，气泡由 ChatAdapter 原生渲染，永不横向溢出 -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/chat_list"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:padding="10dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
         android:scrollbars="vertical"
-        android:clipToPadding="false">
-
-        <LinearLayout
-            android:id="@+id/chat_container"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical" />
-    </ScrollView>
+        android:clipToPadding="false" />
 
     <!-- 输入栏：原生 EditText + 发送（规避 WebView 输入框被手势条压住的坑） -->
     <LinearLayout

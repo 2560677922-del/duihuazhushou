@@ -78,6 +78,12 @@ public final class MainActivity extends Activity {
     private static WebView sWebView;
     public static WebView getWebView() { return sWebView; }
 
+    /** 把任务切到主线程（供生图等后台回调把结果回传网页时使用）。 */
+    public static void runOnUi(Runnable r) {
+        android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+        h.post(r);
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);

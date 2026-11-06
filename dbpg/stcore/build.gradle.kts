@@ -30,4 +30,8 @@ android {
 dependencies {
     // 单测用 JUnit 4（Android 单元测默认）。
     testImplementation("junit:junit:4.13.2")
+    // Android 单元测里 android.jar 的 org.json 是空壳（不真正解析）。
+    // 这里在测试 classpath 上放一份真实的 org.json，让 JSONL / 生图解析的单测能真实跑起来。
+    // 运行期（真机）仍然用系统自带的 org.json，行为一致。
+    testImplementation("org.json:json:20240303")
 }

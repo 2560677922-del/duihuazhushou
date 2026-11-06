@@ -52,6 +52,12 @@ android {
 // 两边渲染走同一套转换逻辑，保证原生端看到的与网页一致。
 dependencies {
     implementation(project(":stcore"))
+
+    // 原生聊天列表：RecyclerView（大量消息时只复用可见项，滑动顺滑、内存可控）
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
+
+    // 原生生图网络层：OkHttp（长超时 / HTTP+HTTPS / 局域网 / 自定义中转站，天然无跨域）
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
 
 // ---------------------------------------------------------------------------

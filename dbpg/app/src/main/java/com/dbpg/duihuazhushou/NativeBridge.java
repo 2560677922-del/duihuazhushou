@@ -40,4 +40,23 @@ public final class NativeBridge {
             android.util.Log.w("DHP", "打开原生聊天失败", t);
         }
     }
+
+    /**
+     * 纯原生（OkHttp）生图：网页调用
+     * {@code AndroidNative.generateImage(JSON.stringify(req), "cb1")}。
+     *
+     * <p>原生端负责请求、ZIP 解压、落盘，完成后调用
+     * {@code window.__dhpOnImageResult("cb1", payload)} 把本地路径/ Uri 回传。
+     * 具体编排见 {@code com.dbpg.duihuazhushou.imagegen.ImageGenBridge}。
+     */
+    @JavascriptInterface
+    public void generateImage(String reqJson, String callbackId) {
+        try {
+            com.dbpg.duihuazhushou.imagegen.ImageGenBridge.INSTANCE
+                    .handle(context, reqJson == null ? "{}" : reqJson,
+                            callbackId == null ? "" : callbackId);
+        } catch (Throwable t) {
+            android.util.Log.w("DHP", "原生图图失败", t);
+        }
+    }
 }
