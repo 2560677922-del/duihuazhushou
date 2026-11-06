@@ -11,6 +11,9 @@ import { exportAll, importAll } from '../lib/storage';
 import { persist } from '../lib/persist';
 import type { PersistStatus } from '../lib/persist';
 import { useStorageSettingsStore } from '../stores/storageSettings';
+import { useVariablesStore } from '../stores/variables';
+import { useAdventureStore } from '../stores/adventure';
+import { VARIABLE_MACRO_HELP, type VariableScope } from '../engine/variables';
 import { useAppearanceStore, BACKGROUND_PRESETS, ACCENT_PRESETS, THEME_PRESETS } from '../stores/appearance';
 import { TAG_CATEGORIES, buildTagReference, searchImportedTags, parseTagLibrary } from '../engine/tagLibrary';
 import { testGithubConnection } from '../engine/githubStorage';
@@ -39,6 +42,8 @@ const api = useApiConfigStore();
 const imageStore = useImageStore();
 const storageSettings = useStorageSettingsStore();
 const appearance = useAppearanceStore();
+const variables = useVariablesStore();
+const adventure = useAdventureStore();
 const loaded = ref(false);
 const exportJson = ref('');
 
@@ -183,6 +188,7 @@ const cards = [
   { key: 'display', icon: '👁️', title: '显示与上下文', desc: '思维链 / 正则作用范围（原文还是处理后的文本）' },
   { key: 'library', icon: '🖼️', title: '图片库', desc: '查看占用、清理无用缓存' },
   { key: 'tags', icon: '🏷️', title: '生图标签库', desc: '给大模型的标准 Danbooru 标签参考' },
+  { key: 'variables', icon: '🔤', title: '变量', desc: '全局 / 会话变量，供预设、世界书与正则调用' },
   { key: 'appearance', icon: '🌸', title: '界面外观', desc: '背景 / 主题配色 / 正文宽度' },
   { key: 'gh', icon: '☁️', title: '图片存放位置', desc: '本地存储或 GitHub 仓库（自动上传）' },
   { key: 'persist', icon: '💾', title: '数据持久化', desc: '把配置写到本地文件（APK 用）' },
@@ -280,6 +286,9 @@ onMounted(async () => {
       api.load(),
       imageStore.load(),
       storageSettings.load(),
+      // 变量页要显示"当前会话"的名字，会话列表得先就位
+      adventure.load(),
+      variables.load(),
     ]);
   } catch (e) {
     console.error('加载失败:', e);
@@ -291,6 +300,71 @@ onMounted(async () => {
 });
 
 onUnmounted(() => offPersist?.());
+
+/* ===== 变量 =====
+ * 只管「增删改查 + 导入导出」，解析逻辑全在 engine/variables.ts。
+ * 这里刻意不做嵌套分组、不做作用域树：两张平级表，界面也照这个来。
+ */
+const varScope = ref<VariableScope>('session');
+const varNewName = ref('');
+const varNewValue = ref('');
+const varMsg = ref('');
+const varRows = computed(() => variables.list(varScope.value));
+const varSessionTitle = computed(() => {
+  const s = adventure.sessions.find((x) => x.id === adventure.currentSessionId);
+  return s?.title || '（当前未选中会话）';
+});
+
+async function addVariable() {
+  const n = varNewName.value.trim();
+  if (!n) { varMsg.value = '先填变量名'; return; }
+  if (varScope.value === 'session' && !adventure.currentSessionId) {
+    varMsg.value = '当前没有选中会话，请先在「冒险」里打开一场';
+    return;
+  }
+  await variables.setVar(varScope.value, adventure.currentSessionId, n, varNewValue.value);
+  varNewName.value = '';
+  varNewValue.value = '';
+  varMsg.value = `已保存 ${n}`;
+}
+async function editVariable(name: string, e: Event) {
+  await variables.setVar(
+    varScope.value,
+    adventure.currentSessionId,
+    name,
+    (e.target as HTMLInputElement).value,
+  );
+  varMsg.value = `已更新 ${name}`;
+}
+async function removeVariable(name: string) {
+  await variables.deleteVar(varScope.value, adventure.currentSessionId, name);
+  varMsg.value = `已删除 ${name}`;
+}
+function exportVariables() {
+  const text = JSON.stringify(variables.exportBackup(), null, 2);
+  const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'duihuazhushou-variables.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  varMsg.value = '已导出';
+}
+async function importVariables(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const f = input.files?.[0];
+  if (!f) return;
+  try {
+    const n = await variables.importBackup(await f.text(), varScope.value, adventure.currentSessionId);
+    varMsg.value = `已导入 ${n} 项`;
+  } catch (err) {
+    varMsg.value = `导入失败：${err instanceof Error ? err.message : String(err)}`;
+  }
+  input.value = '';
+}
 
 // ---------- 标签库 ----------
 const showTagPreview = ref(false);
@@ -2042,6 +2116,65 @@ function toggleApiKey() {
               <span class="dim">{{ formatBytes(b.bytes) }} · {{ formatTime(b.mtime) }}</span>
             </div>
           </div>
+        </details>
+      </div>
+    </section>
+
+    <!-- 变量 -->
+    <section class="section" v-if="activeSection === 'variables'">
+      <div>
+        <p>
+          变量是给预设、世界书和美化正则读的「状态」。分两层：
+          <strong>会话变量</strong>每场冒险独立，<strong>全局变量</strong>所有会话共用。
+        </p>
+        <div class="row">
+          <label class="radio-row">
+            <input type="radio" value="session" v-model="varScope" />
+            <span>会话变量</span>
+          </label>
+          <label class="radio-row">
+            <input type="radio" value="global" v-model="varScope" />
+            <span>全局变量</span>
+          </label>
+          <span class="hint">当前会话：{{ varSessionTitle }}</span>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 2fr auto;gap:8px;align-items:center;margin:12px 0 6px;font-size:12px;opacity:.7;">
+          <span>名称</span><span>值</span><span></span>
+        </div>
+        <div v-for="[name, value] in varRows" :key="name"
+          style="display:grid;grid-template-columns:1fr 2fr auto;gap:8px;align-items:center;margin-bottom:6px;">
+          <code>{{ name }}</code>
+          <input :value="value" @change="editVariable(name, $event)" />
+          <button @click="removeVariable(name)">删除</button>
+        </div>
+        <p v-if="!varRows.length" class="hint">这一层还没有变量，在下面加一个。</p>
+
+        <div class="row" style="margin-top:10px;">
+          <input v-model="varNewName" placeholder="变量名，例如 mood" />
+          <input v-model="varNewValue" placeholder="值" />
+          <button @click="addVariable">添加</button>
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <button @click="exportVariables">导出 JSON</button>
+          <input type="file" accept=".json,.txt,application/json" @change="importVariables" />
+          <span v-if="varMsg" class="import-result">{{ varMsg }}</span>
+        </div>
+
+        <details style="margin-top:14px;">
+          <summary>可用宏语法与兼容边界</summary>
+          <ul>
+            <li v-for="h in VARIABLE_MACRO_HELP" :key="h.macro">
+              <code>{{ h.macro }}</code> — {{ h.desc }}
+            </li>
+          </ul>
+          <p class="hint">
+            按 SillyTavern 变量宏的<strong>语法级子集</strong>实现：只认双花括号里用双冒号分隔的标准写法，
+            单次扫描、取到的值原样插入、不二次解析。
+            <strong>不支持嵌套宏、条件宏、点号/美元符简写、以及 STscript 斜杠命令</strong> ——
+            这些都要递归展开，会引入互相引用死循环。
+            写宏只在「用户发送」和「AI 回复落库」各执行一次；界面渲染走只读路径，不会重复累加计数器。
+          </p>
         </details>
       </div>
     </section>

@@ -1,5 +1,7 @@
 // 共享类型定义（引擎核心，不依赖 Vue）
 
+import type { VariableTables } from './variables';
+
 export type Role = 'system' | 'user' | 'assistant';
 
 export interface ChatMessage {
@@ -39,6 +41,11 @@ export interface AssemblyOptions {
   contextWindowTokens?: number;
   /** 用户回溯范围（保留给历史消息的预算） */
   userLookbackTokens?: number;
+  /**
+   * 变量表（ST 变量宏）。不传时 {{getvar::...}} 原样保留。
+   * 只读：写宏在这里一律抹成空串，绝不改状态。
+   */
+  variables?: VariableTables;
 }
 
 export interface WorldbookHit {

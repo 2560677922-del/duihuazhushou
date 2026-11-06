@@ -16,6 +16,7 @@ import ContentWithImages from '../components/ContentWithImages.vue';
 import MessageActions from '../components/MessageActions.vue';
 import VersionSwitcher from '../components/VersionSwitcher.vue';
 import ScrollFabs from '../components/ScrollFabs.vue';
+import { findScroller, scrollToEnd } from '../lib/scroller';
 import SummaryPanel from '../components/SummaryPanel.vue';
 import ImageQuickBar from '../components/ImageQuickBar.vue';
 import ImageGenModal from '../components/ImageGenModal.vue';
@@ -35,12 +36,15 @@ import { exportChatLog } from '../lib/chatLog';
 import { useQuickImage } from '../composables/useQuickImage';
 import { hashRegexGroups } from '../composables/useDisplayText';
 import { buildMacroContext } from '../composables/macroContext';
+import { readVariables } from '../engine/variables';
+import { useVariablesStore } from '../stores/variables';
 
 const assets = useAssetsStore();
 const api = useApiConfigStore();
 const adventure = useAdventureStore();
 const imageStore = useImageStore();
 const autoImage = useAutoImage();
+const variables = useVariablesStore();
 /**
  * 后台自动配图的"代次"。
  *
@@ -96,6 +100,8 @@ const displayKey = computed(() =>
     // ★ 必须带脚本内容：只数条数的话，改了替换串缓存不失效，界面还是旧样子
     assets.currentRegexGroupIds.join(','),
     hashRegexGroups(assets.regexGroups),
+    // 变量改了界面必须跟着变（和"改了正则没反应"是同一类缓存 bug）
+    variables.versionFor(adventure.currentSessionId),
   ].join('~'),
 );
 
@@ -114,6 +120,7 @@ function displayText(text: string): string {
     if (storageSettings.hideReasoning) {
       out = cleanOutput(out, storageSettings.reasoningCutMarker);
     }
+    const tables = variables.snapshot(adventure.currentSessionId);
     const scripts = assets.getCurrentRegexScripts();
     if (scripts.length) {
       const { messages: msgs } = runRegex(
@@ -127,10 +134,14 @@ function displayText(text: string): string {
            * {{char}} / {{user}}。不展开就会原样留在正文里，看起来像没替换。
            */
           macroContext: buildMacroContext(),
+          // 美化正则的替换串里也允许 {{getvar::x}}（只读）
+          variables: tables,
         },
       );
       out = msgs[0]?.content ?? out;
     }
+    /* 只读展开变量宏；写宏抹成空串，绝不在这里改状态 */
+    out = readVariables(out, tables);
     if (displayCache.size >= DISPLAY_CACHE_MAX) displayCache.clear();
     displayCache.set(key, out);
     return out;
@@ -585,6 +596,8 @@ onMounted(async () => {
        * **生图就默默只存本地、不上传仓库了**（配了也白配）。
        */
       storageSettings.load(),
+      // 变量表要在首屏渲染前就位，否则第一帧会显示没展开的 {{getvar::}}
+      variables.load(),
     ]);
     if (assets.characters.length === 0) {
       await loadSampleAssets();
@@ -626,6 +639,9 @@ onMounted(async () => {
   if (streaming.value && generationSessionId.value === adventure.currentSessionId) {
     resumedWhileStreaming.value = true;
   }
+
+  /* 进会话默认看最新一条，而不是停在开头 */
+  settleAtBottom();
 });
 
 async function loadSampleAssets() {
@@ -744,6 +760,8 @@ function buildFinalMessages(baseHistory: ChatMessage[], action: string): ChatMes
     chatHistory: [...baseHistory, { role: 'user' as const, content: action }],
     contextWindowTokens: api.currentConfig?.contextWindow,
     userLookbackTokens: api.currentConfig?.userLookbackTokens,
+    // 预设 / 世界书里的 {{getvar::x}} 在这里只读展开
+    variables: variables.snapshot(adventure.currentSessionId),
   });
 
   // 告诉模型可以用 [[IMG: 描述]] 自行选择配图位置（只作本次请求的附加指令）
@@ -803,8 +821,16 @@ async function sendAction() {
    * 写在 try 里面 catch 就看不见了（作用域）。
    */
   const commitStreamResult = async (raw: string, allowAutoImage = true) => {
-    flushDraftSave(action, raw);
-    if (!raw.trim()) {
+    /*
+     * ★ 变量写宏的第二个执行点：AI 回复落库，整段只跑这一次。
+     *
+     * 这是流式结束 / 用户点停止时**唯一**的落库入口，所以不会重复执行。
+     * 落库的是展开后的干净文本，正文里不会残留 {{setvar::...}}；
+     * 重新生成时历史来自已落库文本，也不会再触发一次写操作。
+     */
+    const cleanRaw = await variables.runWrites(raw, adventure.currentSessionId);
+    flushDraftSave(action, cleanRaw);
+    if (!cleanRaw.trim()) {
       await adventure.clearDraft();
       return;
     }
@@ -812,7 +838,7 @@ async function sendAction() {
     let act;
     if (replaceId) {
       // 重新生成：覆盖原来那一条，不留草稿
-      await adventure.replaceActionAi(replaceId, raw);
+      await adventure.replaceActionAi(replaceId, cleanRaw);
       await adventure.clearDraft();
       const s = currentSession.value;
       act = s?.actions.find((a) => a.id === replaceId);
@@ -823,7 +849,7 @@ async function sendAction() {
         }
       }
     } else {
-      act = await adventure.commitDraft(raw);
+      act = await adventure.commitDraft(cleanRaw);
     }
 
     // 消息已经落库，立刻清掉流式文本，避免它和正式消息同帧渲染（看起来像重复）
@@ -847,7 +873,7 @@ async function sendAction() {
       const isCurrent = () => run === autoImageRun && currentSession.value?.id === sessionId;
       void autoImage
         .processMarkers(
-          raw,
+          cleanRaw,
           (att) => {
             // 切走会话 / 删了消息 / 又发了一轮：旧任务的结果直接丢掉
             if (!isCurrent()) return Promise.resolve();
@@ -866,7 +892,15 @@ async function sendAction() {
   const baseHistory = replaceId ? historyForRegenerate(replaceId) : history.value;
 
   try {
-    const finalMessages = buildFinalMessages(baseHistory, action);
+    /*
+     * ★ 变量写宏的第一个执行点：用户发送时，整段只跑这一次。
+     *
+     * 显示路径每秒重渲染数次，绝不能在那里执行 setvar/incvar ——
+     * 计数器会被重复累加。这里执行完把干净文本交给组装器，
+     * 原始输入仍照常存进会话（显示时写宏会被抹成空串，视觉上是干净的）。
+     */
+    const cleanAction = await variables.runWrites(action, adventure.currentSessionId);
+    const finalMessages = buildFinalMessages(baseHistory, cleanAction);
     if (!finalMessages) return;
 
     // 调用 API
@@ -1093,10 +1127,36 @@ async function updateSessionSettings(patch: Partial<typeof sessionSettings.value
   await adventure.updateSettings(patch);
 }
 
+/**
+ * 跟到最新一条。
+ *
+ * 以前写死 `getElementById('chat-area').scrollTop = scrollHeight`，
+ * 但手机上聊天区是 overflow:visible、真正滚动的是 window，那行完全没效果。
+ * 现在统一走 findScroller()：桌面滚 .chat-area，手机滚整页。
+ */
 function scrollToBottom() {
   nextTick(() => {
-    const el = document.getElementById('chat-area');
-    if (el) el.scrollTop = el.scrollHeight;
+    scrollToEnd(findScroller(chatEl.value), 'auto');
+  });
+}
+
+/**
+ * 进入会话时直接落在最下方（用户明确要求）。
+ *
+ * 为什么要补好几帧：消息气泡带 content-visibility:auto，屏幕外的块先按
+ * 220px 占位，真实排版 / 图片懒加载之后 scrollHeight 还会再变。
+ * 只滚一次会停在"看起来快到底、其实没到"的位置。
+ * 全程瞬时滚动，不让用户看一段动画。
+ */
+function settleAtBottom() {
+  void nextTick(() => {
+    const jump = () => {
+      if (!chatEl.value) return;
+      scrollToEnd(findScroller(chatEl.value), 'auto');
+    };
+    jump();
+    requestAnimationFrame(() => requestAnimationFrame(jump));
+    setTimeout(jump, 180);
   });
 }
 

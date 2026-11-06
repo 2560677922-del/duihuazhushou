@@ -21,6 +21,7 @@
 import { useStorageSettingsStore } from '../stores/storageSettings';
 import { useAssetsStore } from '../stores/assets';
 import { displayTextWith } from '../composables/useDisplayText';
+import { useVariablesStore } from '../stores/variables';
 import { stripImageMarkers } from '../engine/imageMarker';
 import { downloadTxt } from './download';
 
@@ -40,8 +41,11 @@ export interface ChatLogEntry {
 export function buildChatLogText(title: string, entries: ChatLogEntry[]): string {
   const settings = useStorageSettingsStore();
   const assets = useAssetsStore();
+  const variables = useVariablesStore();
   const raw = settings.exportRaw;
   const scripts = assets.getCurrentRegexScripts();
+  // 导出的 TXT 必须和界面看到的一样，变量宏也要展开（只读）
+  const tables = variables.snapshot();
 
   /** 单条文本的处理：原文模式直接返回，否则走显示语义 */
   const process = (text: string): string => {
@@ -52,6 +56,7 @@ export function buildChatLogText(title: string, entries: ChatLogEntry[]): string
           hideReasoning: settings.hideReasoning,
           cutMarker: settings.reasoningCutMarker,
           scripts,
+          variables: tables,
         });
     return stripImageMarkers(out)
       .replace(/[ \t]+$/gm, '')

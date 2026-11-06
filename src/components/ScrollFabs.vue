@@ -8,6 +8,13 @@
 // overflow:visible）。所以不能写死一个元素，改成挂载后向上找
 // 第一个"真的能滚"的祖先，并在窗口尺寸变化时重算。
 import { ref, onMounted, onUnmounted } from 'vue';
+import {
+  findScroller,
+  scrollerMetrics,
+  scrollToEnd,
+  scrollToStart,
+  type Scroller,
+} from '../lib/scroller';
 
 const props = defineProps<{
   /** 从这里开始向上找可滚动祖先 */
@@ -18,41 +25,12 @@ const atTop = ref(true);
 const atBottom = ref(true);
 const visible = ref(false);
 
-let scroller: HTMLElement | Window | null = null;
+let scroller: Scroller | null = null;
 let ro: ResizeObserver | null = null;
-
-function isScrollable(el: HTMLElement): boolean {
-  const s = getComputedStyle(el);
-  if (!/(auto|scroll|overlay)/.test(s.overflowY)) return false;
-  return el.scrollHeight > el.clientHeight + 4;
-}
-
-/** 向上找第一个能滚的祖先；一个都没有就退回整页滚动 */
-function resolveScroller() {
-  let el: HTMLElement | null = props.anchor ?? null;
-  while (el) {
-    if (isScrollable(el)) return el;
-    el = el.parentElement;
-  }
-  return window;
-}
-
-function metrics() {
-  if (scroller === window) {
-    const doc = document.documentElement;
-    return {
-      top: window.scrollY || doc.scrollTop || 0,
-      height: doc.clientHeight,
-      total: doc.scrollHeight,
-    };
-  }
-  const el = scroller as HTMLElement;
-  return { top: el.scrollTop, height: el.clientHeight, total: el.scrollHeight };
-}
 
 function update() {
   if (!scroller) return;
-  const m = metrics();
+  const m = scrollerMetrics(scroller);
   const canScroll = m.total > m.height + 8;
   visible.value = canScroll;
   atTop.value = m.top <= 8;
@@ -60,17 +38,22 @@ function update() {
 }
 
 function toTop() {
-  if (scroller === window) window.scrollTo({ top: 0, behavior: 'smooth' });
-  else (scroller as HTMLElement)?.scrollTo({ top: 0, behavior: 'smooth' });
+  if (scroller) scrollToStart(scroller, 'smooth');
 }
 
 function toBottom() {
-  if (scroller === window) {
-    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
-  } else {
-    const el = scroller as HTMLElement;
-    el?.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-  }
+  /*
+   * 点一下就该到底：瞬时滚，不给 smooth 动画。
+   *
+   * 长会话里平滑滚要好几秒，中途 content-visibility 的真实排版还会把
+   * scrollHeight 改掉，结果停在半路 —— 用户反馈的「快速向下不会直接到最下方」。
+   * 每次都重新解析一次容器（桌面↔手机布局可能已经变了），
+   * 再补一帧兜住高度变化，确保真的贴底。
+   */
+  const s = findScroller(props.anchor);
+  if (s !== scroller) attach(s);
+  scrollToEnd(s, 'auto');
+  requestAnimationFrame(() => scrollToEnd(findScroller(props.anchor), 'auto'));
 }
 
 function detach() {
@@ -79,9 +62,9 @@ function detach() {
   scroller = null;
 }
 
-function attach() {
+function attach(next: Scroller = findScroller(props.anchor)) {
   detach();
-  scroller = resolveScroller();
+  scroller = next;
   if (scroller === window) window.addEventListener('scroll', update, { passive: true });
   else (scroller as HTMLElement).addEventListener('scroll', update, { passive: true });
   update();
@@ -92,8 +75,8 @@ onMounted(() => {
   ro = new ResizeObserver(() => {
     update();
     // 尺寸变化可能让"该滚谁"变了（桌面↔手机布局切换）
-    const next = resolveScroller();
-    if (next !== scroller) attach();
+    const next = findScroller(props.anchor);
+    if (next !== scroller) attach(next);
   });
   if (props.anchor) ro.observe(props.anchor);
 });

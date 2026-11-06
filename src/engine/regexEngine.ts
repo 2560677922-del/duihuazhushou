@@ -1,5 +1,6 @@
 import type { ChatMessage, RegexHit } from './types';
 import type { MacroContext } from './macro';
+import { readVariables, type VariableTables } from './variables';
 
 // 正则引擎：与 SillyTavern（release 分支 public/scripts/extensions/regex/engine.js）
 // 的 runRegexScript 对齐。
@@ -95,6 +96,11 @@ export interface RegexEngineOptions {
    * 不传就完全跳过宏处理，行为与旧版一致。
    */
   macroContext?: MacroContext;
+  /**
+   * 变量表：替换串里的 {{getvar::x}} 只读展开。
+   * 美化类正则常靠读状态做弹窗/样式；这里只读，写宏一律抹成空串。
+   */
+  variables?: VariableTables;
 }
 
 interface RawScript {
@@ -264,6 +270,7 @@ function buildReplacement(
   parts: MatchParts,
   trims: string[],
   ctx?: MacroContext,
+  vars?: VariableTables,
 ): string {
   // ST: 替换串里的 {{match}} 等价于 $0（整个匹配）
   const tpl = template.replace(/\{\{match\}\}/gi, '$0');
@@ -285,8 +292,12 @@ function buildReplacement(
     return v;
   });
 
-  // ST 最后整体跑一遍宏替换
-  return substituteKnownMacros(withGroups, ctx);
+  /*
+   * ST 最后整体跑一遍宏替换；随后只读展开变量宏。
+   * 变量值原样插入、不再二次解析（不嵌套），写宏被抹成空串、不改状态。
+   */
+  const withMacros = substituteKnownMacros(withGroups, ctx);
+  return vars ? readVariables(withMacros, vars) : withMacros;
 }
 
 /** 数一下能匹配多少处（用于测试面板的统计） */
@@ -341,6 +352,7 @@ export function runRegex(
   const dry = options.dryRun ?? false;
   const forDisplay = options.forDisplay ?? false;
   const ctx = options.macroContext;
+  const vars = options.variables;
   const placement = options.placement ?? { user: true, ai: true, worldInfo: true };
   const hits: RegexHit[] = [];
 
@@ -463,6 +475,7 @@ export function runRegex(
           { match: matchText, groups: firstMatch.slice(1), named: firstMatch.groups },
           trims,
           ctx,
+          vars,
         );
         sample = {
           before: `${beforeCtx}⟪${matchText}⟫${afterCtx}`,
@@ -480,6 +493,7 @@ export function runRegex(
             { match: whole, groups: parts.groups, named: parts.named },
             trims,
             ctx,
+            vars,
           );
         });
       }

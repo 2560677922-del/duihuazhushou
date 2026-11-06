@@ -14,6 +14,8 @@ import { useStorageSettingsStore } from '../stores/storageSettings';
 import { runRegex } from '../engine/regexEngine';
 import { cleanOutput } from '../engine/reasoning';
 import { buildMacroContext } from './macroContext';
+import { readVariables, type VariableTables } from '../engine/variables';
+import { useVariablesStore } from '../stores/variables';
 
 /** 缓存上限：够覆盖一部长篇的显示文本，超了整体清空 */
 const CACHE_MAX = 600;
@@ -65,6 +67,7 @@ export function hashRegexGroups(groups: any[]): string {
 export function useDisplayText() {
   const assets = useAssetsStore();
   const storageSettings = useStorageSettingsStore();
+  const variables = useVariablesStore();
 
   const cache = new Map<string, string>();
 
@@ -85,6 +88,8 @@ export function useDisplayText() {
       storageSettings.reasoningCutMarker || '',
       assets.currentRegexGroupIds.join(','),
       hashRegexGroups(assets.regexGroups),
+      // 变量改了界面必须跟着变，否则又是"我明明改了怎么没反应"
+      variables.versionFor(),
     ].join('~'),
   );
 
@@ -107,25 +112,30 @@ export function useDisplayText() {
         out = cleanOutput(out, storageSettings.reasoningCutMarker);
       }
       // 2) 跑「仅显示」类正则（forDisplay: true 只影响展示，不改发给模型的内容）
+      const tables = variables.snapshot();
       const scripts = assets.getCurrentRegexScripts();
       if (scripts.length) {
-      const { messages: msgs } = runRegex(
-        [{ role: 'assistant', content: out } as any],
-        scripts,
-        {
-          placement: { ai: true, reasoning: true },
-          forDisplay: true,
-          /*
-           * ST 在替换串末尾会跑一遍 substituteParams，美化类正则常写
-           * {{char}} / {{user}}。不传的话这些宏会原样留在正文里，
-           * 看起来就是"这条正则没替换干净"。
-           */
-          macroContext: buildMacroContext(),
-        },
-      );
-      out = msgs[0]?.content ?? out;
-    }
-    if (cache.size >= CACHE_MAX) cache.clear();
+        const { messages: msgs } = runRegex(
+          [{ role: 'assistant', content: out } as any],
+          scripts,
+          {
+            placement: { ai: true, reasoning: true },
+            forDisplay: true,
+            /*
+             * ST 在替换串末尾会跑一遍 substituteParams，美化类正则常写
+             * {{char}} / {{user}}。不传的话这些宏会原样留在正文里，
+             * 看起来就是"这条正则没替换干净"。
+             */
+            macroContext: buildMacroContext(),
+            // 美化正则的替换串里也允许 {{getvar::x}}（只读）
+            variables: tables,
+          },
+        );
+        out = msgs[0]?.content ?? out;
+      }
+      /* 只读展开变量宏；写宏被抹成空串，绝不在这里改状态 */
+      out = readVariables(out, tables);
+      if (cache.size >= CACHE_MAX) cache.clear();
       cache.set(key, out);
       return out;
     } catch {
@@ -149,7 +159,13 @@ export function useDisplayText() {
  */
 export function displayTextWith(
   text: string,
-  opts: { hideReasoning: boolean; cutMarker?: string; scripts: any[] },
+  opts: {
+    hideReasoning: boolean;
+    cutMarker?: string;
+    scripts: any[];
+    /** 只读展开变量宏；不传则保留 {{getvar::}} 原样 */
+    variables?: VariableTables;
+  },
 ): string {
   if (!text) return '';
   try {
@@ -159,10 +175,15 @@ export function displayTextWith(
       const { messages: msgs } = runRegex(
         [{ role: 'assistant', content: out } as any],
         opts.scripts,
-        { placement: { ai: true, reasoning: true }, forDisplay: true },
+        {
+          placement: { ai: true, reasoning: true },
+          forDisplay: true,
+          variables: opts.variables,
+        },
       );
       out = msgs[0]?.content ?? out;
     }
+    if (opts.variables) out = readVariables(out, opts.variables);
     return out;
   } catch {
     return text;

@@ -1,5 +1,6 @@
 import type { AssemblyOptions, AssemblyResult, ChatMessage } from './types';
 import { applyMacrosToMessages, type MacroContext } from './macro';
+import { readVariables } from './variables';
 import { runRegex } from './regexEngine';
 import { triggerWorldbook } from './worldbook';
 import { countTokens } from './tokenizer';
@@ -132,6 +133,19 @@ export function assemblePrompt(opts: AssemblyOptions): AssemblyResult {
   const afterMacro = applyMacrosToMessages(afterWorldBook, macroCtx);
 
   /*
+   * ---- 阶段 3a-2：变量宏（只读） ----
+   *
+   * ★ 必须排在 applyMacros **之后**：变量的值原样插入，不会再被宏引擎
+   *   二次展开。这正是「不搞嵌套」的落点 —— 变量值里就算写着
+   *   {{user}} 也只是字面文本，不会触发新一轮替换，更不会 A→B→A 死循环。
+   * 写宏（setvar 等）在这里被抹成空串、绝不执行；执行只在 Adventure.vue
+   * 的「用户发送 / AI 回复落库」两个一次性入口。
+   */
+  const afterVars = opts.variables
+    ? afterMacro.map((m) => ({ ...m, content: readVariables(m.content, opts.variables!) }))
+    : afterMacro;
+
+  /*
    * ---- 阶段 3a-2：角色卡兜底注入 ----
    *
    * 问题：角色卡原本**只能**通过预设里的宏（{{char}} / {{description}} /
@@ -143,7 +157,7 @@ export function assemblePrompt(opts: AssemblyOptions): AssemblyResult {
    * 把角色卡作为一条 system 消息补进去。已经引用了的预设不受影响
    * （避免同样的内容出现两遍，那会浪费 token 也干扰模型）。
    */
-  const withCharacter = injectCharacterCardIfMissing(afterMacro, characterCard);
+  const withCharacter = injectCharacterCardIfMissing(afterVars, characterCard);
 
   // ---- 阶段 3b：正则 ----
   //
@@ -162,6 +176,8 @@ export function assemblePrompt(opts: AssemblyOptions): AssemblyResult {
     // 替换串里可能出现 {{user}} / {{char}}（美化类正则常用），
     // 和 ST 一样在替换完成后展开
     macroContext: macroCtx,
+    // 美化正则也常读状态做弹窗/样式，替换串里允许 {{getvar::x}}（只读）
+    variables: opts.variables,
   });
 
   // ---- 阶段 3c：Token 裁剪 ----

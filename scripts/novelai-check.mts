@@ -47,6 +47,7 @@ import { extractInlineImages } from '../src/engine/imageMarker.ts';
 import { extractPresetContent, buildPresetBlock } from '../src/engine/presetContent.ts';
 import { streamChatCompletion } from '../src/engine/apiClient.ts';
 import { contentId } from '../src/lib/blobStore.ts';
+import { readVariables, applyVariableWrites, variableVersion } from '../src/engine/variables.ts';
 import { WorldBook, CharacterCard } from 'parsecard';
 
 let passed = 0;
@@ -1395,6 +1396,98 @@ check('只有部分配图时，空位仍能被 ordinal 区分', () => {
   assert.ok(images[0].kind === 'image' && images[0].attachment?.id === 'a0');
   assert.ok(images[2].kind === 'image' && images[2].attachment === undefined,
     '第 3 个位置应留给手动补图');
+});
+
+console.log('\n=== 变量引擎（扁平子集 / 不嵌套）===');
+
+check('读宏：会话 / 全局 / 未定义 / 存在性', () => {
+  const t = { session: { mood: '开心' }, global: { world: '蒸汽朋克' } };
+  assert.equal(
+    readVariables('{{getvar::mood}} / {{getglobalvar::world}} / {{getvar::none}}', t),
+    '开心 / 蒸汽朋克 / ',
+  );
+  assert.equal(
+    readVariables('{{hasvar::mood}} {{hasvar::nope}} {{hasglobalvar::world}}', t),
+    'true false true',
+  );
+});
+
+check('值原样插入、不二次解析（不嵌套）', () => {
+  const t = { session: { a: '{{getvar::b}}', b: 'B' }, global: {} };
+  assert.equal(readVariables('{{getvar::a}}', t), '{{getvar::b}}');
+});
+
+check('参数里带花括号的嵌套写法根本不匹配', () => {
+  const t = { session: { x: 'X' }, global: {} };
+  const s = '{{getvar::{{char}}_mood}}';
+  assert.equal(readVariables(s, t), s, '嵌套宏必须原样保留，绝不递归');
+  assert.equal(applyVariableWrites(s, t).text, s);
+});
+
+check('不认识的宏原样保留，不误伤别的系统', () => {
+  const t = { session: {}, global: {} };
+  assert.equal(readVariables('{{roll::1d20}} {{user}} {{setvar::x::{{char}}}}', t),
+    '{{roll::1d20}} {{user}} {{setvar::x::{{char}}}}');
+});
+
+check('只读路径把写宏抹成空串，且绝不改表', () => {
+  const t = { session: { hp: '10' }, global: {} };
+  assert.equal(readVariables('A{{setvar::hp::99}}{{incvar::hp}}B', t), 'AB');
+  assert.equal(t.session.hp, '10');
+});
+
+check('写宏：单次扫描、按出现顺序执行、不改调用方的表', () => {
+  const t = { session: {}, global: {} };
+  const r = applyVariableWrites(
+    '{{setvar::n::2}}{{getvar::n}}{{incvar::n}}{{addvar::n::3}}{{getvar::n}}', t);
+  assert.equal(r.changed, true);
+  // set→2，get→"2"，inc→"3"，add 3→6（空串），get→"6"
+  assert.equal(r.text, '236');
+  assert.equal(r.tables.session.n, '6');
+  assert.equal(t.session.n, undefined, '原表不能被就地修改');
+});
+
+check('add / inc / dec 的数值语义与字符串拼接', () => {
+  const t = { session: { s: 'abc' }, global: {} };
+  const r = applyVariableWrites(
+    '{{addvar::fresh::5}}|{{addvar::s::X}}|{{incvar::fresh}}|{{decvar::fresh}}', t);
+  assert.equal(r.tables.session.fresh, '5');
+  assert.equal(r.tables.session.s, 'abcX');
+  assert.equal(r.text, '||6|5');
+});
+
+check('全局与会话是两张平级表，互不影响', () => {
+  const t = { session: { k: 'local' }, global: { k: 'global' } };
+  assert.equal(readVariables('{{getvar::k}}|{{getglobalvar::k}}', t), 'local|global');
+  const r = applyVariableWrites('{{setglobalvar::k::G}}{{deletevar::k}}', t);
+  assert.equal(r.tables.global.k, 'G');
+  assert.equal(r.tables.session.k, undefined);
+  assert.equal(t.global.k, 'global');
+});
+
+check('delete 之后 hasvar 立刻反映', () => {
+  const t = { session: { a: '1' }, global: {} };
+  const r = applyVariableWrites('{{deletevar::a}}{{hasvar::a}}', t);
+  assert.equal(r.tables.session.a, undefined);
+  assert.equal(r.text, 'false');
+});
+
+check('美化正则的替换串里能读变量（只读，不改状态）', () => {
+  const t = { session: { mood: '开心' }, global: {} };
+  const { messages } = runRegex(
+    [{ role: 'assistant', content: '状态' }],
+    [{ scriptName: 'V', findRegex: '状态', replaceString: '<b>{{getvar::mood}}</b>', placement: [2] }],
+    { variables: t },
+  );
+  assert.equal(messages[0].content, '<b>开心</b>');
+  assert.equal(t.session.mood, '开心');
+});
+
+check('变量版本串随内容变化（显示缓存能失效）', () => {
+  const a = { session: { x: '1' }, global: {} };
+  const b = { session: { x: '2' }, global: {} };
+  assert.notEqual(variableVersion(a), variableVersion(b));
+  assert.equal(variableVersion(a), variableVersion({ session: { x: '1' }, global: {} }));
 });
 
 console.log(`\n=== 通过 ${passed} 项检查 ===`);
