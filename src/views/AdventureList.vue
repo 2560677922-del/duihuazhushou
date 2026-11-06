@@ -59,8 +59,16 @@ function preview(s: { actions?: { user?: string; ai?: string }[] }): string {
   const list = s.actions ?? [];
   for (let i = list.length - 1; i >= 0; i--) {
     const a = list[i];
-    const t = stripNoise(a.ai || a.user || '');
-    if (t) return t;
+    /*
+     * ★ 只截开头一小段再清理。
+     *
+     * 预览最终也就显示几十个字，却对整条几万甚至几十万字的回复跑正则 ——
+     * 历史数据里若残留内嵌 base64，这里的清理会灾难性回溯，把主线程锁住：
+     * 表现正是"一级列表啥都出不来、切别的页面也卡住、隔一会儿才恢复"。
+     * 截断到 2000 字后，最坏情况也只是毫秒级。
+     */
+    const t = stripNoise((a.ai || a.user || '').slice(0, 2000));
+    if (t) return t.slice(0, 120);
   }
   return '';
 }

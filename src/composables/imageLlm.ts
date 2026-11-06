@@ -9,8 +9,6 @@
 // 这里把规则抽出来，三条路径共用，避免以后再各写一遍。
 import { useImageStore } from '../stores/image';
 import { useApiConfigStore } from '../stores/apiConfig';
-import { useAssetsStore } from '../stores/assets';
-import type { MacroContext } from '../engine/macro';
 
 /**
  * 解析提示词优化该用哪份对话模型配置。
@@ -37,38 +35,7 @@ export function resolveImageLlmConfig() {
  * 聊天路径由 assembler 统一做宏替换，**生图这条路没有** ——
  * 不换的话 `{{description}}` 会被原样丢给大模型（实测踩到过）。
  *
- * 这里和 assembler 用同一套取值来源（角色卡 → 预设设置 → 空），
- * 保证两条路径替换出来的内容一致。
+ * 实现已移到 macroContext.ts（显示正则也要用同一份），这里只做转发，
+ * 免得两个调用方各改一次。
  */
-export function buildImageMacroContext(): MacroContext {
-  const assets = useAssetsStore();
-  const card = assets.getCurrentCharacter() as
-    | {
-        name?: string;
-        description?: string;
-        scenario?: string;
-        personality?: string;
-        persona?: string;
-        first_mes?: string;
-        firstMes?: string;
-        mes_example?: string;
-        mesExample?: string;
-      }
-    | undefined;
-  const preset = assets.getCurrentPreset() as
-    | {
-        getSetting?: (k: string) => string | undefined;
-        prompts?: { content?: string }[];
-      }
-    | undefined;
-
-  return {
-    char: card?.name ?? preset?.getSetting?.('name_char') ?? '',
-    user: preset?.getSetting?.('name_user') ?? '用户',
-    description: card?.description ?? '',
-    scenario: card?.scenario ?? '',
-    persona: card?.persona ?? '',
-    original: card?.first_mes ?? card?.firstMes ?? '',
-    mes_example: card?.mes_example ?? card?.mesExample ?? '',
-  };
-}
+export { buildMacroContext as buildImageMacroContext } from './macroContext';

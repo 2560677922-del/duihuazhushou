@@ -33,12 +33,22 @@ import { cleanOutput } from '../engine/reasoning';
 import { useStorageSettingsStore } from '../stores/storageSettings';
 import { exportChatLog } from '../lib/chatLog';
 import { useQuickImage } from '../composables/useQuickImage';
+import { hashRegexGroups } from '../composables/useDisplayText';
+import { buildMacroContext } from '../composables/macroContext';
 
 const assets = useAssetsStore();
 const api = useApiConfigStore();
 const adventure = useAdventureStore();
 const imageStore = useImageStore();
 const autoImage = useAutoImage();
+/**
+ * 后台自动配图的"代次"。
+ *
+ * 文字落库就返回、配图在后面自己跑（用户要的"文字是文字，生图是生图"）。
+ * 代价是任务会活过页面切换/重新生成/停止，所以每一轮带一个代次号，
+ * 旧任务在写回之前先比对，失效就静默丢弃，不会把旧图挂到新消息上。
+ */
+let autoImageRun = 0;
 const storageSettings = useStorageSettingsStore();
 // 从 composable 里解出 ref，模板中才能正常自动解包
 const { pending: autoImgPending, status: autoImgStatus, error: autoImgError } = autoImage;
@@ -82,11 +92,10 @@ const displayKey = computed(() =>
   [
     storageSettings.hideReasoning ? '1' : '0',
     storageSettings.reasoningCutMarker || '',
-    // 正则脚本变了（增删改/启用禁用）就换版本
+    // 正则脚本变了（增删改/启用禁用/改替换串）就换版本。
+    // ★ 必须带脚本内容：只数条数的话，改了替换串缓存不失效，界面还是旧样子
     assets.currentRegexGroupIds.join(','),
-    assets.regexGroups
-      .map((g: any) => `${g._uid}:${(g.scripts || []).length}:${g.enabled === false ? 0 : 1}`)
-      .join('|'),
+    hashRegexGroups(assets.regexGroups),
   ].join('~'),
 );
 
@@ -110,7 +119,15 @@ function displayText(text: string): string {
       const { messages: msgs } = runRegex(
         [{ role: 'assistant', content: out } as any],
         scripts,
-        { placement: { ai: true, reasoning: true }, forDisplay: true },
+        {
+          placement: { ai: true, reasoning: true },
+          forDisplay: true,
+          /*
+           * ST 在替换串末尾会跑一遍 substituteParams，美化类正则常写
+           * {{char}} / {{user}}。不展开就会原样留在正文里，看起来像没替换。
+           */
+          macroContext: buildMacroContext(),
+        },
       );
       out = msgs[0]?.content ?? out;
     }
@@ -167,6 +184,54 @@ async function regenImageInPlace(actionId: string, att?: ImageAttachment) {
     createdAt: Date.now(),
   });
   await adventure.upsertActionImage(actionId, merged);
+}
+
+/**
+ * 空占位符 → 按那段描述补一张图，并**放回用户点的那个位置**。
+ *
+ * 用在两种场景：模型多写了标记但超过自动配图上限、或者那一张生成失败。
+ *
+ * 关键：占位符在正文里只是 [[IMG: ...]] 标记，images 数组里没有对应项。
+ * 以前直接 upsert（按 id 追加），新图会被"按队列顺序"塞进前面第一个空位 ——
+ * 点第 4 个，图却出现在第 3 个。现在先放一个空壳占住该序号（中间补齐），
+ * 生成完再原地替换，位置就不会串，也多不出重复图。
+ */
+async function makeImageAt(actionId: string, description: string, ordinal: number) {
+  if (quickImgBusy.value) return;
+  // 自动配图还在跑时这些空位马上就会被填上；两条路同时写同一条消息的
+  // images 会互相覆盖，先挡掉，等它跑完再手动点
+  if (autoImgPending.value > 0) return;
+  const act = currentSession.value?.actions.find((a) => a.id === actionId);
+  if (!act) return;
+
+  // 该位置若已有失败壳，复用它的 id，重试不会多出一张
+  const existing = act.images?.[ordinal];
+  const placeholder: ImageAttachment = {
+    id: existing?.id ?? `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    markdownIndex: ordinal,
+    description,
+    createdAt: Date.now(),
+  };
+  await adventure.setActionImageAt(actionId, ordinal, placeholder);
+
+  const att = await quickImg.generateFor(description, '冒险场景', ordinal);
+  // 生成期间切走了会话 / 删了消息 → 别把图挂到一条已经不存在的位置上
+  if (!currentSession.value?.actions.some((a) => a.id === actionId)) return;
+
+  if (!att) {
+    await adventure.setActionImageAt(actionId, ordinal, {
+      ...placeholder,
+      error: '生成失败，点「重试」再来一次',
+    });
+    return;
+  }
+  await adventure.setActionImageAt(actionId, ordinal, {
+    ...att,
+    id: placeholder.id,
+    markdownIndex: ordinal,
+    // 保留标记里的原始描述：重新生图、figcaption 和精确配对都靠它
+    description,
+  });
 }
 
 /** 在大图里切到另一版 */
@@ -688,7 +753,7 @@ function buildFinalMessages(baseHistory: ChatMessage[], action: string): ChatMes
     if (tail) {
       msgs[msgs.length - 1] = {
         ...tail,
-        content: tail.content + imageMarkerInstruction(true),
+        content: tail.content + imageMarkerInstruction(true, imageStore.autoImage.maxPerReply),
       };
     }
   }
@@ -724,6 +789,8 @@ async function sendAction() {
 
   // 重新生成：历史里要排除掉将被替换的那一条，否则模型会看到
   // "自己的旧答案" 然后倾向重复它
+  // 新一轮开始 → 让上一轮还在后台跑的自动配图彻底失去写入资格
+  autoImageRun++;
   const replaceId = regenerateTargetId.value;
 
   /*
@@ -735,7 +802,7 @@ async function sendAction() {
    * 定义在 try 外面 —— catch 里处理"被停止"时也要调用它，
    * 写在 try 里面 catch 就看不见了（作用域）。
    */
-  const commitStreamResult = async (raw: string) => {
+  const commitStreamResult = async (raw: string, allowAutoImage = true) => {
     flushDraftSave(action, raw);
     if (!raw.trim()) {
       await adventure.clearDraft();
@@ -764,12 +831,35 @@ async function sendAction() {
 
     void maybeAutoSummary(currentSession.value?.id ?? '');
 
-    if (act && imageStore.autoImage.enabled) {
-      await autoImage.processMarkers(
-        raw,
-        (att) => adventure.upsertActionImage(act!.id, att),
-        '冒险场景',
-      );
+    /*
+     * ★ 自动配图**不在这里等**（用户要求：文字是文字，生图是生图）。
+     *
+     * 以前这里是 await —— 生图慢的时候（十秒甚至更久），
+     * 整条回复要等图全出完才显示，用户盯着"正在生成…"看不出已经写完了。
+     * 现在文字一落库就返回，配图在后台自己跑，出好一张挂一张。
+     *
+     * 错误也不能往外抛：那会把"消息已成功保存"变成一次失败。
+     */
+    if (act && imageStore.autoImage.enabled && allowAutoImage) {
+      const actionId = act.id;
+      const sessionId = currentSession.value?.id;
+      const run = ++autoImageRun;
+      const isCurrent = () => run === autoImageRun && currentSession.value?.id === sessionId;
+      void autoImage
+        .processMarkers(
+          raw,
+          (att) => {
+            // 切走会话 / 删了消息 / 又发了一轮：旧任务的结果直接丢掉
+            if (!isCurrent()) return Promise.resolve();
+            return adventure.upsertActionImage(actionId, att);
+          },
+          '冒险场景',
+          { isCurrent },
+        )
+        .catch((e) => console.warn('[自动配图] 后台生成失败：', e));
+    } else {
+      // 被「停止」或本就不配图时，让可能还在后台跑的上一轮立刻失效
+      autoImageRun++;
     }
   };
 
@@ -829,8 +919,9 @@ async function sendAction() {
         await adventure.clearDraft();
         userInput.value = action;
       } else {
-        // 已经生成了一部分：留着，别白等
-        await commitStreamResult(raw);
+        // 已经生成了一部分：留着，别白等。
+        // 但用户是主动点停止的，就别再偷偷启动一轮自动配图了
+        await commitStreamResult(raw, false);
       }
     } else {
       errorMessage.value = e instanceof Error ? e.message : String(e);
@@ -1244,6 +1335,7 @@ function handleImageGenerated(dataUrl: string) {
                   regenerable
                   @remove-image="(id) => adventure.removeActionImage(a.id, id)"
                   @regenerate="(att) => regenImageInPlace(a.id, att)"
+                  @request-image="(desc, ordinal) => makeImageAt(a.id, desc, ordinal)"
                   @switch-version="(aid, vid) => switchActionImageVersion(a.id, aid, vid)"
                 />
                 <!-- 当前版本没有正文（历史残留的空版本）→ 明确说清，并给一条出路 -->

@@ -22,6 +22,17 @@ import { persistGeneratedImage } from './useImageStorage';
 
 export type AttachmentSink = (attachment: ImageAttachment) => Promise<void>;
 
+/** 后台自动配图的可取消选项 */
+export interface AutoImageOptions {
+  /**
+   * 每轮开始前回调，返回 false 就立刻停下、不再生成也不再落库。
+   *
+   * 自动配图改成完全异步之后，组件可能已经切走、消息被删或被重新生成，
+   * 旧任务若继续跑完再把图 upsert 回去，就会挂到一条已经换了正文的消息上。
+   */
+  isCurrent?: () => boolean;
+}
+
 export interface AutoImageState {
   /** 正在生成的数量 */
   pending: number;
@@ -39,6 +50,8 @@ export function useAutoImage() {
   const pending = ref(0);
   const status = ref('');
   const error = ref('');
+  /** 当前有效的是第几轮后台任务（多次调用并发时，只有最后一轮能清状态） */
+  let activeRuns = 0;
 
   /**
    * 处理一段正文里的所有配图标记。
@@ -51,6 +64,7 @@ export function useAutoImage() {
     text: string,
     sink: AttachmentSink,
     contextLabel = '正文段落',
+    options: AutoImageOptions = {},
   ): Promise<ImageAttachment[]> {
     error.value = '';
     const created: ImageAttachment[] = [];
@@ -65,12 +79,17 @@ export function useAutoImage() {
       error.value = '没有可用的生图配置，已跳过自动配图（可到设置页关闭自动配图以免每次提示）';
       return created;
     }
-    const max = Math.max(1, imageStore.autoImage.maxPerReply || 1);
+    // 和提示词里的上限（imageMarkerInstruction 夹到 [1,10]）保持一致，
+    // 免得设置页手填 20 时"提示词说 10 张、实际生 20 张"
+    const max = Math.max(1, Math.min(10, imageStore.autoImage.maxPerReply || 1));
     const targets = markers.slice(0, max);
 
-    pending.value = targets.length;
+    const alive = () => options.isCurrent?.() ?? true;
+    const run = ++activeRuns;
+    pending.value += targets.length;
     try {
       for (let i = 0; i < targets.length; i++) {
+        if (!alive()) break;
         const m = targets[i];
         status.value = `🎨 正在生成配图 ${i + 1}/${targets.length}：${m.description.slice(0, 30)}…`;
 
@@ -89,12 +108,25 @@ export function useAutoImage() {
           error.value = attachment.error;
         }
 
-        await sink(attachment);
-        created.push(attachment);
+        if (!alive()) break;
+        try {
+          await sink(attachment);
+          created.push(attachment);
+        } catch (e) {
+          /*
+           * 一次落库失败不能中断整轮以前这里裸 await，写盘一抛错，
+           * 后面所有标记就全变成点不开的空占位符了。
+           */
+          console.warn('[自动配图] 写入消息失败：', e);
+        }
+        pending.value = Math.max(0, pending.value - 1);
       }
     } finally {
-      pending.value = 0;
-      status.value = '';
+      // 只有最后一轮能清状态：两次调用并发时后者的 finally 不该提前清零
+      if (run === activeRuns) {
+        pending.value = 0;
+        status.value = '';
+      }
     }
 
     return created;

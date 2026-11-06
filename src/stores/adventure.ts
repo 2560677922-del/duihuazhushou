@@ -249,6 +249,35 @@ export const useAdventureStore = defineStore('adventure', {
       session.updatedAt = Date.now();
       await this.save();
     },
+    /**
+     * 把一张图**精确放到第 ordinal 个配图位置**。
+     *
+     * 空占位符在正文里只是一个 [[IMG: ...]] 标记，images 数组里根本没有
+     * 对应项；upsertActionImage 按 id 追加，补出来的图会被"按队列顺序"
+     * 塞进前面第一个空位 —— 用户点第 4 个，图却出现在第 3 个。
+     * 这里直接按下标写入，中间缺的位置补空壳，位置就再也不会串。
+     */
+    async setActionImageAt(actionId: string, ordinal: number, attachment: ImageAttachment) {
+      const session = this.currentSession;
+      if (!session) return;
+      const act = session.actions.find((a) => a.id === actionId);
+      if (!act) return;
+      // 上限保护：异常数据别把数组撑到天上去
+      const at = Math.max(0, Math.min(ordinal, 64));
+      const list = act.images ? [...act.images] : [];
+      while (list.length < at) {
+        list.push({
+          id: `slot-${actionId}-${list.length}-${Math.random().toString(36).slice(2, 7)}`,
+          markdownIndex: list.length,
+          description: '',
+          createdAt: Date.now(),
+        });
+      }
+      list[at] = attachment;
+      act.images = list;
+      session.updatedAt = Date.now();
+      await this.save();
+    },
     async removeActionImage(actionId: string, attachmentId: string) {
       const session = this.currentSession;
       const act = session?.actions.find((a) => a.id === actionId);

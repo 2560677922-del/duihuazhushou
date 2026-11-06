@@ -36,6 +36,19 @@ const emit = defineEmits<{
    * markdownIndex 原地替换那张图（新增一张会让正文里多出一个标记）。
    */
   regenerate: [attachment?: ImageAttachment];
+  /**
+   * 空占位符要求生成一张图。
+   *
+   * 什么时候会出现空占位符：模型多写了标记、但自动配图有张数上限；
+   * 或者那一张生成失败了（报错、超时、被停）。
+   * 以前这里只有一行"配图位置（图片不可用）"，用户完全没辙 ——
+   * 现在给一个按钮，点一下就按那段描述补一张。
+   *
+   * ordinal 是「第几个配图位置」（0 起，按出现顺序），不是段落号：
+   * 同一段里有两个标记时段落号会重复，靠它才能把补出来的图精确放回
+   * 用户点的那个位置，而不是被队列顺序塞进前面第一个空位。
+   */
+  requestImage: [description: string, ordinal: number];
   /** 用户在大图里切到了另一版（attachmentId, versionId） */
   switchVersion: [attachmentId: string, versionId: string];
 }>();
@@ -344,6 +357,38 @@ function onSwitchVersion(versionId: string) {
   if (next) viewerSrc.value = next;
 }
 
+/* ---------------- 空占位符：手动补一张 ---------------- */
+
+/** 正在生成中的配图位置。键必须和 emit 出去的 ordinal 是同一套编号 */
+const making = ref<Record<number, boolean>>({});
+/** 解锁定时器：组件卸载后不要再改响应式状态 */
+const makeTimers = new Set<ReturnType<typeof setTimeout>>();
+
+function requestOne(description: string, ordinal: number) {
+  if (making.value[ordinal]) return;
+  making.value = { ...making.value, [ordinal]: true };
+  emit('requestImage', description, ordinal);
+  /*
+   * 生成成功后新图会替换掉这个占位符、按钮自然消失；
+   * 失败或后端一直不返回时也要解锁，不能让按钮永远卡在"生成中"。
+   *
+   * 以前这里用「段落编号」当键、模板却用「块下标」读，两边对不上 ——
+   * 按钮既不显示"生成中"也不 disabled，点下去像没反应。现已统一。
+   */
+  const timer = setTimeout(() => {
+    makeTimers.delete(timer);
+    const next = { ...making.value };
+    delete next[ordinal];
+    making.value = next;
+  }, 8000);
+  makeTimers.add(timer);
+}
+
+onUnmounted(() => {
+  for (const t of makeTimers) clearTimeout(t);
+  makeTimers.clear();
+});
+
 /**
  * 外部把数据改好了 → 同步正在看的那张大图。
  *
@@ -421,11 +466,30 @@ async function onImgError(a?: ImageAttachment) {
         </div>
         <div v-else-if="!srcOf(b.attachment) && b.attachment?.error" class="img-fallback error">
           ⚠ 配图生成失败：{{ b.attachment.error }}
+          <button v-if="regenerable" class="mini-btn make-btn" :disabled="making[b.ordinal]"
+            @click="requestOne(b.description, b.ordinal)">
+            {{ making[b.ordinal] ? '生成中…' : '🎨 重试' }}
+          </button>
         </div>
         <div v-else-if="!srcOf(b.attachment) && b.attachment?.uploadError" class="img-fallback error">
           ⚠ 配图上传失败：{{ b.attachment.uploadError }}
+          <!-- 图其实生成好了，只是没传上仓库；也给个重出一张的出口 -->
+          <button v-if="regenerable" class="mini-btn make-btn" :disabled="making[b.ordinal]"
+            @click="requestOne(b.description, b.ordinal)">
+            {{ making[b.ordinal] ? '生成中…' : '🎨 重出一张' }}
+          </button>
         </div>
-        <div v-else-if="!srcOf(b.attachment)" class="img-fallback">🖼️ 配图位置（图片不可用）</div>
+        <!--
+          没有图（上限截断 / 还没轮到它）→ 给一个明确的出口。
+          以前只有一句"配图位置（图片不可用）"，用户只能看着干瞪眼。
+        -->
+        <div v-else-if="!srcOf(b.attachment)" class="img-fallback">
+          <span>🖼️ 这里还没有配图</span>
+          <button v-if="regenerable" class="mini-btn make-btn" :disabled="making[b.ordinal]"
+            @click="requestOne(b.description, b.ordinal)">
+            {{ making[b.ordinal] ? '生成中…' : '🎨 生成这张' }}
+          </button>
+        </div>
         <figcaption>
           <span class="desc">
             {{ b.description }}
@@ -565,6 +629,13 @@ async function onImgError(a?: ImageAttachment) {
 .img-fallback.error {
   color: var(--danger);
   border-color: rgba(248, 113, 113, 0.4);
+}
+/* 空占位符里的「生成这张」：既有文字又有按钮，横排更紧凑 */
+.make-btn {
+  margin-left: 8px;
+  font-size: 11px;
+  padding: 2px 8px;
+  color: var(--text);
 }
 figcaption {
   display: flex;

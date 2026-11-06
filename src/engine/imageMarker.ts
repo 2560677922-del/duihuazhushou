@@ -297,8 +297,16 @@ export function stripImageMarkers(text: string): string {
   if (!text) return text;
   return text
     .replace(IMAGE_MARKER_RE, '')
-    // 内嵌 base64 图片的 markdown：整段删掉
-    .replace(/!\[[^\]]*\]\(\s*data:image\/[a-z+]+;base64,[A-Za-z0-9+/=\s]{100,}\s*\)/gi, '')
+    /*
+     * 内嵌 base64 图片的 markdown：整段删掉。
+     *
+     * ★ 这里必须用 [^)]，不能用 [A-Za-z0-9+/=\s]。
+     *   后者是「贪婪无上限量词 + \s*\) 收尾」，老数据里只要有一段没有
+     *   闭合括号的巨型 base64，引擎会一路吃到文末再逐字符回退，
+     *   O(n²) 级回溯能把主线程锁死几十秒 —— 会话列表"切页卡住、
+     *   隔一会儿才恢复"就是这么来的。[^)] 遇到第一个 ) 即停，线性扫描。
+     */
+    .replace(/!\[[^\]]*\]\(\s*data:image\/[a-z+]+;base64,[^)]{100,}\)/gi, '')
     .replace(/[ \t]+\n/g, '\n') // 清掉标记留下的行尾空格
     .replace(/\n{3,}/g, '\n\n'); // 合并多余空行
 }
@@ -316,7 +324,20 @@ export function hasImageMarker(text: string): boolean {
  */
 export type ContentBlock =
   | { kind: 'text'; text: string; index: number }
-  | { kind: 'image'; attachment?: ImageAttachment; description: string; index: number };
+  | {
+      kind: 'image';
+      attachment?: ImageAttachment;
+      description: string;
+      index: number;
+      /**
+       * 第几个配图位置（0 起，按出现顺序）。
+       *
+       * index 是"段落号"，同一段里有两个标记时会重复，没法用来定位。
+       * 手动补图必须知道用户点的是第几个占位符，才能把新图放回原处
+       * 而不是被"按队列顺序"塞到前面那个空位上。
+       */
+      ordinal: number;
+    };
 
 export function buildContentBlocks(
   text: string,
@@ -327,6 +348,8 @@ export function buildContentBlocks(
 
   const parts = text.split(/\n\s*\n/);
   let index = 0;
+  /** 第几个配图位置（含末尾兜底补出的游离图），与 attachments 的下标对应 */
+  let imageOrdinal = 0;
   /** 已经用掉的配图 id，保证一张图不会被挂到两个标记上 */
   const used = new Set<string>();
   /** 按出现顺序逐个配图：这是主匹配方式，见下 */
@@ -398,7 +421,13 @@ export function buildContentBlocks(
       const before = part.slice(cursor, m.index);
       if (before.trim()) blocks.push({ kind: 'text', text: before, index });
       const description = m[1].trim();
-      blocks.push({ kind: 'image', attachment: pick(description, index), description, index });
+      blocks.push({
+        kind: 'image',
+        attachment: pick(description, index),
+        description,
+        index,
+        ordinal: imageOrdinal++,
+      });
       cursor = m.index + m[0].length;
     }
     const rest = part.slice(cursor);
@@ -423,6 +452,7 @@ export function buildContentBlocks(
       attachment: a,
       description: a.description || '配图',
       index: Math.max(0, index - 1),
+      ordinal: imageOrdinal++,
     });
   }
 
@@ -465,14 +495,22 @@ export function extractInlineImages(text: string): ExtractionResult {
   return { text: out.replace(/\n{3,}/g, '\n\n').trim(), images };
 }
 
-/** 给提示词用的一段说明，告诉模型可以按需插图 */
-export function imageMarkerInstruction(enabled: boolean): string {  if (!enabled) return '';
+/**
+ * 给提示词用的一段说明，告诉模型可以按需插图。
+ *
+ * `maxPerReply` 必须和真正的上限一致（以前固定写"不超过 3 个"，
+ * 而设置里默认只生成 2 张 —— 多出来的标记就变成了点不开的空占位符，
+ * 用户看到的是"回复里莫名其妙多了几个配图位置"）。
+ */
+export function imageMarkerInstruction(enabled: boolean, maxPerReply = 1): string {
+  if (!enabled) return '';
+  const max = Math.max(1, Math.min(10, Math.floor(maxPerReply) || 1));
   return (
     '\n\n【配图指引】你可以在正文合适的位置自行插入配图标记，写法是 ' +
     IMAGE_MARKER_SYNTAX +
     '。标记要单独成行、放在需要配图的那个段落之后。' +
     '\n- 描述用英文 Danbooru 风格标签，写清画面主体、动作、环境、光线与镜头。' +
-    '\n- 只在画面感强、值得配图的位置插入，一段最多一个，一次回复不超过 3 个。' +
+    `\n- 只在画面感强、值得配图的位置插入，一段最多一个，一次回复不超过 ${max} 个。` +
     '\n- 不需要配图时就完全不要输出任何标记。' +
     '\n- 标记只是给你自己定位用的，读者看不到它，请不要在正文里解释它。'
   );

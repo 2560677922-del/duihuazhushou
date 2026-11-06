@@ -28,27 +28,36 @@ async function boot() {
    *
    * 必须在写入前调用（越早越好）；失败也不影响使用，只是保护弱一些。
    */
-  try {
-    const s = navigator.storage as StorageManager | undefined;
-    if (s?.persist) {
-      const already = s.persisted ? await s.persisted() : false;
-      if (!already) {
-        const ok = await s.persist();
-        console.log(ok ? '[存储] 已获得持久存储授权，数据不会被自动清理' : '[存储] 未获得持久存储授权');
-      }
-      if (s.estimate) {
-        const est = await s.estimate();
-        if (est.quota) {
-          console.log(
-            `[存储] 已用 ${((est.usage ?? 0) / 1024 / 1024).toFixed(1)} MB / ` +
-              `可用 ${(est.quota / 1024 / 1024).toFixed(0)} MB`,
-          );
+  /*
+   * ★ 配额申请改成后台，不再 await。
+   *
+   * navigator.storage.persist() / estimate() 在部分 Android WebView 上
+   * 会等很久，而它只决定"数据会不会被系统回收"，跟界面能不能画出来
+   * 毫无关系。它原本排在 app.mount() 之前，是首屏白屏的一段白等。
+   */
+  void (async () => {
+    try {
+      const s = navigator.storage as StorageManager | undefined;
+      if (s?.persist) {
+        const already = s.persisted ? await s.persisted() : false;
+        if (!already) {
+          const ok = await s.persist();
+          console.log(ok ? '[存储] 已获得持久存储授权，数据不会被自动清理' : '[存储] 未获得持久存储授权');
+        }
+        if (s.estimate) {
+          const est = await s.estimate();
+          if (est.quota) {
+            console.log(
+              `[存储] 已用 ${((est.usage ?? 0) / 1024 / 1024).toFixed(1)} MB / ` +
+                `可用 ${(est.quota / 1024 / 1024).toFixed(0)} MB`,
+            );
+          }
         }
       }
+    } catch (e) {
+      console.warn('[存储] 申请持久存储失败（不影响使用）：', e);
     }
-  } catch (e) {
-    console.warn('[存储] 申请持久存储失败（不影响使用）：', e);
-  }
+  })();
 
   // 挂载前先把本地落盘数据读回浏览器缓存。
   // 必须早于任何 store.load()，否则会拿到浏览器里的旧值。

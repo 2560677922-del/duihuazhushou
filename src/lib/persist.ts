@@ -70,6 +70,25 @@ function persistHeaders(extra: Record<string, string> = {}): Record<string, stri
   };
 }
 
+/**
+ * 带超时的 fetch。
+ *
+ * 启动链路里 probeHttp / loadAll / listOrigins / peekOrigin 全是 await，
+ * 只要有一个请求挂住，app.mount() 就一直不执行 —— 用户看到的就是
+ * "一级界面啥都加载不出来、切页也没反应、隔一会儿才突然正常"。
+ * 这些接口都在本机/局域网，4 秒绰绰有余；超时就降级，绝不拖住首屏。
+ */
+const rawFetch = globalThis.fetch.bind(globalThis);
+function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  ms = 4000,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  return rawFetch(input, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(timer));
+}
+
 export const persist = (() => {
   let token = '';
   let available = false;
@@ -122,7 +141,7 @@ export const persist = (() => {
     probed = true;
     token = readToken();
     try {
-      const r = await fetch('/__persist/status', {
+      const r = await fetchWithTimeout('/__persist/status', {
         headers: persistHeaders({ Accept: 'application/json' }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -154,7 +173,7 @@ export const persist = (() => {
   async function loadAllHttp(): Promise<Record<string, unknown> | null> {
     if (!(await probeHttp())) return null;
     try {
-      const r = await fetch('/__persist/data', {
+      const r = await fetchWithTimeout('/__persist/data', {
         headers: persistHeaders({ Accept: 'application/json' }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -208,7 +227,7 @@ export const persist = (() => {
 
     flushPromise = (async () => {
       try {
-        const r = await fetch('/__persist/data', {
+        const r = await fetchWithTimeout('/__persist/data', {
           method: 'POST',
           headers: persistHeaders({
             'Content-Type': 'application/json',
@@ -251,7 +270,7 @@ export const persist = (() => {
   async function pollHttp(): Promise<boolean> {
     if (!available) return false;
     try {
-      const r = await fetch('/__persist/status', {
+      const r = await fetchWithTimeout('/__persist/status', {
         headers: persistHeaders({ Accept: 'application/json' }),
       });
       if (!r.ok) return false;
@@ -294,7 +313,7 @@ export const persist = (() => {
     suppressMirror = true;
     try {
       if (!available) return;
-      const r = await fetch('/__persist/data', {
+      const r = await fetchWithTimeout('/__persist/data', {
         method: 'POST',
         headers: persistHeaders({
           'Content-Type': 'application/json',
@@ -314,7 +333,7 @@ export const persist = (() => {
   async function listBackupsHttp(): Promise<{ name: string; bytes: number; mtime: number }[]> {
     if (!(await probeHttp())) return [];
     try {
-      const r = await fetch('/__persist/backups', {
+      const r = await fetchWithTimeout('/__persist/backups', {
         headers: persistHeaders({ Accept: 'application/json' }),
       });
       if (!r.ok) return [];
@@ -331,7 +350,7 @@ export const persist = (() => {
   > {
     if (!(await probeHttp())) return [];
     try {
-      const r = await fetch('/__persist/origins', {
+      const r = await fetchWithTimeout('/__persist/origins', {
         headers: persistHeaders({ Accept: 'application/json' }),
       });
       if (!r.ok) return [];
@@ -349,7 +368,7 @@ export const persist = (() => {
   async function peekOriginHttp(target: string): Promise<Record<string, unknown> | null> {
     if (!(await probeHttp())) return null;
     try {
-      const r = await fetch(`/__persist/data?origin=${encodeURIComponent(target)}`, {
+      const r = await fetchWithTimeout(`/__persist/data?origin=${encodeURIComponent(target)}`, {
         headers: persistHeaders({ Accept: 'application/json' }),
       });
       if (!r.ok) return null;
@@ -365,7 +384,7 @@ export const persist = (() => {
   async function deleteOriginHttp(target: string): Promise<boolean> {
     if (!(await probeHttp())) return false;
     try {
-      const r = await fetch(`/__persist/origin?origin=${encodeURIComponent(target)}`, {
+      const r = await fetchWithTimeout(`/__persist/origin?origin=${encodeURIComponent(target)}`, {
         method: 'DELETE',
         headers: persistHeaders(),
       });

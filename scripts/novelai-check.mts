@@ -643,11 +643,24 @@ check('parsecard 的 toStandaloneJSON 会丢字段，所以不能用它当入库
 console.log('\n=== 正则引擎：ST 字段语义 ===');
 
 check('/pattern/flags 写法能编译（之前会静默失败）', () => {
-  const { hits } = runRegex(
+  const { messages, hits } = runRegex(
     [{ role: 'assistant', content: 'a1b2c3' }],
     [{ scriptName: 'R', findRegex: '/\\d/g', replaceString: '#', placement: [2] }],
   );
-  assert.equal(hits[0].matchCount, 1);
+  // 带 g 就该替换全部 3 处。matchCount 现在统计真实命中数，
+  // 不再像旧版那样"每条消息最多 +1"（那条旧断言其实是把不准的统计写死了）
+  assert.equal(messages[0].content, 'a#b#c#');
+  assert.equal(hits[0].matchCount, 3);
+});
+
+check('/pattern/ 不带 g 只替换第一处（与 ST regexFromString 对齐）', () => {
+  // 已核对 SillyTavern release 分支 public/scripts/utils.js 的 regexFromString：
+  // 它把 m[3] 原样传给 new RegExp(m[2], m[3])，**不会**自动补 g。
+  const { messages } = runRegex(
+    [{ role: 'assistant', content: 'a1b2c3' }],
+    [{ scriptName: 'R', findRegex: '/\\d/', replaceString: '#', placement: [2] }],
+  );
+  assert.equal(messages[0].content, 'a#b2c3');
 });
 
 check('Trim Out：替换前先从匹配内容里去字', () => {
@@ -1331,6 +1344,57 @@ check('同一张图得到同一个 id，不同图得到不同 id', () => {
     contentId('data:image/png;base64,AAA'),
     '长度不同要区分',
   );
+});
+
+console.log('\n=== 会话列表预览的回溯防护 ===');
+
+check('无闭合括号的巨型内嵌 base64 不会锁死清理逻辑', () => {
+  // 老数据是 ![](data:image/...;base64,几十万字符，且可能没写右括号。
+  // 旧的 [A-Za-z0-9+/=\s]{100,}\s*\) 会一路吃到文末再逐字符回退，
+  // 在会话列表里同步执行时能把主线程锁住几十秒（"切页卡住、隔一会才好"）。
+  // 换成 [^)] 之后是线性扫描。这里既验正确性也验耗时。
+  const huge =
+    '正文开头 ' + '![](data:image/png;base64,' + 'A'.repeat(200000) + ' 后面还有正文';
+  const t0 = Date.now();
+  const out = stripImageMarkers(huge);
+  const elapsed = Date.now() - t0;
+  assert.ok(out.includes('正文开头'), '正常正文不能被误删');
+  assert.ok(elapsed < 1000, `清理耗时 ${elapsed}ms，疑似又出现灾难性回溯`);
+});
+
+console.log('\n=== 空占位符定位（手动补图）===');
+
+check('多个空占位符各有稳定 ordinal，补图不会串位', () => {
+  // 场景：模型写了 3 个标记但自动配图上限是 1，界面上应剩下 3 个可点的空位。
+  // 段落号 index 会重复（同一段两个标记时），只有 ordinal 能精确定位。
+  const blocks = buildContentBlocks(
+    '段落一\n\n[[IMG: 图一]]\n\n段落二\n\n[[IMG: 图二]]\n\n[[IMG: 图三]]',
+    [],
+  );
+  const ordinals = blocks.map((b) => (b.kind === 'image' ? b.ordinal : -1)).filter((n) => n >= 0);
+  assert.deepEqual(ordinals, [0, 1, 2]);
+  const images = blocks.filter((b) => b.kind === 'image');
+  assert.ok(images.every((b) => b.kind === 'image' && b.attachment === undefined),
+    '没配图时应该都是空占位符');
+});
+
+check('只有部分配图时，空位仍能被 ordinal 区分', () => {
+  const att = (id: string, i: number): ImageAttachment => ({
+    id, markdownIndex: i, description: `图${i}`, createdAt: 1,
+  });
+  const blocks = buildContentBlocks(
+    '[[IMG: 图0]]\n\n[[IMG: 图1]]\n\n[[IMG: 图2]]',
+    [att('a0', 0)],
+  );
+  const images = blocks.filter((b) => b.kind === 'image');
+  assert.equal(images.length, 3);
+  assert.deepEqual(
+    images.map((b) => (b.kind === 'image' ? b.ordinal : -1)),
+    [0, 1, 2],
+  );
+  assert.ok(images[0].kind === 'image' && images[0].attachment?.id === 'a0');
+  assert.ok(images[2].kind === 'image' && images[2].attachment === undefined,
+    '第 3 个位置应留给手动补图');
 });
 
 console.log(`\n=== 通过 ${passed} 项检查 ===`);

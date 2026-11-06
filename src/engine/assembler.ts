@@ -159,6 +159,9 @@ export function assemblePrompt(opts: AssemblyOptions): AssemblyResult {
       reasoning: true,
       slash: true,
     },
+    // 替换串里可能出现 {{user}} / {{char}}（美化类正则常用），
+    // 和 ST 一样在替换完成后展开
+    macroContext: macroCtx,
   });
 
   // ---- 阶段 3c：Token 裁剪 ----

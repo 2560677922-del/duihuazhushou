@@ -30,6 +30,36 @@ function scheduleOrphanGc(): void {
   }
 }
 
+/** 保证首屏之后的存储维护只排一次 */
+let maintenanceScheduled = false;
+
+/**
+ * 首屏挂载之后再做的存储维护：图片引用自检 + 孤儿回收。
+ *
+ * 两件事都不影响"配置读得对不对"，但都可能在数据量大的时候跑很久。
+ * 放到空闲时段执行，界面先出来，用户不用等它们。
+ */
+function scheduleBackgroundMaintenance(): void {
+  if (maintenanceScheduled) return;
+  maintenanceScheduled = true;
+  const run = () => {
+    void (async () => {
+      try {
+        await healImageRefs();
+      } catch (e) {
+        console.warn('[存储] 图片自检失败（不影响使用）：', e);
+      }
+      scheduleOrphanGc();
+    })();
+  };
+  const w = window as unknown as { requestIdleCallback?: (cb: () => void, o?: object) => number };
+  if (typeof w.requestIdleCallback === 'function') {
+    w.requestIdleCallback(run, { timeout: 8000 });
+  } else {
+    setTimeout(run, 2000);
+  }
+}
+
 // 本地存储封装。
 // ---------------------------------------------------------------------------
 // 两层：
@@ -237,18 +267,29 @@ async function adoptRicherOrigin(
   try {
     const others = await persist.listOrigins();
     const mine = assetWeight(current);
-    let best: { origin: string; weight: number } | null = null;
-    for (const o of others) {
-      if (o.origin === currentOriginHost()) continue;
-      const d = await persist.peekOrigin(o.origin);
-      if (!d) continue;
-      const w = assetWeight(d);
-      if (w > mine && (!best || w > best.weight)) best = { origin: o.origin, weight: w };
+    /*
+     * ★ 并行取、且每个来源只取一次。
+     *
+     * 以前是 for + await 串行逐个拉全量数据（origins 那份文件 1MB+），
+     * N 个来源就是 N 次串行等待；挑出最优来源后还要再拉第二遍。
+     * 这段跑在 app.mount() 之前，直接决定首屏什么时候出现。
+     */
+    const candidates = await Promise.all(
+      others
+        .filter((o) => o.origin !== currentOriginHost())
+        .map(async (o) => ({ origin: o.origin, data: await persist.peekOrigin(o.origin) })),
+    );
+    let best: { origin: string; weight: number; data: Record<string, unknown> } | null = null;
+    for (const c of candidates) {
+      if (!c.data) continue;
+      const w = assetWeight(c.data);
+      if (w > mine && (!best || w > best.weight)) {
+        best = { origin: c.origin, weight: w, data: c.data };
+      }
     }
     if (!best) return undefined;
 
-    const src = await persist.peekOrigin(best.origin);
-    if (!src) return undefined;
+    const src = best.data;
 
     const merged: Record<string, unknown> = { ...current };
     for (const [k, key] of Object.entries(MERGE_KEY_OF)) {
@@ -357,9 +398,16 @@ async function healImageRefs(): Promise<number> {
       const url =
         `https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/` +
         `${remotePath}?ref=${gh.branch || 'main'}`;
+      /*
+       * 带超时：这条链路在启动自检里会被逐张串行调用，
+       * 一张图拉不回来不能把整个首屏拖住。
+       */
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3000);
       const r = await fetch(url, {
         headers: { Authorization: `Bearer ${gh.token}`, Accept: 'application/vnd.github.v3+json' },
-      });
+        signal: ctrl.signal,
+      }).finally(() => clearTimeout(timer));
       if (r.ok) {
         const j = await r.json();
         if (j?.content && j.encoding === 'base64') {
@@ -501,16 +549,17 @@ export const store = {
         await writeBrowser(k, v);
       }
       hydratedFromFile = true;
-      // 图片引用可能是坏的（blob 引用、只存了链接、迁移占位符），
-      // 启动时顺手补回来 —— 用户不该为这种事做任何操作
-      await healImageRefs();
       /*
-       * 回收孤儿图片，放到空闲时跑：
-       * 老版本每次保存都会重写一份图，手机里可能已经堆了几百 MB，
-       * 这里在后台清掉，不阻塞首屏。
+       * ★ 图片自检 / 孤儿回收挪到首屏之后。
+       *
+       * 这两件事跟"配置数据能不能读到"毫无关系，却会全量扫所有会话的
+       * 所有图片、逐张联网补图、甚至把孤儿图的 base64 读回内存（几百 MB）。
+       * 它们原本排在 app.mount() 之前，数据量一上来就把整个界面按在
+       * 启动画面底下 —— 用户说的"一级界面啥都加载不出来、切页卡住、
+       * 隔一会儿才正常"就是这条串行链。
        */
-      scheduleOrphanGc();
-      // 内容太少时，看看别的来源有没有更全的，有就自动合并过来
+      scheduleBackgroundMaintenance();
+      // 内容太少时，看看别的来源有没有更全的，有就自动合并过来（请求已有超时兜底）
       const adopted = await adoptRicherOrigin(data!);
       return { fromFile: true, adoptedBrowser: false, keys: fileKeys.length, adoptedFrom: adopted };
     }
@@ -694,8 +743,13 @@ export const store = {
           if (configKeys.has(k)) continue; // 这是配置条目，不是图片
           if (referenced.has(k)) continue; // 还有人用
           try {
-            const v = await imageBlobs.get(k);
-            if (typeof v === 'string') freedBytes += v.length;
+            /*
+             * 只删不读。
+             *
+             * 以前为了统计"释放了多少 MB"会把每张孤儿图的 base64 读回内存 ——
+             * 这正是"启动自检不占内存"那条优化被绕回去的地方，几百 MB 时
+             * 能直接压住主线程。少显示一个数字，换来界面不卡，划算。
+             */
             await imageBlobs.remove(k);
             removed++;
           } catch {
@@ -706,9 +760,8 @@ export const store = {
         console.warn('[存储] 回收孤儿图片失败：', e);
       }
     if (removed) {
-      console.log(
-        `[存储] 已回收 ${removed} 张无人引用的图片，释放约 ${(freedBytes / 1024 / 1024).toFixed(1)} MB`,
-      );
+      // 不再逐张读回内容来算体积（会把几百 MB base64 灌进内存）
+      console.log(`[存储] 已回收 ${removed} 张无人引用的图片`);
     }
     return { removed, freedBytes };
   },
