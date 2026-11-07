@@ -35,6 +35,7 @@ import { useApiConfigStore } from '../stores/apiConfig';
 import { useVariablesStore } from '../stores/variables';
 import { useStorageSettingsStore } from '../stores/storageSettings';
 import { useImageStore } from '../stores/image';
+import { useTagLibraryStore } from '../stores/tagLibrary';
 import { fetchModels } from '../engine/imageGen';
 
 /** 原生交来的一次生成请求。 */
@@ -452,17 +453,17 @@ async function setActive(json: string): Promise<void> {
 
 // ===================== 原生设置页的 API 配置桥（window.__dhpApi） =====================
 //
-// 原生设置页的交互是「输入地址 + 密钥 → 拉取模型 → 选中即可用」，
-// 与网页版设置页一致。数据必须落在 apiConfig store：生成走 web 引擎，
-// 配置也必须同源，否则原生存一份、web 读一份必然打架。
+// 原生设置页的交互与网页版对齐：
+//   填地址 + 密钥 → 拉取模型 → **勾选多个一次加入这家** → 点模型切换使用。
+// 数据必须落在 apiConfig store：生成走 web 引擎，配置也必须同源，
+// 否则原生存一份、web 读一份必然打架。
 //
 // 通信方式：
 //   · getConfig()        —— 同步返回 JSON 串（evaluateJavascript 直接接返回值）
-//   · saveConfig(json)   —— 异步保存，完成后回调 AndroidNative.onApiResult
-//   · fetchModels(json)  —— 异步拉取模型列表，完成/失败都回调 onApiResult
+//   · 其余均为异步，完成后回调 AndroidNative.onApiResult（kind 标明哪条命令）
 // 异步结果统一走 onApiResult，原生侧用一次性监听接住。
 
-/** 原生设置页的结果回传（saveConfig / fetchModels 共用一条通道）。 */
+/** 原生设置页的结果回传（所有异步命令共用一条通道）。 */
 function replyApiResult(payload: Record<string, unknown>): void {
   try {
     (window as any).AndroidNative?.onApiResult?.(JSON.stringify(payload));
@@ -471,7 +472,7 @@ function replyApiResult(payload: Record<string, unknown>): void {
   }
 }
 
-/** 当前 API 配置 + 运营商概览。同步调用，原生 evaluateJavascript 接返回值。 */
+/** 当前 API 配置 + 运营商/模型全量概览。同步调用，原生 evaluateJavascript 接返回值。 */
 function apiConfigSummary(): string {
   const api = useApiConfigStore();
   const cur = api.currentConfig;
@@ -480,57 +481,338 @@ function apiConfigSummary(): string {
     apiKey: cur?.apiKey || '',
     model: cur?.model || '',
     modelName: cur?._name || '',
+    uid: cur?._uid || '',
+    params: {
+      temperature: cur?.temperature ?? 0.8,
+      maxTokens: cur?.maxTokens ?? 2000,
+      contextWindow: cur?.contextWindow ?? 1000000,
+      userLookbackTokens: cur?.userLookbackTokens ?? 200000,
+    },
     providers: api.providers.map((p) => ({
       key: p.key,
       note: p.note || '',
       baseUrl: p.baseUrl || '',
-      modelCount: p.models?.length ?? 0,
+      hasKey: p.hasKey,
+      models: p.models.map((m) => ({
+        uid: m._uid,
+        model: m.model || '',
+        name: m._name || '',
+        current: m._uid === api.currentConfigId,
+      })),
     })),
   });
 }
 
 /**
- * 保存地址 / 密钥 / 选中模型。
- *
- * 地址与密钥按「运营商级」同步（updateProvider 会把同一家全部改掉，
- * 与网页版行为一致）；选模型时这家下已有该模型就切过去，没有就新增。
+ * 统一的异步命令入口：原生把 { cmd, ... } 串进来，这里分发。
+ * 单独一个入口省得桥上堆一堆方法名，也方便回传时带 kind。
  */
-async function saveApiConfig(raw: string): Promise<void> {
+async function apiCommand(raw: string): Promise<void> {
+  let req: any = {};
+  try {
+    req = JSON.parse(raw || '{}');
+  } catch {
+    replyApiResult({ kind: 'error', ok: false, error: '参数不是合法 JSON' });
+    return;
+  }
+  const cmd = String(req.cmd || '');
   try {
     const api = useApiConfigStore();
     await api.load();
-    const req = JSON.parse(raw || '{}') as { baseUrl?: string; apiKey?: string; model?: string };
-    let cur = api.currentConfig;
-    if (!cur) {
-      await api.addConfig('默认配置');
-      cur = api.currentConfig;
-    }
-    if (!cur) throw new Error('无法创建 API 配置');
 
-    const patch: { baseUrl?: string; apiKey?: string } = {};
-    if (typeof req.baseUrl === 'string') patch.baseUrl = req.baseUrl;
-    if (typeof req.apiKey === 'string') patch.apiKey = req.apiKey;
-    if (Object.keys(patch).length) await api.updateProvider(cur._uid, patch);
-
-    const model = (req.model || '').trim();
-    if (model) {
-      const prov = api.currentProviderFull;
-      const hit = prov?.models.find((m) => (m.model || '').trim() === model);
-      if (hit) {
-        api.currentConfigId = hit._uid;
-        await api.save();
-      } else {
-        await api.addModelToProvider(cur._uid, model);
+    switch (cmd) {
+      /** 保存地址/密钥（运营商级同步）。 */
+      case 'saveConn': {
+        let cur = api.currentConfig;
+        if (!cur) {
+          await api.addConfig('默认配置');
+          cur = api.currentConfig;
+        }
+        if (!cur) throw new Error('无法创建 API 配置');
+        const patch: { baseUrl?: string; apiKey?: string } = {};
+        if (typeof req.baseUrl === 'string') patch.baseUrl = req.baseUrl;
+        if (typeof req.apiKey === 'string') patch.apiKey = req.apiKey;
+        if (Object.keys(patch).length) await api.updateProvider(cur._uid, patch);
+        break;
       }
+      /**
+       * 多选批量加入：先把这家连接信息对齐，再 addModelsToProvider。
+       * 与网页版「勾选多个 → 一次加入这家」同一条路径。
+       */
+      case 'addModels': {
+        let cur = api.currentConfig;
+        if (!cur) {
+          await api.addConfig('默认配置');
+          cur = api.currentConfig;
+        }
+        if (!cur) throw new Error('无法创建 API 配置');
+        const patch: { baseUrl?: string; apiKey?: string } = {};
+        if (typeof req.baseUrl === 'string') patch.baseUrl = req.baseUrl;
+        if (typeof req.apiKey === 'string') patch.apiKey = req.apiKey;
+        if (Object.keys(patch).length) await api.updateProvider(cur._uid, patch);
+        const models: string[] = Array.isArray(req.models)
+          ? req.models.map((m: unknown) => String(m)).filter(Boolean)
+          : [];
+        if (!models.length) throw new Error('没有要添加的模型');
+        const r = await api.addModelsToProvider(cur._uid, models);
+        replyApiResult({ kind: cmd, ok: true, added: r.added, skipped: r.skipped });
+        return;
+      }
+      /** 切换使用的模型（按 uid）。 */
+      case 'useModel': {
+        const uid = String(req.uid || '');
+        if (!api.configs.some((c) => c._uid === uid)) throw new Error('模型不存在或已删除');
+        api.currentConfigId = uid;
+        await api.save();
+        break;
+      }
+      /** 删除单个模型（按 uid）。 */
+      case 'removeModel': {
+        const uid = String(req.uid || '');
+        if (!api.configs.some((c) => c._uid === uid)) throw new Error('模型不存在或已删除');
+        await api.removeModelFromProvider(uid);
+        break;
+      }
+      /** 保存当前模型的生成参数。 */
+      case 'saveParams': {
+        const cur = api.currentConfig;
+        if (!cur) throw new Error('当前没有选中的模型');
+        const p = req.params || {};
+        if (p.temperature !== undefined) cur.temperature = Number(p.temperature);
+        if (p.maxTokens !== undefined) cur.maxTokens = Number(p.maxTokens);
+        if (p.contextWindow !== undefined) cur.contextWindow = Number(p.contextWindow);
+        if (p.userLookbackTokens !== undefined) {
+          cur.userLookbackTokens = Number(p.userLookbackTokens);
+        }
+        await api.save();
+        break;
+      }
+
+      // ─────────── 生图接口（交互对齐 LLM 运营商） ───────────
+
+      /** 保存生图接口的地址/密钥（按 uid 或当前接口）。 */
+      case 'imgSaveConn': {
+        const img = useImageStore();
+        const uid = String(req.uid || img.currentApiId || '');
+        let entry = img.apiConfigs.find((c) => c._uid === uid);
+        if (!entry) entry = await img.addApi('新接口');
+        const patch: { baseUrl?: string; apiKey?: string } = {};
+        if (typeof req.baseUrl === 'string') patch.baseUrl = req.baseUrl;
+        if (typeof req.apiKey === 'string') patch.apiKey = req.apiKey;
+        if (Object.keys(patch).length) await img.updateApi(entry._uid, patch);
+        break;
+      }
+      /**
+       * 多选批量加入生图模型：每个模型建一条接口记录（同 baseUrl/apiKey），
+       * 已存在「同地址+同模型」的跳过 —— 与 LLM 侧语义一致。
+       */
+      case 'imgAddModels': {
+        const img = useImageStore();
+        let cur = img.apiConfigs.find((c) => c._uid === img.currentApiId);
+        if (!cur) cur = await img.addApi('新接口');
+        const patch: { baseUrl?: string; apiKey?: string } = {};
+        if (typeof req.baseUrl === 'string') patch.baseUrl = req.baseUrl;
+        if (typeof req.apiKey === 'string') patch.apiKey = req.apiKey;
+        if (Object.keys(patch).length) await img.updateApi(cur._uid, patch);
+        const baseUrl = (req.baseUrl ?? cur.baseUrl ?? '') as string;
+        const models: string[] = Array.isArray(req.models)
+          ? req.models.map((m: unknown) => String(m)).filter(Boolean)
+          : [];
+        if (!models.length) throw new Error('没有要添加的模型');
+        let added = 0;
+        let skipped = 0;
+        for (const model of models) {
+          const exists = img.apiConfigs.some(
+            (c) => (c.baseUrl || '') === baseUrl && (c.model || c.novelaiModel || '') === model,
+          );
+          if (exists) {
+            skipped++;
+            continue;
+          }
+          const made = await img.addApi(model);
+          await img.updateApi(made._uid, {
+            ...(req.baseUrl ? { baseUrl: String(req.baseUrl) } : {}),
+            ...(req.apiKey ? { apiKey: String(req.apiKey) } : {}),
+            model,
+          });
+          added++;
+        }
+        replyApiResult({ kind: cmd, ok: true, added, skipped });
+        return;
+      }
+      /** 切换使用的生图接口。 */
+      case 'imgUseApi': {
+        const uid = String(req.uid || '');
+        if (!useImageStore().apiConfigs.some((c) => c._uid === uid)) {
+          throw new Error('接口不存在或已删除');
+        }
+        await useImageStore().setCurrentApi(uid);
+        break;
+      }
+      /** 删除生图接口。 */
+      case 'imgRemoveApi': {
+        const uid = String(req.uid || '');
+        if (!useImageStore().apiConfigs.some((c) => c._uid === uid)) {
+          throw new Error('接口不存在或已删除');
+        }
+        await useImageStore().removeApi(uid);
+        break;
+      }
+      /** 保存生图参数：尺寸走 API，提示词/负面走风格（与 store 的职责划分一致）。 */
+      case 'imgSaveParams': {
+        const img = useImageStore();
+        const p = req.params || {};
+        const api = img.apiConfigs.find((c) => c._uid === img.currentApiId);
+        const apiPatch: Record<string, unknown> = {};
+        if (p.width !== undefined) apiPatch.width = Number(p.width);
+        if (p.height !== undefined) apiPatch.height = Number(p.height);
+        if (Object.keys(apiPatch).length) {
+          if (!api) throw new Error('当前没有选中的生图接口');
+          await img.updateApi(api._uid, apiPatch);
+        }
+        const styleId = img.currentStyleId;
+        const stylePatch: Record<string, unknown> = {};
+        if (typeof p.negativePrompt === 'string') stylePatch.negativePrompt = p.negativePrompt;
+        if (typeof p.artistTags === 'string') stylePatch.artistTags = p.artistTags;
+        if (typeof p.qualityTags === 'string') stylePatch.qualityTags = p.qualityTags;
+        if (typeof p.promptTemplate === 'string') stylePatch.promptTemplate = p.promptTemplate;
+        if (Object.keys(stylePatch).length) {
+          if (!styleId) throw new Error('当前没有选中的生图风格');
+          await img.updateStyle(styleId, stylePatch);
+        }
+        break;
+      }
+
+      /** 保存显示设置（思维链/正则作用范围）。 */
+      case 'saveDisplay': {
+        const s = useStorageSettingsStore();
+        const p = req.settings || {};
+        if (typeof p.hideReasoning === 'boolean') s.hideReasoning = p.hideReasoning;
+        if (typeof p.reasoningCutMarker === 'string') s.reasoningCutMarker = p.reasoningCutMarker;
+        if (typeof p.llmContextRaw === 'boolean') s.llmContextRaw = p.llmContextRaw;
+        if (typeof p.exportRaw === 'boolean') s.exportRaw = p.exportRaw;
+        await s.save?.();
+        break;
+      }
+
+      // ─────────── 引擎资产开关（预设/世界书/正则） ───────────
+
+      /** 切换资产启用：直接复用 __dhpGen.setActive 的既有语义。 */
+      case 'setAssets': {
+        await setActive(JSON.stringify(req));
+        break;
+      }
+
+      /**
+       * 导入资产：原生资产页选了 ST 的 .json（预设/世界书/正则）。
+       * 直接走 importAnyJson 的统一识别（支持数组混装、容器对象、
+       * entries 对象索引等历史坑位），原生不用自己判类型。
+       */
+      case 'importAsset': {
+        const a = useAssetsStore();
+        let raw: unknown = req.raw;
+        if (typeof raw === 'string') {
+          try {
+            raw = JSON.parse(raw);
+          } catch {
+            throw new Error('文件内容不是合法 JSON');
+          }
+        }
+        const items = await a.importAnyJson(raw);
+        replyApiResult({ kind: cmd, ok: true, imported: items.length });
+        return;
+      }
+
+      /** 导出资产：按 id 取库里的原始对象，原样 JSON 回传给原生落盘。 */
+      case 'exportAsset': {
+        const a = useAssetsStore();
+        const id = String(req.id || '');
+        const find = (list: any[]) => list.find((x) => x._uid === id);
+        const obj =
+          find(a.presets) || find(a.worldBooks) || find(a.regexGroups) || find(a.characters);
+        if (!obj) throw new Error('找不到要导出的资产');
+        replyApiResult({
+          kind: cmd,
+          ok: true,
+          id,
+          name: obj.name || obj.data?.name || 'asset',
+          json: JSON.stringify(obj, null, 2),
+        });
+        return;
+      }
+
+      default:
+        throw new Error(`未知命令：${cmd}`);
     }
-    replyApiResult({ kind: 'save', ok: true });
+    replyApiResult({ kind: cmd, ok: true });
   } catch (e) {
-    replyApiResult({
-      kind: 'save',
-      ok: false,
-      error: e instanceof Error ? e.message : String(e),
-    });
+    replyApiResult({ kind: cmd, ok: false, error: e instanceof Error ? e.message : String(e) });
   }
+}
+
+/** 生图接口列表：交互对齐 LLM 运营商（地址/密钥/拉模型/多选添加/快捷切换）。 */
+function imageApiSummary(): string {
+  const img = useImageStore();
+  const cur: any = img.currentConfig || {};
+  return JSON.stringify({
+    apis: (img.apiConfigs || []).map((a) => ({
+      uid: a._uid,
+      name: a.name || '',
+      provider: a.provider || 'custom',
+      baseUrl: a.baseUrl || '',
+      hasKey: !!(a.apiKey || a.novelaiToken),
+      model: a.model || a.novelaiModel || '',
+      current: a._uid === img.currentApiId,
+    })),
+    current: {
+      uid: img.currentApiId || '',
+      baseUrl: cur.baseUrl || '',
+      apiKey: cur.apiKey || '',
+      model: cur.model || cur.novelaiModel || '',
+      width: cur.width || 832,
+      height: cur.height || 1216,
+      negativePrompt: cur.negativePrompt || '',
+    },
+  });
+}
+
+/**
+ * 引擎资产明细：预设 / 世界书（含全部条目）/ 正则组，供原生浏览。
+ * 数据原样来自 assets store（ST 兼容层），原生只读不复制。
+ */
+function assetsDetail(): string {
+  const a = useAssetsStore();
+  const books = (a.worldBooks || []).map((w: any) => ({
+    id: w._uid || '',
+    name: w.name || w.data?.name || '未命名',
+    current: a.currentWorldBookIds.includes(w._uid),
+    entries: (w.data?.entries || w.entries || []).map((e: any) => ({
+      uid: e.uid,
+      comment: e.comment || '',
+      keys: e.keys || [],
+      secondary: e.secondary_keys || [],
+      content: e.content || '',
+      constant: !!e.constant,
+      enabled: e.enabled !== false && e.disable !== true,
+    })),
+  }));
+  const presets = (a.presets || []).map((p: any) => ({
+    id: p._uid || '',
+    name: p.name || p.data?.name || '未命名',
+    current: p._uid === a.currentPresetId,
+  }));
+  const regexGroups = (a.regexGroups || []).map((g: any) => ({
+    id: g._uid || '',
+    name: g.name || '未命名',
+    current: a.currentRegexGroupIds.includes(g._uid),
+    scriptCount: (g.scripts || []).length,
+  }));
+  return JSON.stringify({
+    presets,
+    worldBooks: books,
+    regexGroups,
+    characterId: a.currentCharacterId || '',
+  });
 }
 
 /** 拉取对话模型列表（复用 imageGen 的 fetchModels：兼容 /v1/models 各形态）。 */
@@ -545,6 +827,61 @@ async function fetchApiModels(raw: string): Promise<void> {
       ok: false,
       error: e instanceof Error ? e.message : String(e),
     });
+  }
+}
+
+/** 显示设置（思维链隐藏 / 截断标记 / 发给模型的文本是否跳过正则 / 导出用原文）。 */
+function displaySettingsSummary(): string {
+  const s = useStorageSettingsStore();
+  return JSON.stringify({
+    hideReasoning: !!s.hideReasoning,
+    reasoningCutMarker: s.reasoningCutMarker || '',
+    llmContextRaw: !!s.llmContextRaw,
+    exportRaw: !!s.exportRaw,
+  });
+}
+
+/** 当前生图风格（提示词层）+ 尺寸。 */
+function imageStyleSummary(): string {
+  const img = useImageStore();
+  const cur: any = img.currentConfig || {};
+  const styleId = img.currentStyleId;
+  const style: any = (img.styleConfigs || []).find((s) => s._uid === styleId) || {};
+  return JSON.stringify({
+    styleUid: style._uid || '',
+    styleName: style.name || '默认风格',
+    artistTags: style.artistTags || '',
+    qualityTags: style.qualityTags || '',
+    negativePrompt: style.negativePrompt || '',
+    promptTemplate: style.promptTemplate || '',
+    width: cur.width || 832,
+    height: cur.height || 1216,
+  });
+}
+
+/** 标签库搜索（原生标签生图的快捷标签）。 */
+function tagSearch(rawQuery: string): string {
+  try {
+    const store = useTagLibraryStore();
+    const q = (rawQuery || '').trim().toLowerCase();
+    const list = (store.tags || []) as any[];
+    // 标签库是懒加载的（bundled JSON），第一次调用先触发加载，
+    // 原生下一次输入/刷新时就能搜到
+    if (!list.length) void store.load();
+    const pool = q
+      ? list.filter((t) => String(t.tag || '').toLowerCase().includes(q) || String(t.cn || '').toLowerCase().includes(q))
+      : list;
+    return JSON.stringify({
+      total: list.length,
+      tags: pool.slice(0, 40).map((t) => ({
+        tag: String(t.tag || ''),
+        cn: String(t.cn || ''),
+        count: t.count ?? 0,
+        group: String(t.group || ''),
+      })),
+    });
+  } catch {
+    return JSON.stringify({ total: 0, tags: [] });
   }
 }
 
@@ -565,11 +902,16 @@ export function installGenerateService(): void {
   // 原生设置页的 API 配置桥（同一次安装，不用 main.ts 再 import 一遍）
   (window as any).__dhpApi = {
     getConfig: apiConfigSummary,
-    saveConfig: (json: string) => {
-      void saveApiConfig(json);
-    },
+    getImageConfig: imageApiSummary,
+    getImageStyle: imageStyleSummary,
+    getDisplaySettings: displaySettingsSummary,
+    getAssets: assetsDetail,
+    getTags: tagSearch,
     fetchModels: (json: string) => {
       void fetchApiModels(json);
+    },
+    command: (json: string) => {
+      void apiCommand(json);
     },
   };
 }

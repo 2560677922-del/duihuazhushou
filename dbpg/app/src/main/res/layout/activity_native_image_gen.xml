@@ -31,6 +31,15 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/gen_config"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="8dp"
+            android:text="配置"
+            android:textColor="#7FB2FF"
+            android:textSize="14sp" />
+
+        <TextView
             android:id="@+id/gen_gallery"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -113,6 +122,34 @@
                 android:textColor="#E6ECF7"
                 android:textSize="14sp"
                 android:inputType="textMultiLine|textCapSentences" />
+
+            <!-- 快捷标签：搜标签库，点一下追加到提示词（对齐网页 Tags 页） -->
+            <EditText
+                android:id="@+id/gen_tag_search"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:hint="搜索标签（点结果追加到提示词）"
+                android:textColorHint="#5C6678"
+                android:textColor="#E6ECF7"
+                android:textSize="13sp"
+                android:inputType="text"
+                android:importantForAutofill="no" />
+
+            <TextView
+                android:id="@+id/gen_tag_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="2dp"
+                android:text=""
+                android:textColor="#5C6678"
+                android:textSize="11sp" />
+
+            <LinearLayout
+                android:id="@+id/gen_tags"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
 
             <TextView
                 android:id="@+id/gen_run"

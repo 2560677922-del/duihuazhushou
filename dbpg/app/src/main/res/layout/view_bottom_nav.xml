@@ -5,37 +5,34 @@
   分类刻意和网页版 MainLayout 的 navItems 保持一致：
     冒险 → 资产 → 设置 → 生图
 
-  为什么不自己发明一套：
-    这是同一个 App 的两套外壳，用户脑子里只有一套"东西在哪"。
-    网页版把「图片库」收进设置当子页、把「小说」整体移除，
-    这里也必须一样，否则换个外壳就要重新学一遍位置。
-
-  只做入口，不承载业务：点哪个 tab 就切到哪个原生页面。
+  每项 = emoji 图标 + 文字（两行），当前 tab 用主题蓝高亮
+  （导航只在首页常驻，首页即「冒险」，所以高亮写死即可）。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/bottom_nav"
     android:layout_width="match_parent"
-    android:layout_height="56dp"
+    android:layout_height="60dp"
     android:orientation="horizontal"
-    android:background="#171A21">
+    android:background="#12151C">
 
     <TextView
         android:id="@+id/nav_adventure"
         style="@style/BottomNavItem"
-        android:text="冒险" />
+        android:text="🏕️\n冒险"
+        android:textColor="#7FB2FF" />
 
     <TextView
         android:id="@+id/nav_assets"
         style="@style/BottomNavItem"
-        android:text="资产" />
+        android:text="👤\n资产" />
 
     <TextView
         android:id="@+id/nav_settings"
         style="@style/BottomNavItem"
-        android:text="设置" />
+        android:text="⚙️\n设置" />
 
     <TextView
         android:id="@+id/nav_imagegen"
         style="@style/BottomNavItem"
-        android:text="生图" />
+        android:text="🎨\n生图" />
 </LinearLayout>

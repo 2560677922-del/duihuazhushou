@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  原生生图接口配置页：交互对齐 LLM 运营商配置 ——
+  填地址/密钥 → 拉取模型 → 勾选多个一次加入 → 已保存接口可点切换、长按删除。
+  数据落在 web 的 image store（生图走引擎管线，配置必须同源）。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0F1115"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="40dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="6dp">
+
+            <TextView
+                android:id="@+id/imgconf_back"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:padding="10dp"
+                android:text="返回"
+                android:textColor="#8FA6C8"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="生图接口"
+                android:textColor="#E6EAF2"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/imgconf_reload"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:padding="10dp"
+                android:text="刷新"
+                android:textColor="#7FB2FF"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:layout_marginTop="8dp"
+            android:paddingBottom="6dp"
+            android:text="连接"
+            android:textColor="#5E6E85"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="请求地址（Base URL，中转 / OpenAI 兼容）"
+                android:textColor="#8FA6C8"
+                android:textSize="12sp" />
+
+            <EditText
+                android:id="@+id/imgconf_base"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_input"
+                android:hint="https://api.example.com/v1"
+                android:importantForAutofill="no"
+                android:inputType="textUri"
+                android:padding="12dp"
+                android:textColor="#E6EAF2"
+                android:textColorHint="#4E5A6B"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="API 密钥 / NovelAI Token"
+                android:textColor="#8FA6C8"
+                android:textSize="12sp" />
+
+            <EditText
+                android:id="@+id/imgconf_key"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_input"
+                android:hint="sk-… / pst-…"
+                android:importantForAutofill="no"
+                android:inputType="textVisiblePassword"
+                android:padding="12dp"
+                android:textColor="#E6EAF2"
+                android:textColorHint="#4E5A6B"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/imgconf_fetch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_btn_accent"
+                android:gravity="center"
+                android:padding="13dp"
+                android:text="拉取模型列表"
+                android:textColor="#CFE0FF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/imgconf_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text=""
+                android:textColor="#6C7A90"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:layout_marginTop="18dp"
+            android:paddingBottom="6dp"
+            android:text="已保存的接口"
+            android:textColor="#5E6E85"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/imgconf_apis_box"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:orientation="vertical" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:gravity="center"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:text="点「使用」切换当前接口，长按删除。\n多选拉取的模型会各建一条记录（同地址密钥）。"
+            android:textColor="#4E5A6B"
+            android:textSize="11sp" />
+    </LinearLayout>
+</ScrollView>

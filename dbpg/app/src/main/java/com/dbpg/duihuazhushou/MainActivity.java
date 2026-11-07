@@ -175,7 +175,7 @@ public final class MainActivity extends Activity {
         });
 
         nav.findViewById(R.id.nav_assets).setOnClickListener(v ->
-                startActivity(new Intent(this, com.dbpg.duihuazhushou.character.CharacterListActivity.class)));
+                startActivity(new Intent(this, com.dbpg.duihuazhushou.assets.AssetsHomeActivity.class)));
 
         nav.findViewById(R.id.nav_settings).setOnClickListener(v ->
                 startActivity(new Intent(this, com.dbpg.duihuazhushou.settings.SettingsHomeActivity.class)));

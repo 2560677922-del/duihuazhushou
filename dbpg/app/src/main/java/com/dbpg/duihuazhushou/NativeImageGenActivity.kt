@@ -9,6 +9,7 @@ import android.widget.TextView
 import com.dbpg.duihuazhushou.chat.ImageLoader
 import com.dbpg.duihuazhushou.imagegen.ImageGenService
 import com.dbpg.duihuazhushou.imagegen.ImageStore
+import com.dbpg.duihuazhushou.imagegen.TagLibrary
 
 /**
  * 原生「标签生图」试验页（把网页 Tags 页的生图动作搬到原生）。
@@ -43,6 +44,15 @@ class NativeImageGenActivity : Activity() {
         results = findViewById(R.id.gen_results)
 
         findViewById<TextView>(R.id.gen_close).setOnClickListener { finish() }
+        // 接口配置：地址/密钥/拉模型/多选添加/切换 —— 与 LLM 运营商同一套交互
+        findViewById<TextView>(R.id.gen_config).setOnClickListener {
+            startActivity(
+                android.content.Intent(
+                    this,
+                    com.dbpg.duihuazhushou.imagegen.ImageGenConfigActivity::class.java,
+                ),
+            )
+        }
         // 生成完想回看历史图：直接进原生图片库，不用绕网页
         findViewById<TextView>(R.id.gen_gallery).setOnClickListener {
             startActivity(android.content.Intent(this, com.dbpg.duihuazhushou.gallery.GalleryActivity::class.java))
@@ -53,6 +63,68 @@ class NativeImageGenActivity : Activity() {
         intent.getStringExtra("url")?.let { urlInput.setText(it) }
         intent.getStringExtra("model")?.let { modelInput.setText(it) }
         sizeInput.setText(intent.getStringExtra("size") ?: "1024x1024")
+
+        // 快捷标签：纯原生读 APK 内置标签库，不走桥
+        val tagSearch = findViewById<EditText>(R.id.gen_tag_search)
+        val tagBox = findViewById<LinearLayout>(R.id.gen_tags)
+        val tagStatus = findViewById<TextView>(R.id.gen_tag_status)
+        TagLibrary.load(this)
+        tagStatus.text = if (TagLibrary.size() > 0) "标签库 ${TagLibrary.size()} 条" else "标签库未随包发布（web 构建产物缺失）"
+        tagSearch.setOnEditorActionListener { _, _, _ ->
+            renderTags(tagBox, tagStatus, tagSearch.text.toString())
+            true
+        }
+        tagSearch.setOnKeyListener { _, _, event ->
+            if (event.action == android.view.KeyEvent.ACTION_DOWN &&
+                event.keyCode == android.view.KeyEvent.KEYCODE_ENTER
+            ) {
+                renderTags(tagBox, tagStatus, tagSearch.text.toString())
+                true
+            } else {
+                false
+            }
+        }
+
+        // 从引擎配置回填（用户在生图接口配置页存的地址/密钥/模型）
+        com.dbpg.duihuazhushou.settings.EngineBridge.fetch(this, "getImageConfig") { obj ->
+            if (obj == null) return@fetch
+            val cur = obj.optJSONObject("current") ?: return@fetch
+            if (urlInput.text.isNullOrBlank()) urlInput.setText(cur.optString("baseUrl"))
+            if (keyInput.text.isNullOrBlank()) keyInput.setText(cur.optString("apiKey"))
+            if (modelInput.text.isNullOrBlank()) modelInput.setText(cur.optString("model"))
+        }
+    }
+
+    /** 标签搜索结果：每行两个 chip，点一下追加进提示词（纯原生数据）。 */
+    private fun renderTags(box: LinearLayout, status: TextView, query: String) {
+        box.removeAllViews()
+        val hits = TagLibrary.search(query)
+        status.text = if (hits.isEmpty()) "没有匹配的标签" else "匹配 ${hits.size} 条"
+        var row: LinearLayout? = null
+        for ((i, t) in hits.withIndex()) {
+            if (i % 2 == 0) {
+                row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    (layoutParams as? LinearLayout.LayoutParams)?.topMargin = 4
+                }
+                box.addView(row)
+            }
+            val chip = TextView(this).apply {
+                text = "${t.zh}（${t.tag}）"
+                textSize = 12f
+                setTextColor(0xFFB9C4D6.toInt())
+                background = getDrawable(R.drawable.bg_btn_soft)
+                setPadding(24, 16, 24, 16)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = 8
+                    topMargin = 4
+                }
+                setOnClickListener {
+                    promptInput.append("${promptInput.text.takeIf { it.isNotBlank() }?.takeLast(1) ?: ""}${t.tag}, ")
+                }
+            }
+            row?.addView(chip)
+        }
     }
 
     private fun run() {

@@ -117,6 +117,36 @@
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.DHP.Content" />
+
+        <!-- 资产页：角色/预设/世界书/正则 + 快捷切换 + 导入导出（对齐网页版资产页） -->
+        <activity
+            android:name=".assets.AssetsHomeActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
+
+        <!-- 生图风格：画师串/质量串/负面/模板/尺寸（数据落在 web image store） -->
+        <activity
+            android:name=".settings.ImageStyleActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
+
+        <!-- 显示设置：思维链隐藏 / 发给后端带不带正则 / 导出原文 -->
+        <activity
+            android:name=".settings.DisplayActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
+
+        <!-- 生图接口配置：交互对齐 LLM 运营商（数据落在 web image store） -->
+        <activity
+            android:name=".imagegen.ImageGenConfigActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
     </application>
 
 </manifest>

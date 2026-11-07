@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  资产页（原生，「资产」tab 落地）。
+
+  与网页版资产页同构：角色 / 预设 / 世界书 / 正则 四类都在这，
+  快捷切换 + 导入导出。世界书条目两级展开（书 → 条目 → 正文）。
+  导入选 ST 的 .json（预设/世界书/正则统一识别）；导出长按条目。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#0F1115">
+
+    <!-- 顶栏：标题 + 导入/导出 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="4dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="资产"
+            android:textColor="#E6EAF2"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/assets_import"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_btn_accent"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:text="导入"
+            android:textColor="#CFE0FF"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/assets_export"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_btn_soft"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:text="导出当前"
+            android:textColor="#8FA6C8"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- 分类 tab：与网页版资产页一致 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp">
+
+        <TextView
+            android:id="@+id/tab_character"
+            style="@style/AssetsTab"
+            android:text="角色" />
+
+        <TextView
+            android:id="@+id/tab_preset"
+            style="@style/AssetsTab"
+            android:text="预设" />
+
+        <TextView
+            android:id="@+id/tab_worldbook"
+            style="@style/AssetsTab"
+            android:text="世界书" />
+
+        <TextView
+            android:id="@+id/tab_regex"
+            style="@style/AssetsTab"
+            android:text="正则" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/assets_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="4dp"
+        android:text="读取中…"
+        android:textColor="#6C7A90"
+        android:textSize="12sp" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:id="@+id/assets_box"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="40dp" />
+    </ScrollView>
+</LinearLayout>

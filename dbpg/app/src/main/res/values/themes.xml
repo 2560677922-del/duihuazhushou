@@ -24,15 +24,30 @@
         <item name="android:colorBackground">@color/app_bg</item>
     </style>
 
-    <!-- 底部导航项：等分、居中、深色底上的次级文字 -->
+    <!-- 底部导航项：等分、居中（两行：图标+文字）、深色底上的次级文字 -->
     <style name="BottomNavItem">
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">match_parent</item>
         <item name="android:layout_weight">1</item>
         <item name="android:gravity">center</item>
         <item name="android:textColor">#8FA6C8</item>
-        <item name="android:textSize">13sp</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:lineSpacingExtra">-2sp</item>
         <item name="android:background">?android:attr/selectableItemBackground</item>
+    </style>
+
+    <!-- 资产页分类 tab（pill 样式） -->
+    <style name="AssetsTab">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">8dp</item>
+        <item name="android:layout_marginEnd">6dp</item>
+        <item name="android:background">@drawable/bg_card</item>
+        <item name="android:textColor">#8FA6C8</item>
+        <item name="android:textSize">13sp</item>
     </style>
 
     <!-- 详情页分段标题 -->
