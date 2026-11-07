@@ -315,9 +315,11 @@ class ChatController(
                 is ContentBlock.Image -> {
                     val p = b.image?.dataUrl
                     if (p != null) {
-                        // 本地路径直接可用；dataUrl 才需要转存
+                        // 本地路径直接可用；dataUrl 才需要转存。
+                        // 文件已不存在（用户在查看器里删过）就别进列表 ——
+                        // 否则气泡里留着旧缩略图（LruCache），点开又"图片不存在"。
                         val path = if (p.startsWith("/")) p else imageCache.pathFor(p)
-                        if (path != null) paths.add(path)
+                        if (path != null && java.io.File(path).exists()) paths.add(path)
                     }
                 }
             }
@@ -500,6 +502,25 @@ class ChatController(
         }
     }
 
+    /**
+     * 单条消息生图的上下文：目标消息那一轮 + 它之前 [before] 轮。
+     *
+     * 与 [contextText] 的区别是"锚点"：快捷 🎨 取的是最新 N 条，
+     * 这里取的是**指定那条**往前数，回头给旧剧情补图时才不会带错上下文。
+     */
+    fun contextTextAt(actionId: String, before: Int): String {
+        val d = doc ?: return ""
+        val idx = d.actions.indexOfFirst { it.id == actionId }
+        if (idx < 0) return ""
+        val from = (idx - before.coerceAtLeast(0)).coerceAtLeast(0)
+        return d.actions.subList(from, idx + 1).joinToString("\n") { a ->
+            buildString {
+                if (a.user.isNotBlank()) append("用户：").append(a.user.trim()).append('\n')
+                if (a.ai.isNotBlank()) append("AI：").append(plainTextOf(a)).append('\n')
+            }.trim()
+        }
+    }
+
     /** 一条消息的可读纯文本（跑显示清洗：剥 HTML 噪声/图片标记，不跑正则美化）。 */
     fun plainTextOf(a: SessionAction): String {
         var t = a.ai
@@ -649,4 +670,39 @@ class ChatController(
 
     /** 供界面取某条消息的图片（点图放大用）。 */
     fun imagePathsOf(item: ChatItem): List<String> = item.imagePaths
+
+    /**
+     * 摘掉消息里对某张已删本地图片的引用。
+     *
+     * 用户在查看器里删了文件（聊天场景单独删图）后必须调它：会话数据里的
+     * ActionImage 还挂着这个路径，不摘的话下次渲染又会出现一个"点开说
+     * 图片不存在"的空壳 —— 用户看到的就是"删了还显示"。
+     * 只动 images，不动正文；摘完落盘并重绘。
+     */
+    fun removeImageByPath(path: String) {
+        val d = doc ?: return
+        val stem = java.io.File(path).nameWithoutExtension
+        var changed = false
+        val actions = d.actions.map { a ->
+            val kept = a.images.filterNot { img ->
+                val p = img.localPath ?: img.dataUrl
+                when {
+                    p.isNullOrBlank() -> false
+                    p == path -> true
+                    // dataUrl 转存文件以 hashCode 命名，按文件名对上
+                    !p.startsWith("/") -> p.hashCode().toString() == stem
+                    else -> false
+                }
+            }
+            if (kept.size != a.images.size) {
+                changed = true
+                a.copy(images = kept)
+            } else a
+        }
+        if (!changed) return
+        val next = d.copy(actions = actions, updatedAt = System.currentTimeMillis())
+        doc = next
+        SessionRepo.save(next)
+        render(false)
+    }
 }

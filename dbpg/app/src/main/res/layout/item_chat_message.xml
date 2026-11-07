@@ -86,6 +86,21 @@
                 android:textColor="#7F8DA6"
                 android:textSize="15sp" />
 
+            <!-- 单条消息生图：点它把这条 + 前 N 条当上下文出图，图挂回这条消息 -->
+            <TextView
+                android:id="@+id/msg_img_gen"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:paddingStart="8dp"
+                android:paddingTop="2dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="2dp"
+                android:text="🎨 生图"
+                android:textColor="#7F8DA6"
+                android:textSize="10sp"
+                android:visibility="gone" />
+
             <TextView
                 android:id="@+id/msg_more"
                 android:layout_width="wrap_content"

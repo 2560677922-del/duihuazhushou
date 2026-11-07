@@ -51,6 +51,27 @@
             android:textSize="17sp"
             android:textStyle="bold" />
 
+        <!--
+          快捷换对话模型：点一下弹运营商，再点运营商弹该家保存的模型。
+          只显示模型名（右侧▸提示可展开），不露地址/密钥；宽度封顶防挤掉标题。
+        -->
+        <TextView
+            android:id="@+id/chat_model_chip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:maxWidth="150dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:background="@drawable/bg_btn_soft"
+            android:text="模型"
+            android:textColor="#2F66D8"
+            android:textSize="12sp"
+            android:contentDescription="切换对话模型" />
+
         <TextView
             android:id="@+id/chat_more"
             android:layout_width="wrap_content"
@@ -62,18 +83,42 @@
             android:contentDescription="更多" />
     </LinearLayout>
 
-    <!-- 消息列表：RecyclerView，气泡由 ChatAdapter 原生渲染，永不横向溢出 -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/chat_list"
+    <!-- 消息列表：RecyclerView，气泡由 ChatAdapter 原生渲染，永不横向溢出。
+         外面套 FrameLayout 是为了放「回到底部」浮动按钮。 -->
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:paddingStart="10dp"
-        android:paddingEnd="10dp"
-        android:paddingTop="6dp"
-        android:paddingBottom="6dp"
-        android:scrollbars="vertical"
-        android:clipToPadding="false" />
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/chat_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:scrollbars="vertical"
+            android:clipToPadding="false" />
+
+        <!-- 往上翻历史后出现；点一下回到最新消息（回最低） -->
+        <TextView
+            android:id="@+id/chat_jump_bottom"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="10dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:paddingTop="7dp"
+            android:paddingBottom="7dp"
+            android:background="@drawable/bg_chip_active"
+            android:text="↓ 回到最新"
+            android:textColor="#FFFFFFFF"
+            android:textSize="12sp"
+            android:visibility="gone"
+            android:contentDescription="回到最新消息" />
+    </FrameLayout>
 
     <!-- 输入栏：原生 EditText + 发送（规避 WebView 输入框被手势条压住的坑） -->
     <LinearLayout

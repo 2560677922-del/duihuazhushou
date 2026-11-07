@@ -26,10 +26,21 @@ object ImageLoader {
 
     fun load(path: String?, targetWidthPx: Int): Bitmap? {
         if (path.isNullOrBlank()) return null
+        // 文件可能已被用户删掉（图库/查看器里删的）：缓存里的旧位图不能再顶上，
+        // 否则缩略图还在、点开却说"图片不存在"。文件不在就当没有这张图。
+        if (!File(path).exists()) {
+            cache.remove(path)
+            return null
+        }
         cache.get(path)?.let { return it }
         val bmp = decodeSampled(path, targetWidthPx) ?: return null
         cache.put(path, bmp)
         return bmp
+    }
+
+    /** 删除文件后调用：把内存里残留的缩略图一并清掉。 */
+    fun evict(path: String) {
+        cache.remove(path)
     }
 
     fun clear() = cache.evictAll()

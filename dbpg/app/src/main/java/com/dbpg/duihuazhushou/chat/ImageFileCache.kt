@@ -16,6 +16,22 @@ import java.io.File
  */
 class ImageFileCache(context: Context) {
 
+    companion object {
+        /**
+         * 用户删掉的转存图打个标记，防止下次渲染时 pathFor 从 dataUrl
+         * 把文件又写回来（"图删了又自己长回来"）。标记文件名 <hash>.deleted，
+         * 与转存文件同名换扩展名，天然去重、重启后仍有效。
+         */
+        fun markDeleted(file: File) {
+            val dir = file.parentFile ?: return
+            // 只有 chat_img 转存目录需要防复活；其它目录没有 pathFor 这条回写路径
+            if (dir.name != "chat_img") return
+            val stem = file.nameWithoutExtension
+            if (stem.isEmpty()) return
+            runCatching { File(dir, "$stem.deleted").createNewFile() }
+        }
+    }
+
     private val dir: File = File(context.cacheDir, "chat_img").apply { mkdirs() }
     private val memo = HashMap<Int, String>()
 
@@ -27,6 +43,8 @@ class ImageFileCache(context: Context) {
 
         val inline = ImagePayloadExtractor.decodeDataUrl(dataUrl) ?: return null
         val file = File(dir, "$key.${ImageFormat.extFor(inline.mime)}")
+        // 删过的不复活：用户在查看器/图库里删掉就是不想要了
+        if (File(dir, "$key.deleted").exists()) return null
         return try {
             if (file.length() == 0L) file.writeBytes(inline.bytes)
             memo[key] = file.absolutePath

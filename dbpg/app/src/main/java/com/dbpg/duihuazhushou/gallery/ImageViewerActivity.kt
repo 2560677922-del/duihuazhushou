@@ -6,6 +6,7 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -36,6 +37,8 @@ class ImageViewerActivity : Activity() {
 
     companion object {
         const val EXTRA_PATH = "path"
+        /** 删除成功时随 setResult 带回给调用方的本地路径 */
+        const val EXTRA_DELETED_PATH = "deleted_path"
         private const val REQ_WRITE = 9001
         private const val MAX_SCALE = 5f
     }
@@ -173,7 +176,12 @@ class ImageViewerActivity : Activity() {
             .setPositiveButton("删除") { _, _ ->
                 val ok = GalleryRepository(this).delete(file)
                 Toast.makeText(this, if (ok) "已删除" else "删除失败", Toast.LENGTH_SHORT).show()
-                if (ok) finish()
+                if (ok) {
+                    // 把删掉的路径带回给打开方（聊天页）：它要把消息里的图片引用一并摘掉，
+                    // 否则消息还挂着一个空引用，重新渲染时又冒出来。
+                    setResult(RESULT_OK, Intent().putExtra(EXTRA_DELETED_PATH, file.absolutePath))
+                    finish()
+                }
             }
             .setNegativeButton("取消", null)
             .show()

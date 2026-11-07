@@ -40,7 +40,19 @@ class GalleryRepository(private val context: Context) {
         return out.sortedByDescending { it.modifiedAt }
     }
 
-    fun delete(file: File): Boolean = runCatching { file.delete() }.getOrDefault(false)
+    /**
+     * 删除一张图。文件删除后必须把 [ImageLoader] 的内存缩略图也清掉 ——
+     * 否则聊天/图库里旧图还会显示（LruCache 只认路径，不知道文件已经没了）。
+     * chat_img 里的转存图再打个删除标记，防止下次渲染从 dataUrl 复活。
+     */
+    fun delete(file: File): Boolean {
+        val ok = runCatching { file.delete() }.getOrDefault(false)
+        if (ok) {
+            com.dbpg.duihuazhushou.chat.ImageLoader.evict(file.absolutePath)
+            com.dbpg.duihuazhushou.chat.ImageFileCache.markDeleted(file)
+        }
+        return ok
+    }
 
     private fun isImage(name: String): Boolean {
         val n = name.lowercase()

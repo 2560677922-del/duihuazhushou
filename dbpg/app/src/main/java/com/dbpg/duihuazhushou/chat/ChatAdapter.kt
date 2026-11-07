@@ -41,6 +41,8 @@ class ChatAdapter(
         fun onImageClick(item: ChatItem, path: String)
         fun onVariantSwitch(item: ChatItem, delta: Int)
         fun onActionMenu(item: ChatItem, anchor: View)
+        /** 单条消息生图：把这条 + 前 N 条当上下文出图，挂回这条消息 */
+        fun onImageGen(item: ChatItem)
     }
 
     /** 气泡最大宽度：按屏宽百分比算，改设置不用重建 Adapter。 */
@@ -75,6 +77,7 @@ class ChatAdapter(
         val verNo: TextView,
         val verNewer: TextView,
         val more: TextView,
+        val imgGen: TextView,
     ) : RecyclerView.ViewHolder(root)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
@@ -90,6 +93,7 @@ class ChatAdapter(
             v.findViewById(R.id.msg_ver_no),
             v.findViewById(R.id.msg_ver_newer),
             v.findViewById(R.id.msg_more),
+            v.findViewById(R.id.msg_img_gen),
         )
     }
 
@@ -145,13 +149,16 @@ class ChatAdapter(
             RichTextRenderer.applyTo(holder.text, RichTextParser.parse(content))
         }
 
-        // 3) 图片：复用前先清空，再按本地路径加载（LruCache 命中秒开）
+        // 3) 图片：复用前先清空，再按本地路径加载（LruCache 命中秒开）。
+        //    文件已被删掉的（图库/查看器里删过）直接跳过 —— 否则留个空壳
+        //    ImageView，看着像"缩略图还在"，点开又是"图片不存在"。
         holder.images.removeAllViews()
-        if (item.imagePaths.isEmpty()) {
+        val livePaths = item.imagePaths.filter { java.io.File(it).exists() }
+        if (livePaths.isEmpty()) {
             holder.images.visibility = View.GONE
         } else {
             holder.images.visibility = View.VISIBLE
-            for (path in item.imagePaths) {
+            for (path in livePaths) {
                 val iv = ImageView(ctx)
                 val lpp = LinearLayout.LayoutParams(bubbleMaxWidthPx, LinearLayout.LayoutParams.WRAP_CONTENT)
                 lpp.topMargin = (4 * density).toInt()
@@ -187,6 +194,9 @@ class ChatAdapter(
                     if (item.variantIndex > 0) listener.onVariantSwitch(item, -1)
                 }
             }
+            // 单条生图：会话消息都能给这条补图（挂回这条，不动别的）
+            holder.imgGen.visibility = if (canOperate) View.VISIBLE else View.GONE
+            holder.imgGen.setOnClickListener { listener.onImageGen(item) }
             holder.more.visibility = if (canOperate) View.VISIBLE else View.GONE
             holder.more.setTextColor(COLOR_DIM)
             holder.more.setOnClickListener { listener.onActionMenu(item, it) }
@@ -227,11 +237,20 @@ class ChatAdapter(
 
             override fun onPageFinished(view: android.webkit.WebView, url: String?) {
                 // 量出真实内容高度，把 WebView 撑开（内部不再滚动，整页跟着列表滚）。
-                // 量两次：首次 paint 前 web font/图片还没占位，只量一次会把内容截断
-                // （实测：卡片下方的段落与提示条被裁掉）。
+                //
+                // 量的是包裹层 #dhp-m 的盒子高度，**不是** scrollHeight：
+                // RecyclerView 回收复用时 WebView 还带着上一条的固定高度，
+                // scrollHeight 至少要撑满"视口"（= 那个旧高度），短内容就量出
+                // 一个大高度 —— 气泡下方一大片空白就是这么来的。
+                // 包裹层高度只跟内容有关，回收多少次都准。
+                //
+                // 量两次：首次 paint 前 web font/图片还没占位，只量一次会把
+                // 内容截断（实测：卡片下方的段落与提示条被裁掉）。
                 fun measure() {
                     view.evaluateJavascript(
-                        "Math.ceil(Math.max(document.documentElement.scrollHeight, document.body.scrollHeight))",
+                        "(function(){var m=document.getElementById('dhp-m');" +
+                            "if(!m)return Math.ceil(document.body.scrollHeight);" +
+                            "return Math.ceil(m.getBoundingClientRect().height);})()",
                     ) { raw ->
                         // scrollHeight 是 CSS px；Android 布局要设备 px，必须乘 density
                         val cssPx = raw?.trim('"')?.toFloatOrNull()?.toInt() ?: 0
@@ -261,7 +280,8 @@ class ChatAdapter(
         return out
     }
 
-    /** 统一包一层：视口、透明底、正文字号/行距跟随外观设置，图片不溢出。 */
+    /** 统一包一层：视口、透明底、正文字号/行距跟随外观设置，图片不溢出。
+     *  正文包在 #dhp-m 里 —— 量高度只量它，回收复用时不会被旧视口撑大。 */
     private fun wrapHtml(html: String, textSizeSp: Float, lineSpacing: Float): String = """
         <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
@@ -272,7 +292,7 @@ class ChatAdapter(
           table{max-width:100%;border-collapse:collapse;}
           pre{white-space:pre-wrap;word-break:break-word;overflow-x:auto;}
           a{color:#2F66D8;}
-        </style></head><body>$html</body></html>
+        </style></head><body><div id="dhp-m">$html</div></body></html>
     """.trimIndent()
 
     /**

@@ -32,6 +32,8 @@ import com.dbpg.stcore.imagegen.ImageEngineSupport
 import com.dbpg.stcore.imagegen.ImageParams
 import com.dbpg.duihuazhushou.gallery.ImageViewerActivity
 import com.dbpg.duihuazhushou.session.SessionRepo
+import com.dbpg.duihuazhushou.settings.ApiConfigActivity
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -54,6 +56,8 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         private const val REQ_JSONL = 1001
         /** 换本会话背景 */
         private const val REQ_BG = 2001
+        /** 全屏看图（删图后要把结果带回，摘掉消息里的引用） */
+        private const val REQ_VIEW_IMG = 3001
 
         private const val M_EDIT = 1
         private const val M_REGEN = 2
@@ -66,6 +70,13 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     private lateinit var input: EditText
     private lateinit var titleView: TextView
     private lateinit var quickImgBtn: TextView
+    private lateinit var modelChip: TextView
+    private lateinit var jumpBottomBtn: TextView
+
+    /** 列表内容是否"贴着最新"。往上翻历史时为 false，新消息不强行拽回底部。 */
+    private var stickToBottom = true
+    /** 最近一次渲染出的消息（搜索用；onItems 里维护）。 */
+    private var lastItems: List<ChatItem> = emptyList()
 
     /** 快捷生图是否在跑；以及"等模型回标签"时暂存的动作 id。 */
     private var quickBusy = false
@@ -110,6 +121,37 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         titleView.setOnClickListener { promptRename() }
         quickImgBtn = findViewById(R.id.chat_quickimg)
         quickImgBtn.setOnClickListener { quickImage() }
+
+        /*
+         * 快捷换对话模型：chip 紧挨聊天名右边。
+         * 两级弹窗 —— 先运营商、再该家保存的模型名，与 API 配置页同一份数据
+         * （ConnectionStore 本地读写，点完立即生效，下一条消息就用新模型）。
+         */
+        modelChip = findViewById(R.id.chat_model_chip)
+        modelChip.setOnClickListener { showModelPicker() }
+        refreshModelChip()
+
+        /*
+         * 「回到最新」：往上翻历史后出现，点一下回底部。
+         * scrollToPosition 只保证最后一条"可见"（会把它钉在列表顶部），
+         * 所以到底后补一次 scrollBy 把视口压到真正的底 —— 否则短消息时
+         * 下面会空出一大片（用户反馈的"下方一大片空的"就是它）。
+         */
+        jumpBottomBtn = findViewById(R.id.chat_jump_bottom)
+        jumpBottomBtn.setOnClickListener {
+            stickToBottom = true
+            jumpBottomBtn.visibility = View.GONE
+            scrollToBottom()
+        }
+        list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                val atBottom = !rv.canScrollVertically(1)
+                stickToBottom = atBottom
+                if (viewingLog) return
+                jumpBottomBtn.visibility =
+                    if (!atBottom && lastItems.isNotEmpty()) View.VISIBLE else View.GONE
+            }
+        })
         sendBtn = findViewById(R.id.chat_send)
         stopBtn = findViewById(R.id.chat_stop)
         val close = findViewById<TextView>(R.id.chat_close)
@@ -155,6 +197,8 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         applyBackground()
         // 网页设置里可能换了预设 / 正则 / 生图接口，回来跟上
         controller.refreshConfig()
+        // 对话模型可能在设置页换过，chip 跟上
+        refreshModelChip()
     }
 
     override fun onDestroy() {
@@ -167,10 +211,32 @@ class NativeChatActivity : Activity(), ChatController.Sink {
 
     override fun onItems(items: List<ChatItem>, scrollToBottom: Boolean) {
         if (viewingLog) return
-        val shouldScroll = scrollToBottom || !list.canScrollVertically(1)
+        lastItems = items
+        // 贴底才跟着新内容走；用户正在往上翻历史时不打扰
+        val shouldScroll = scrollToBottom || stickToBottom
         adapter.submitList(items) {
             if (shouldScroll && items.isNotEmpty()) {
-                list.scrollToPosition(items.size - 1)
+                scrollToBottom()
+            }
+        }
+    }
+
+    /**
+     * 滚到最新消息。
+     *
+     * 不能只调 [RecyclerView.scrollToPosition]：它保证的是"最后一条可见"，
+     * 会把最后一条钉在列表顶部，消息短时下面空出一大片（滚动条看着像到底了）。
+     * 先定位再补一次 scrollBy 压到真正的底。
+     */
+    private fun scrollToBottom() {
+        val n = adapter.itemCount
+        if (n == 0) return
+        list.scrollToPosition(n - 1)
+        list.post {
+            val last = list.findViewHolderForAdapterPosition(n - 1)
+            if (last != null) {
+                val dy = last.itemView.bottom + list.paddingBottom - list.height
+                if (dy > 0) list.scrollBy(0, dy)
             }
         }
     }
@@ -202,9 +268,12 @@ class NativeChatActivity : Activity(), ChatController.Sink {
 
     private val adapterListener = object : ChatAdapter.Listener {
         override fun onImageClick(item: ChatItem, path: String) {
-            startActivity(
+            // 用 forResult 打开：查看器里删图后要把消息里的引用一并摘掉
+            @Suppress("DEPRECATION")
+            startActivityForResult(
                 Intent(this@NativeChatActivity, ImageViewerActivity::class.java)
                     .putExtra(ImageViewerActivity.EXTRA_PATH, path),
+                REQ_VIEW_IMG,
             )
         }
 
@@ -214,6 +283,10 @@ class NativeChatActivity : Activity(), ChatController.Sink {
 
         override fun onActionMenu(item: ChatItem, anchor: View) {
             showActionMenu(item, anchor)
+        }
+
+        override fun onImageGen(item: ChatItem) {
+            promptImageGenFor(item)
         }
     }
 
@@ -293,6 +366,12 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             handleBackgroundResult(data)
             return
         }
+        if (requestCode == REQ_VIEW_IMG) {
+            // 查看器里删了图：把消息里对它的引用摘掉，列表立刻不再显示
+            val deleted = data?.getStringExtra(ImageViewerActivity.EXTRA_DELETED_PATH).orEmpty()
+            if (deleted.isNotBlank()) controller.removeImageByPath(deleted)
+            return
+        }
         if (requestCode != REQ_JSONL) return
         val uri = data?.data ?: return
         val items = ChatLogLoader.load(this, uri)
@@ -302,6 +381,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         }
         viewingLog = true
         titleView.text = "聊天记录（${items.size} 条）"
+        lastItems = items
         adapter.submitList(items) { list.scrollToPosition(items.size - 1) }
         Toast.makeText(this, "已加载 ${items.size} 条", Toast.LENGTH_SHORT).show()
     }
@@ -334,6 +414,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
 
         val sessionItems = mutableListOf(
             MenuEntry("✏️", "重命名会话", "给这次冒险起个好记的名字") { promptRename() },
+            MenuEntry("🔍", "搜索消息", "搜关键词定位剧情，方便改写") { showSearch() },
             MenuEntry("🖼️", "换本会话背景", "只对当前会话生效，不影响其它会话") { pickBackground() },
         )
         if (hasSessionBg) {
@@ -504,19 +585,200 @@ class NativeChatActivity : Activity(), ChatController.Sink {
 
     private fun dp(v: Int): Int = Math.round(v * resources.displayMetrics.density)
 
-    // ------------------------------------------------------------ 快捷生图
+    // ------------------------------------------------------------ 快捷换对话模型
 
     /**
-     * 按「对话生图」配置快速出图：
-     *   读配置 → 取最近 N 条上文 → （可选）LLM 转标签 → 原生生图 → 挂到最新 AI 消息。
-     * 配置来源与聊天自动配图同一套（web image store）。
+     * 顶栏模型 chip 的文案：跟当前对话模型走。
+     *
+     * 数据来自 [ConnectionStore] 的 getConfig 本地快照 —— 不等引擎、
+     * 不显示地址/密钥，只有模型名。设置页换过模型后 onResume 会再刷一次。
      */
-    private fun quickImage() {
+    private fun refreshModelChip() {
+        EngineBridge.fetch(this, "getConfig") { obj ->
+            if (obj == null || isFinishing) return@fetch
+            val name = obj.optString("modelName").ifBlank { obj.optString("model") }
+            modelChip.text = if (name.isBlank()) "模型 ▾" else "$name ▾"
+        }
+    }
+
+    /**
+     * 两级换模型：点 chip → 弹运营商列表 → 点运营商 → 弹这家保存的模型名。
+     *
+     * 只显示运营商名与模型名；地址和密钥留在「API 配置」页里，聊天里不露。
+     * 选中即发 useModel（本地立即生效 + 镜像给引擎），下一条消息就走新模型。
+     */
+    private fun showModelPicker() {
+        EngineBridge.fetch(this, "getConfig") { obj ->
+            if (isFinishing) return@fetch
+            if (obj == null) {
+                toast("配置还没就绪，稍后再试")
+                return@fetch
+            }
+            val providers = obj.optJSONArray("providers") ?: JSONArray()
+            if (providers.length() == 0) {
+                AlertDialog.Builder(this)
+                    .setMessage("还没有对话运营商。先到「API 配置」添加运营商和模型。")
+                    .setPositiveButton("去配置") { _, _ ->
+                        startActivity(Intent(this, ApiConfigActivity::class.java))
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+                return@fetch
+            }
+            val names = Array(providers.length()) { i ->
+                val p = providers.getJSONObject(i)
+                val label = p.optString("note")
+                    .ifBlank { p.optString("baseUrl") }
+                    .ifBlank { "运营商 ${i + 1}" }
+                val count = p.optJSONArray("models")?.length() ?: 0
+                "$label（$count 个模型）"
+            }
+            AlertDialog.Builder(this)
+                .setTitle("切换对话模型 · 先选运营商")
+                .setItems(names) { _, i -> pickModelIn(providers.getJSONObject(i)) }
+                .setNegativeButton("取消", null)
+                .show()
+        }
+    }
+
+    /** 二级弹窗：这家运营商下保存的模型名，当前在用的打 ✓。 */
+    private fun pickModelIn(provider: JSONObject) {
+        val models = provider.optJSONArray("models") ?: JSONArray()
+        if (models.length() == 0) {
+            toast("这家还没保存模型")
+            return
+        }
+        val labels = Array(models.length()) { j ->
+            val m = models.getJSONObject(j)
+            val name = m.optString("model").ifBlank { m.optString("name") }.ifBlank { "未命名" }
+            if (m.optBoolean("current")) "✓ $name" else name
+        }
+        val providerName = provider.optString("note")
+            .ifBlank { provider.optString("baseUrl") }
+            .ifBlank { "运营商" }
+        AlertDialog.Builder(this)
+            .setTitle("$providerName · 选模型")
+            .setItems(labels) { _, j ->
+                val m = models.getJSONObject(j)
+                val uid = m.optString("uid")
+                if (uid.isBlank()) return@setItems
+                val name = m.optString("model").ifBlank { m.optString("name") }
+                EngineBridge.command(JSONObject().put("cmd", "useModel").put("uid", uid))
+                modelChip.text = "$name ▾"
+                toast("已切换到 $name")
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    // ------------------------------------------------------------ 会话内搜索
+
+    /**
+     * 在本会话里搜消息，点结果跳到那一条。
+     *
+     * 改剧情时最常用：搜个角色名/关键词，直接定位到那段对话，
+     * 再用消息的「⋯ 操作」编辑。只搜 content（已跑过显示清洗的纯文本）。
+     */
+    private fun showSearch() {
+        if (lastItems.isEmpty()) {
+            toast("还没有可搜索的消息")
+            return
+        }
+        val box = EditText(this).apply {
+            hint = "关键词，如角色名、地点…"
+            setSingleLine(true)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setBackgroundResource(R.drawable.bg_input)
+        }
+        val wrap = android.widget.LinearLayout(this).apply {
+            setPadding(dp(20), dp(10), dp(20), 0)
+            addView(box)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("搜索本会话")
+            .setView(wrap)
+            .setPositiveButton("搜索") { _, _ -> doSearch(box.text?.toString().orEmpty()) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun doSearch(query: String) {
+        val q = query.trim()
+        if (q.isEmpty()) return
+        val hits = lastItems.mapIndexedNotNull { idx, item ->
+            if (item.content.contains(q, ignoreCase = true)) idx to item else null
+        }
+        if (hits.isEmpty()) {
+            toast("没找到「$q」")
+            return
+        }
+        val labels = hits.map { (idx, item) ->
+            val role = if (item.role == "user") "你" else if (item.role == "system") "系统" else "AI"
+            val flat = item.content.replace('\n', ' ')
+            val at = flat.indexOf(q, ignoreCase = true).coerceAtLeast(0)
+            val start = (at - 10).coerceAtLeast(0)
+            val end = (at + q.length + 18).coerceAtMost(flat.length)
+            "第 ${idx + 1} 条 · $role：…${flat.substring(start, end)}…"
+        }
+        AlertDialog.Builder(this)
+            .setTitle("找到 ${hits.size} 处")
+            .setItems(labels.toTypedArray()) { _, i ->
+                jumpToMessage(hits[i].first)
+            }
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
+    /** 跳到第 position 条消息（顶部对齐，方便接着往下读）。 */
+    private fun jumpToMessage(position: Int) {
+        val lm = list.layoutManager as? LinearLayoutManager ?: return
+        lm.scrollToPositionWithOffset(position, 0)
+    }
+
+    // ------------------------------------------------------------ 单条消息生图
+
+    /**
+     * 给指定那条消息配图：选「带之前几条」当上下文，图挂回那条消息上。
+     *
+     * 与顶栏 🎨 的区别：🎨 取最新 N 条、挂最新回复；这里锚点是用户点的
+     * 那一条，给旧剧情补图不会带错上下文。
+     */
+    private fun promptImageGenFor(item: ChatItem) {
+        if (item.actionId.isBlank()) return
         if (quickBusy) {
             toast("还在出图，稍等一下")
             return
         }
-        val actionId = controller?.latestActionId()
+        val options = arrayOf(
+            "只这条", "这条 + 前 1 条", "这条 + 前 2 条",
+            "这条 + 前 3 条", "这条 + 前 5 条", "这条 + 前 8 条",
+        )
+        val counts = intArrayOf(0, 1, 2, 3, 5, 8)
+        AlertDialog.Builder(this)
+            .setTitle("给这条消息配图")
+            .setItems(options) { _, which ->
+                quickImage(anchorActionId = item.actionId, beforeCount = counts[which])
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    // ------------------------------------------------------------ 快捷生图
+
+    /**
+     * 按「对话生图」配置快速出图：
+     *   读配置 → 取上文 → （可选）LLM 转标签 → 原生生图 → 挂到目标消息。
+     * 配置来源与聊天自动配图同一套（web image store）。
+     *
+     * @param anchorActionId 图挂到哪条消息；空 = 最新 AI 回复（顶栏 🎨 的行为）
+     * @param beforeCount    锚点之前再带几条当上下文；null = 用配置里的 quickContextWindow
+     */
+    private fun quickImage(anchorActionId: String? = null, beforeCount: Int? = null) {
+        if (quickBusy) {
+            toast("还在出图，稍等一下")
+            return
+        }
+        val actionId = anchorActionId ?: controller?.latestActionId()
         if (actionId == null) {
             toast("还没有可配图的回复")
             return
@@ -535,7 +797,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             val cur = cfg.optJSONObject("scenes")?.optJSONObject("chat")
                 ?: cfg.optJSONObject("current") ?: JSONObject()
             val auto = cfg.optJSONObject("auto") ?: JSONObject()
-            val n = auto.optInt("quickContextWindow", 5)
+            val n = beforeCount ?: auto.optInt("quickContextWindow", 5)
             val useLlm = cur.optBoolean("useLlmOptimization", true)
             val llmId = cur.optString("llmConfigId")
 
@@ -567,7 +829,12 @@ class NativeChatActivity : Activity(), ChatController.Sink {
                     return@fetch
                 }
 
-                val context = controller?.contextText(n).orEmpty()
+                // 锚点生图用「那条 + 前 N 条」；顶栏 🎨 用「最近 N 条」
+                val context = if (anchorActionId != null) {
+                    controller?.contextTextAt(actionId, n).orEmpty()
+                } else {
+                    controller?.contextText(n).orEmpty()
+                }
                 if (context.isBlank()) {
                     finishQuick("上下文为空")
                     return@fetch
@@ -597,7 +864,9 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             // 模型失败不阻塞出图：退回原文当标签，至少能出一张
             toast("标签生成失败（${o.optString("error")}），改用原文")
             val fallback = controller?.let { c ->
-                c.doc?.actions?.lastOrNull { it.ai.isNotBlank() }?.let { c.plainTextOf(it) }
+                val act = c.doc?.actions?.find { it.id == quickActionId }
+                    ?: c.doc?.actions?.lastOrNull { it.ai.isNotBlank() }
+                act?.let { c.plainTextOf(it) }
             }.orEmpty()
             generateQuickImage(fallback.take(600))
             return
