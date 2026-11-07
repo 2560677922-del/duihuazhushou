@@ -18,7 +18,6 @@ import com.dbpg.duihuazhushou.NativeBridge
 import com.dbpg.duihuazhushou.R
 import org.json.JSONArray
 import org.json.JSONObject
-import org.json.JSONTokener
 
 /**
  * 原生 API 接口配置页。
@@ -108,25 +107,20 @@ class ApiConfigActivity : Activity() {
     private fun engineReady(): Boolean = MainActivity.getWebView() != null
 
     private fun loadConfig() {
-        val w = MainActivity.getWebView()
-        if (w == null) {
-            status.text = "引擎还没启动，稍后点右上角「刷新」"
-            return
-        }
-        w.evaluateJavascript("window.__dhpApi ? window.__dhpApi.getConfig() : null") { r ->
-            runOnUiThread { applyConfig(r) }
+        // 走共用入口：引擎冷启动没就绪时它会自动重试，不用用户手动点「刷新」。
+        EngineBridge.fetch(this, "getConfig") { obj ->
+            if (obj == null) {
+                status.text = "引擎还没就绪（网页还在加载），稍等几秒点「刷新」"
+                return@fetch
+            }
+            applyConfig(obj)
         }
     }
 
-    /** evaluateJavascript 返回值是「JSON 化的 JS 值」：字符串会再包一层引号，用 JSONTokener 统一拆。 */
-    private fun applyConfig(raw: String?) {
-        if (raw.isNullOrEmpty() || raw == "null") {
-            status.text = "引擎还没就绪（网页还在加载），稍等几秒点「刷新」"
-            return
-        }
+    /** 成功拿到配置时清掉「加载中」提示，但别抹掉「已创建运营商」这类操作反馈。 */
+    private fun applyConfig(obj: JSONObject) {
+        if (status.text?.toString().orEmpty().startsWith("引擎")) status.text = ""
         try {
-            val obj = JSONObject(JSONTokener(raw).nextValue().toString())
-
             if (!userEditedConn) {
                 setIfDiffers(baseEdit, obj.optString("baseUrl"))
                 setIfDiffers(keyEdit, obj.optString("apiKey"))

@@ -80,6 +80,58 @@ public final class MainActivity extends Activity {
     private static WebView sWebView;
     public static WebView getWebView() { return sWebView; }
 
+    /** 引擎宿主容器的 tag：在 Activity 之间「搬家」时用它找目标位置。 */
+    private static final String ENGINE_HOST_TAG = "dhp_engine_host";
+
+    /** 1dp 对应的像素。静态方法里没法用实例的 dp()，单独算一份。 */
+    private static int engineSizePx() {
+        float density = android.content.res.Resources.getSystem().getDisplayMetrics().density;
+        return Math.max(2, Math.round(density));
+    }
+
+    /**
+     * 把 ST 兼容引擎（隐藏 WebView）挂到当前前台 Activity 的窗口上。
+     *
+     * <p>★ 为什么必须「搬家」：WebView 只属于创建它的那个窗口。以前它一直待在
+     * MainActivity 里，一进设置 / 资产 / 生图等原生页，MainActivity 窗口就退到后台，
+     * Chromium 会把页面判成 {@code document.hidden=true} 并冻结 JS 定时器与部分异步任务。
+     * 实测后果：{@code __dhpApi.command()} 发出去了、IndexedDB 里数据也写进去了，
+     * 但 {@code AndroidNative.onApiResult} 迟迟不回，原生列表不刷新 —— 用户看到的
+     * 就是「新建运营商没反应」「改名没反应」，手动点刷新又能看到，极难排查。
+     *
+     * <p>把同一个 WebView 实例重新 attach 到当前前台窗口，页面始终保持 visible，
+     * 整条异步链路才完整。由 {@link DhpApp} 的 ActivityLifecycleCallbacks 在每个
+     * Activity 的 onStart 自动调用，业务页面不用关心。
+     *
+     * <p>幂等：已经是本窗口的宿主就什么都不做，重复调用安全。
+     */
+    public static void attachEngineTo(Activity activity) {
+        WebView w = sWebView;
+        if (w == null || activity == null || activity.isFinishing()) return;
+        try {
+            ViewGroup decor = (ViewGroup) activity.getWindow().getDecorView();
+            FrameLayout host = decor.findViewWithTag(ENGINE_HOST_TAG);
+            if (host == null) {
+                host = new FrameLayout(activity);
+                host.setTag(ENGINE_HOST_TAG);
+                decor.addView(host, new FrameLayout.LayoutParams(1, 1));
+            }
+            if (w.getParent() == host) return;
+            if (w.getParent() instanceof ViewGroup) {
+                ((ViewGroup) w.getParent()).removeView(w);
+            }
+            int size = engineSizePx();
+            host.addView(w, new FrameLayout.LayoutParams(size, size));
+            w.setVisibility(View.VISIBLE);
+            w.setAlpha(0f);
+            // 从后台窗口回来时恢复 WebView 自身的定时器（全局开关，幂等）。
+            w.onResume();
+            w.resumeTimers();
+        } catch (Throwable t) {
+            Log.w("DHP", "挂载引擎 WebView 失败", t);
+        }
+    }
+
     /** 把任务切到主线程（供生图等后台回调把结果回传网页时使用）。 */
     public static void runOnUi(Runnable r) {
         android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -141,12 +193,19 @@ public final class MainActivity extends Activity {
          *   · 它把结果回调给原生。
          * 尺寸给 1dp 而不是 GONE：GONE 的 WebView 在部分机型上会被判定为
          * 不可见而暂停 JS 定时器，1dp + alpha=0 能稳定执行又看不见。
+         *
+         * 只做到 1dp 还不够：窗口退到后台时 Chromium 仍会把页面判成 hidden。
+         * 所以宿主容器带 tag，由 attachEngineTo 在 Activity 之间搬家，
+         * 保证引擎始终挂在前台窗口上（详见该方法的注释）。
          */
         webView = createWebView();
         FrameLayout.LayoutParams webLp = new FrameLayout.LayoutParams(dp(1), dp(1));
         webLp.gravity = Gravity.TOP | Gravity.START;
         webView.setAlpha(0f);
-        root.addView(webView, webLp);
+        FrameLayout engineHost = new FrameLayout(this);
+        engineHost.setTag(ENGINE_HOST_TAG);
+        root.addView(engineHost, webLp);
+        engineHost.addView(webView, new FrameLayout.LayoutParams(dp(1), dp(1)));
 
         View nav = getLayoutInflater().inflate(R.layout.view_bottom_nav, root, false);
         FrameLayout.LayoutParams navLp = new FrameLayout.LayoutParams(

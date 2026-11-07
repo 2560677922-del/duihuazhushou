@@ -13,6 +13,7 @@
     <!-- 图片本身写在 App 私有目录（免权限）；仅「保存到相册」在 Android 9 及以下需要写权限 -->
 
     <application
+        android:name=".DhpApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"

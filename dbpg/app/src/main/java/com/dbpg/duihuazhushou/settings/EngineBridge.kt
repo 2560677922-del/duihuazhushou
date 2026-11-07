@@ -1,6 +1,8 @@
 package com.dbpg.duihuazhushou.settings
 
 import android.app.Activity
+import android.os.Handler
+import android.os.Looper
 import com.dbpg.duihuazhushou.MainActivity
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -17,22 +19,53 @@ import org.json.JSONTokener
  */
 object EngineBridge {
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** 引擎没就绪时的重试间隔与上限（约 6 秒，覆盖冷启动加载 Vue 应用的时间）。 */
+    private const val READY_RETRY_MS = 300L
+    private const val READY_MAX_TRY = 20
+
     /** 引擎 WebView 是否可用（页面还没加载完时为 false）。 */
     fun ready(): Boolean = MainActivity.getWebView() != null
 
     /**
      * 调一个同步取值函数（如 `getConfig` / `getAssets`），结果在主线程回调。
-     * 回调参数已拆掉 evaluateJavascript 的外层引号；页面没就绪时回调 null。
+     * 回调参数已拆掉 evaluateJavascript 的外层引号。
+     *
+     * ★ 引擎没就绪时**自动重试**：冷启动或清后台后，WebView 里的 Vue 应用要
+     * 几秒才把 `window.__dhpApi` 挂上，这期间同步取值只会拿到 null。以前页面
+     * 直接显示「引擎还没就绪，稍等几秒点刷新」，用户得自己手动点一下，
+     * 而且误以为功能坏了。现在统一在这里等到就绪再回调，页面代码零改动。
+     *
+     * 只在「引擎未就绪」时重试；函数真正返回空对象不会重试。重试耗尽仍会
+     * 回调 null，让页面保留原来的兜底提示，不会无限转圈。
      */
     fun fetch(activity: Activity, fn: String, cb: (JSONObject?) -> Unit) {
+        fetchInternal(activity, fn, 0, cb)
+    }
+
+    private fun fetchInternal(activity: Activity, fn: String, tries: Int, cb: (JSONObject?) -> Unit) {
+        if (activity.isFinishing || activity.isDestroyed) return
         val w = MainActivity.getWebView()
         if (w == null) {
-            cb(null)
+            scheduleRetry(activity, fn, tries, cb)
             return
         }
         w.evaluateJavascript("window.__dhpApi ? window.__dhpApi.$fn() : null") { r ->
-            activity.runOnUiThread { cb(parse(r)) }
+            activity.runOnUiThread {
+                if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
+                val obj = parse(r)
+                if (obj != null) cb(obj) else scheduleRetry(activity, fn, tries, cb)
+            }
         }
+    }
+
+    private fun scheduleRetry(activity: Activity, fn: String, tries: Int, cb: (JSONObject?) -> Unit) {
+        if (tries >= READY_MAX_TRY) {
+            cb(null)
+            return
+        }
+        mainHandler.postDelayed({ fetchInternal(activity, fn, tries + 1, cb) }, READY_RETRY_MS)
     }
 
     /** 调一个同步取值函数（可带一个字符串参数），结果在主线程回调。 */
