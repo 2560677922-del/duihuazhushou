@@ -54,6 +54,10 @@ object EngineBridge {
         if (fn in ConnectionStore.LOCAL_FETCH) {
             ConnectionStore.init(activity.applicationContext)
             if (ConnectionStore.isEmpty()) tryMigrate(activity)
+            // 单向补推一份镜像：冷启动后第一个页面往往就是设置页，
+            // 不推的话引擎里的 __dhpNativeConfig 要等到第一次生成才更新，
+            // 自动配图可能拿到旧 store。这是通知、不等待回包、失败无影响。
+            pushToEngine()
             activity.runOnUiThread {
                 if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
                 cb(ConnectionStore.snapshot(fn))

@@ -31,12 +31,19 @@ data class AutoImageTarget(
 /** 从网页配置里读出来的、原生发请求需要的最小集合。 */
 data class NativeImageConfig(
     val provider: String = "custom",
+    /** 渲染引擎 id（见 ImageEngine）；为空时回落到 provider。 */
+    val engine: String = "",
     val baseUrl: String = "",
     val apiKey: String = "",
     val model: String = "",
     val endpoint: String = "",
     val width: Int = 832,
     val height: Int = 1216,
+    /** NovelAI / 本地部署会真正带进请求体的采样参数。 */
+    val steps: Int = 28,
+    val cfgScale: Double = 6.0,
+    val sampler: String = "",
+    val noiseSchedule: String = "",
     val negativePrompt: String = "",
     val artistTags: String = "",
     val qualityTags: String = "",
@@ -90,12 +97,17 @@ data class AutoImageEnv(
             return AutoImageEnv(
                 config = NativeImageConfig(
                     provider = cfg.optString("provider", "custom"),
+                    engine = cfg.optString("engine").ifBlank { cfg.optString("provider", "custom") },
                     baseUrl = cfg.optString("baseUrl", ""),
                     apiKey = cfg.optString("apiKey", ""),
                     model = cfg.optString("model", cfg.optString("novelaiModel", "")),
                     endpoint = cfg.optString("endpoint", ""),
                     width = cfg.optInt("width", 832),
                     height = cfg.optInt("height", 1216),
+                    steps = cfg.optInt("steps", 28),
+                    cfgScale = cfg.optDouble("cfgScale", 6.0),
+                    sampler = cfg.optString("sampler", ""),
+                    noiseSchedule = cfg.optString("noiseSchedule", ""),
                     negativePrompt = cfg.optString("negativePrompt", ""),
                     artistTags = cfg.optString("artistTags", ""),
                     qualityTags = cfg.optString("qualityTags", ""),

@@ -5,6 +5,8 @@ import android.os.Handler
 import android.os.Looper
 import com.dbpg.stcore.imagegen.AutoImageEnv
 import com.dbpg.stcore.imagegen.AutoImageSupport
+import com.dbpg.stcore.imagegen.ImageEngine
+import com.dbpg.stcore.imagegen.ImageParams
 import com.dbpg.stcore.session.ActionImage
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -110,16 +112,35 @@ object AutoImageService {
         val prompt = AutoImageSupport.finalPrompt(env.config, optimized, description)
         if (prompt.isBlank()) return null
 
-        val endpoints = AutoImageSupport.imageEndpoints(env.config.baseUrl, env.config.endpoint)
+        val c = env.config
+        // 与标签生图/快捷生图共用同一套渲染器：NovelAI 中转要发官方格式，
+        // 一律发 OpenAI 最小请求体会把 sampler / steps / CFG 全丢掉。
+        val engine = ImageEngine.of(c.engine)
+        val endpoints = AutoImageSupport.imageEndpoints(c.baseUrl, c.endpoint)
         for (url in endpoints) {
+            val params = ImageParams(
+                engine = engine,
+                url = url,
+                apiKey = c.apiKey,
+                model = c.model,
+                prompt = prompt,
+                negativePrompt = c.negativePrompt,
+                width = c.width,
+                height = c.height,
+                cfgScale = c.cfgScale,
+                steps = c.steps,
+                sampler = c.sampler,
+                noiseSchedule = c.noiseSchedule,
+            )
             val req = ImageGenService.Request(
                 url = url,
-                apiKey = env.config.apiKey,
-                model = env.config.model,
+                apiKey = c.apiKey,
+                model = c.model,
                 prompt = prompt,
-                size = env.config.size,
+                size = c.size,
                 n = 1,
                 responseFormat = "b64_json",
+                params = params,
             )
             val imgs = runCatching { service.generateSync(req) }.getOrNull()
             val first = imgs?.firstOrNull()

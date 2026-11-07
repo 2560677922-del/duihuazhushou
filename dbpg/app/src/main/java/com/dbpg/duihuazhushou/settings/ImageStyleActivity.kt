@@ -20,6 +20,7 @@ import com.dbpg.duihuazhushou.Insets
 import com.dbpg.duihuazhushou.NativeBridge
 import com.dbpg.duihuazhushou.R
 import com.dbpg.duihuazhushou.imagegen.StyleThumbStore
+import com.dbpg.stcore.imagegen.ImageEngine
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -42,9 +43,15 @@ class ImageStyleActivity : Activity() {
     private lateinit var width: EditText
     private lateinit var height: EditText
     private lateinit var thumbView: ImageView
+    private lateinit var sizeChips: LinearLayout
+    private lateinit var engineHint: TextView
 
     /** 当前编辑的风格 uid（跟随 store 的 currentStyleId）。 */
     private var currentUid = ""
+
+    /** 当前尺寸（快捷档位高亮用）。 */
+    private var curWidth = 832
+    private var curHeight = 1216
 
     /** 风格 uid → (缩略图 ImageView, 占位字)；异步取参考图后回填。 */
     private val thumbViews = mutableMapOf<String, Pair<ImageView, TextView>>()
@@ -105,6 +112,8 @@ class ImageStyleActivity : Activity() {
         width = findViewById(R.id.style_width)
         height = findViewById(R.id.style_height)
         thumbView = findViewById(R.id.style_thumb)
+        sizeChips = findViewById(R.id.style_size_chips)
+        engineHint = findViewById(R.id.style_engine_hint)
 
         findViewById<TextView>(R.id.style_back).setOnClickListener { finish() }
         findViewById<TextView>(R.id.style_reload).setOnClickListener { load() }
@@ -146,10 +155,32 @@ class ImageStyleActivity : Activity() {
             quality.setText(obj.optString("qualityTags"))
             negative.setText(obj.optString("negativePrompt"))
             template.setText(obj.optString("promptTemplate"))
-            width.setText(obj.optInt("width", 832).toString())
-            height.setText(obj.optInt("height", 1216).toString())
+            curWidth = obj.optInt("width", 832)
+            curHeight = obj.optInt("height", 1216)
+            width.setText(curWidth.toString())
+            height.setText(curHeight.toString())
+            val engine = ImageEngine.of(obj.optString("engine"))
+            engineHint.text = "当前渲染器：${engine.label} · 采样参数会按该引擎写进请求体"
+            buildSizeChips()
             showThumb(obj.optString("thumb"))
             renderStyles(obj.optJSONArray("styles") ?: JSONArray())
+        }
+    }
+
+    /**
+     * 小图尺寸快捷档位：与标签生图页共用 `image.sizePreset`。
+     * 点一下同时填好宽高输入框并落盘，用户仍能手动改自定义尺寸。
+     */
+    private fun buildSizeChips() {
+        SizePresetChips.render(this, sizeChips, curWidth, curHeight) { w, h ->
+            curWidth = w
+            curHeight = h
+            width.setText(w.toString())
+            height.setText(h.toString())
+            EngineBridge.command(
+                JSONObject().put("cmd", "imgSaveSize").put("width", w).put("height", h),
+            )
+            buildSizeChips()
         }
     }
 

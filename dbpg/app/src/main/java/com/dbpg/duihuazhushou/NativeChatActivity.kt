@@ -2,10 +2,16 @@ package com.dbpg.duihuazhushou
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.view.LayoutInflater
 import android.view.View
+import android.view.Window
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
@@ -21,6 +27,9 @@ import com.dbpg.duihuazhushou.chat.ChatBackground
 import com.dbpg.duihuazhushou.chat.ImageFileCache
 import com.dbpg.duihuazhushou.imagegen.ImageGenService
 import com.dbpg.duihuazhushou.settings.EngineBridge
+import com.dbpg.stcore.imagegen.ImageEngine
+import com.dbpg.stcore.imagegen.ImageEngineSupport
+import com.dbpg.stcore.imagegen.ImageParams
 import com.dbpg.duihuazhushou.gallery.ImageViewerActivity
 import com.dbpg.duihuazhushou.session.SessionRepo
 import org.json.JSONObject
@@ -68,6 +77,14 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     private var quickApiUrl = ""
     private var quickApiKey = ""
     private var quickApiModel = ""
+    /** 快捷生图走与标签生图相同的渲染器，参数一个不少地带进请求体。 */
+    private var quickEngine = ImageEngine.NAI_RELAY
+    private var quickWidth = 832
+    private var quickHeight = 1216
+    private var quickSteps = 28
+    private var quickCfg = 6.0
+    private var quickSampler = "k_euler_ancestral"
+    private var quickNoise = ""
 
     private val apiListener = com.dbpg.duihuazhushou.NativeBridge.ApiResultListener { json ->
         runOnUiThread { onQuickImageResult(json) }
@@ -291,48 +308,95 @@ class NativeChatActivity : Activity(), ChatController.Sink {
 
     // ------------------------------------------------------------ 顶栏菜单 / 背景
 
+    /** 自定义菜单的一行。action 里不要持有 Dialog，统一由外层 dismiss。 */
+    private data class MenuEntry(
+        val icon: String,
+        val title: String,
+        val desc: String,
+        val action: () -> Unit,
+    )
+
     /**
-     * ⋯ 菜单。
+     * ⋯ 菜单（卡片式）。
      *
-     * 顶栏只留「返回 / 标题 / ⋯」：原来五个按钮一字排开，小屏换行、
-     * 标题也被挤得看不清。功能没少，只是收进这里。
+     * 顶栏只留「返回 / 标题 / ⋯」，功能全收在这里。原来用系统
+     * `AlertDialog.setItems()` 一排纯文字，选项多了以后既不好找也看不出
+     * 每项做什么；现在按「会话 / 内容与资产 / 创作」分组，每行带图标和
+     * 一句说明，白卡片圆角与首页风格一致。
+     *
+     * 顺手合并了原来「清除本会话背景」「使用全局背景」两个行为完全相同的
+     * 选项（清除本会话图本来就会回落到全局图）。
      */
     private fun showMoreMenu() {
         val sid = controller?.doc?.id.orEmpty()
         val hasSessionBg = ChatBackground.hasSession(this, sid)
         val hasGlobalBg = ChatBackground.hasGlobal(this)
-        val items = mutableListOf(
-            "重命名会话",
-            "换本会话背景",
-        )
-        if (hasSessionBg) items.add("清除本会话背景")
-        if (hasGlobalBg) items.add("使用全局背景")
-        items.add("资产（预设 / 世界书 / 正则）")
-        items.add("导入聊天记录")
-        items.add("生图")
 
-        AlertDialog.Builder(this)
-            .setTitle("操作")
-            .setItems(items.toTypedArray()) { _, which ->
-                when (items[which]) {
-                    "重命名会话" -> promptRename()
-                    "换本会话背景" -> pickBackground()
-                    "清除本会话背景" -> {
-                        ChatBackground.clear(this, sid)
-                        applyBackground()
-                    }
-                    "使用全局背景" -> {
-                        ChatBackground.clear(this, sid)
-                        applyBackground()
-                    }
-                    "资产（预设 / 世界书 / 正则）" ->
-                        startActivity(Intent(this, com.dbpg.duihuazhushou.assets.AssetsHomeActivity::class.java))
-                    "导入聊天记录" -> pickJsonl()
-                    "生图" -> startActivity(Intent(this, NativeImageGenActivity::class.java))
+        val sessionItems = mutableListOf(
+            MenuEntry("✏️", "重命名会话", "给这次冒险起个好记的名字") { promptRename() },
+            MenuEntry("🖼️", "换本会话背景", "只对当前会话生效，不影响其它会话") { pickBackground() },
+        )
+        if (hasSessionBg) {
+            sessionItems.add(
+                MenuEntry("🧹", "清除本会话背景", if (hasGlobalBg) "回到全局背景" else "恢复纯色背景") {
+                    ChatBackground.clear(this, sid)
+                    applyBackground()
+                },
+            )
+        }
+        val sections = listOf(
+            "会话" to sessionItems,
+            "内容与资产" to listOf(
+                MenuEntry("📚", "资产（预设 / 世界书 / 正则）", "管理 SillyTavern 兼容层内容") {
+                    startActivity(Intent(this, com.dbpg.duihuazhushou.assets.AssetsHomeActivity::class.java))
+                },
+                MenuEntry("📥", "导入聊天记录", "从 jsonl 载入一份只读预览") { pickJsonl() },
+            ),
+            "创作" to listOf(
+                MenuEntry("🎨", "标签生图", "用标签库与当前风格直接出图") {
+                    startActivity(Intent(this, NativeImageGenActivity::class.java))
+                },
+            ),
+        )
+
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        val view = LayoutInflater.from(this).inflate(R.layout.dialog_chat_menu, null)
+        dialog.setContentView(view)
+        // 系统默认白底方角会盖住自定义圆角，必须显式设透明
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.9f).toInt(),
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+
+        val title = controller?.doc?.title.orEmpty()
+        view.findViewById<TextView>(R.id.menu_subtitle).text =
+            if (title.isEmpty()) "当前会话"
+            else if (title.length > 10) title.take(10) + "…" else title
+        val box = view.findViewById<LinearLayout>(R.id.menu_container)
+        for ((section, entries) in sections) {
+            box.addView(TextView(this).apply {
+                text = section
+                textSize = 11f
+                setTextColor(0xFF8A94A6.toInt())
+                setPadding(dp(4), dp(8), 0, dp(2))
+            })
+            for (e in entries) {
+                val row = LayoutInflater.from(this@NativeChatActivity)
+                    .inflate(R.layout.item_chat_menu, box, false)
+                row.findViewById<TextView>(R.id.menu_icon).text = e.icon
+                row.findViewById<TextView>(R.id.menu_title).text = e.title
+                row.findViewById<TextView>(R.id.menu_desc).text = e.desc
+                row.setOnClickListener {
+                    dialog.dismiss()
+                    e.action()
                 }
+                box.addView(row)
             }
-            .setNegativeButton("取消", null)
-            .show()
+        }
+        view.findViewById<TextView>(R.id.menu_cancel).setOnClickListener { dialog.dismiss() }
+        dialog.show()
     }
 
     /**
@@ -432,7 +496,10 @@ class NativeChatActivity : Activity(), ChatController.Sink {
                 finishQuick("引擎还没就绪")
                 return@fetch
             }
-            val cur = cfg.optJSONObject("current") ?: JSONObject()
+            // 读「对话生图」这一场景，不读全局 current：标签生图换运营商
+            // 不会把聊天里的 🎨 带着改掉。
+            val cur = cfg.optJSONObject("scenes")?.optJSONObject("chat")
+                ?: cfg.optJSONObject("current") ?: JSONObject()
             val auto = cfg.optJSONObject("auto") ?: JSONObject()
             val n = auto.optInt("quickContextWindow", 5)
             val useLlm = cur.optBoolean("useLlmOptimization", true)
@@ -441,7 +508,10 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             quickApiUrl = cur.optString("baseUrl")
             quickApiKey = cur.optString("apiKey")
             quickApiModel = cur.optString("model")
-            quickSize = "${cur.optInt("width", 832)}x${cur.optInt("height", 1216)}"
+            quickWidth = cur.optInt("width", 832)
+            quickHeight = cur.optInt("height", 1216)
+            quickEngine = ImageEngine.of(cur.optString("engine"))
+            quickSize = "${quickWidth}x${quickHeight}"
             quickActionId = actionId
 
             EngineBridge.fetch(this, "getImageStyle") { st ->
@@ -452,6 +522,11 @@ class NativeChatActivity : Activity(), ChatController.Sink {
                 quickStyleArtist = st.optString("artistTags")
                 quickStyleQuality = st.optString("qualityTags")
                 quickStyleNegative = st.optString("negativePrompt")
+                quickSteps = st.optInt("steps", 28)
+                quickCfg = st.optDouble("cfgScale", 6.0)
+                quickSampler = st.optString("sampler")
+                    .ifBlank { ImageEngineSupport.defaultSamplerFor(quickApiModel) }
+                quickNoise = st.optString("noiseSchedule")
 
                 if (quickApiUrl.isBlank()) {
                     finishQuick("还没配置生图运营商")
@@ -504,15 +579,31 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         val full = listOf(quickStyleArtist, quickStyleQuality, tags)
             .map { it.trim() }.filter { it.isNotEmpty() }.joinToString(", ")
         toast("出图中…")
-        val req = ImageGenService.Request(
+        val model = quickApiModel.ifBlank { "nai-diffusion-4-5-full" }
+        val params = ImageParams(
+            engine = quickEngine,
             url = quickApiUrl,
             apiKey = quickApiKey,
-            model = quickApiModel.ifBlank { "nai-diffusion-4-5-full" },
+            model = model,
+            prompt = full,
+            negativePrompt = quickStyleNegative,
+            width = quickWidth,
+            height = quickHeight,
+            cfgScale = quickCfg,
+            steps = quickSteps,
+            sampler = quickSampler,
+            noiseSchedule = quickNoise,
+        )
+        val urls = ImageEngineSupport.candidateUrls(quickEngine, quickApiUrl)
+        val req = ImageGenService.Request(
+            url = urls.firstOrNull() ?: quickApiUrl,
+            apiKey = quickApiKey,
+            model = model,
             prompt = full,
             size = quickSize.ifBlank { null },
             responseFormat = "b64_json",
-            extraBody = if (quickStyleNegative.isBlank()) emptyMap()
-            else mapOf("negative_prompt" to quickStyleNegative),
+            params = params,
+            endpointCandidates = urls.drop(1),
         )
         val svc = ImageGenService(applicationContext)
         svc.generate(req, object : ImageGenService.Callback {

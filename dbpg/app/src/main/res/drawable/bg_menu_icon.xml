@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 菜单项左侧的圆形图标底：浅蓝，让彩色 emoji 在白卡片上不飘。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FFF0F5FF" />
+    <corners android:radius="14dp" />
+</shape>

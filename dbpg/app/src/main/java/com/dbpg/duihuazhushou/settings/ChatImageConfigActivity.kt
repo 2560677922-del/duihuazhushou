@@ -4,25 +4,33 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.os.Bundle
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import com.dbpg.duihuazhushou.Insets
 import com.dbpg.duihuazhushou.NativeBridge
 import com.dbpg.duihuazhushou.R
+import com.dbpg.stcore.imagegen.ImageEngine
+import com.dbpg.stcore.imagegen.ImageEngineSupport
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * 对话生图配置（与标签生图分开）。
+ * 对话生图配置（与标签生图**完全分开**）。
  *
- * 管的是"聊天里点 🎨 快速出图"用什么：带多少条上文、用不用对话模型把上文
- * 转成英文标签（用哪个模型）、哪家生图运营商、哪套风格、步数/CFG/采样器。
+ * 管的是「聊天里点 🎨 快速出图」用什么：带多少条上文、用不用对话模型把上文
+ * 转成英文标签（用哪个模型）、哪家运营商、哪个模型、哪套风格、步数/CFG/采样器、
+ * 以及图片大小。
  *
- * 数据在 web image store（自动配图也走这套配置），经 __dhpApi 读写：
- *   getImageConfig()  → apis / current / auto(quickContextWindow…) / llmConfigs
- *   getImageStyle()   → styles / current style 的采样参数
- *   imgSaveAuto / imgSaveSampling / imgUseApi / imgUseStyle
+ * ## 2026-11-07 与标签生图解耦
+ *
+ * 两处都读同一份 [ConnectionStore]，但各自有独立的选中接口
+ * （`sceneApiIds.chat` / `sceneApiIds.tag`）：在聊天里换模型不会影响标签页，
+ * 反之亦然。所有 `imgUseApi` 都带 `scope=chat`。
+ *
+ * 界面上不再出现地址与密钥 —— 那是在「生图运营商」里配一次的底层信息，
+ * 这里只显示「运营商 · 模型」，点一下直接列出当前运营商下的所有模型可切换。
  */
 class ChatImageConfigActivity : Activity() {
 
@@ -30,7 +38,9 @@ class ChatImageConfigActivity : Activity() {
     private lateinit var useLlm: Switch
     private lateinit var llmSelect: TextView
     private lateinit var apiSelect: TextView
+    private lateinit var engineSelect: TextView
     private lateinit var styleSelect: TextView
+    private lateinit var sizeChips: LinearLayout
     private lateinit var steps: EditText
     private lateinit var cfg: EditText
     private lateinit var samplerSelect: TextView
@@ -41,23 +51,21 @@ class ChatImageConfigActivity : Activity() {
     private var apiUid = ""
     private var styleUid = ""
     private var sampler = "k_euler_ancestral"
+    private var curWidth = 832
+    private var curHeight = 1216
+    private var curEngine = ImageEngine.NAI_RELAY
 
+    /** 本场景（chat）的接口快照。地址/密钥只在内部发请求时用，界面不显示。 */
+    private var scene = JSONObject()
     private var providers: List<JSONObject> = emptyList()
     private var styles: List<JSONObject> = emptyList()
     private var llms: List<JSONObject> = emptyList()
 
+    /** 只负责把失败提示出来；成功后的刷新由各动作显式调用 load()。 */
     private val listener = NativeBridge.ApiResultListener { json ->
         try {
             val o = JSONObject(json)
-            val ok = o.optBoolean("ok")
-            if (!ok) {
-                toast("保存失败：${o.optString("error")}")
-                return@ApiResultListener
-            }
-            when (o.optString("kind")) {
-                "imgUseApi", "imgUseStyle" -> load()
-                "imgSaveAuto", "imgSaveSampling" -> toast("已保存")
-            }
+            if (!o.optBoolean("ok")) toast("保存失败：${o.optString("error")}")
         } catch (_: Throwable) {
         }
     }
@@ -71,7 +79,9 @@ class ChatImageConfigActivity : Activity() {
         useLlm = findViewById(R.id.cimg_use_llm)
         llmSelect = findViewById(R.id.cimg_llm_select)
         apiSelect = findViewById(R.id.cimg_api_select)
+        engineSelect = findViewById(R.id.cimg_engine_select)
         styleSelect = findViewById(R.id.cimg_style_select)
+        sizeChips = findViewById(R.id.cimg_size_chips)
         steps = findViewById(R.id.cimg_steps)
         cfg = findViewById(R.id.cimg_cfg)
         samplerSelect = findViewById(R.id.cimg_sampler_select)
@@ -107,26 +117,29 @@ class ChatImageConfigActivity : Activity() {
     private fun load() {
         EngineBridge.fetch(this, "getImageConfig") { obj ->
             if (obj == null) {
-                toast("引擎还没就绪，稍后点「刷新」")
+                toast("读取配置失败")
                 return@fetch
             }
-            val cur = obj.optJSONObject("current") ?: JSONObject()
+            scene = obj.optJSONObject("scenes")?.optJSONObject("chat")
+                ?: obj.optJSONObject("current") ?: JSONObject()
+            apiUid = scene.optString("uid")
             val auto = obj.optJSONObject("auto") ?: JSONObject()
-            apiUid = cur.optString("uid")
             ctxWindow = auto.optInt("quickContextWindow", 5).coerceIn(1, 20)
-            useLlm.isChecked = cur.optBoolean("useLlmOptimization")
-            llmUid = cur.optString("llmConfigId")
+            useLlm.isChecked = scene.optBoolean("useLlmOptimization", true)
+            llmUid = scene.optString("llmConfigId")
+            curWidth = scene.optInt("width", 832)
+            curHeight = scene.optInt("height", 1216)
+            curEngine = ImageEngine.of(scene.optString("engine"))
             renderCtx()
 
             val arr = obj.optJSONArray("providers") ?: JSONArray()
             providers = (0 until arr.length()).map { arr.getJSONObject(it) }
-            apiSelect.text = buildString {
-                append("运营商：")
-                append(cur.optString("apiName").ifBlank { "未选" })
-                val m = cur.optString("model")
-                if (m.isNotBlank()) append(" · ").append(m)
-            }
-            apiSelect.setOnClickListener { pickProviderThenModel() }
+            val model = scene.optString("model").ifBlank { "未选模型" }
+            apiSelect.text = "${scene.optString("apiName").ifBlank { "未选运营商" }} · $model"
+            apiSelect.setOnClickListener { pickModelQuick() }
+            engineSelect.text = "渲染器：${curEngine.label}"
+            engineSelect.setOnClickListener { pickEngine() }
+            buildSizeChips()
 
             val la = obj.optJSONArray("llmConfigs") ?: JSONArray()
             llms = (0 until la.length()).map { la.getJSONObject(it) }
@@ -154,18 +167,42 @@ class ChatImageConfigActivity : Activity() {
 
     // ------------------------------------------------------------ 选择器
 
-    /** 两级选择：运营商（地址） → 该家下的模型。 */
+    /**
+     * 一步切模型：已经选好了运营商（如「砂糖」），最常用的是在它下面换模型，
+     * 不该每次先重选一遍运营商。列表末尾留「换一家运营商」。
+     */
+    private fun pickModelQuick() {
+        if (providers.isEmpty()) return toast("还没有生图运营商")
+        val prov = providers.firstOrNull { p ->
+            val models = p.optJSONArray("models") ?: JSONArray()
+            (0 until models.length()).any { models.getJSONObject(it).optString("uid") == apiUid }
+        }
+        if (prov == null) { pickProviderThenModel(); return }
+        val models = prov.optJSONArray("models") ?: JSONArray()
+        val labels = (0 until models.length()).map { j ->
+            models.getJSONObject(j).optString("model").ifBlank { models.getJSONObject(j).optString("name") }
+        } + "换一家运营商…"
+        AlertDialog.Builder(this)
+            .setTitle("${prov.optString("name")} · 切换模型")
+            .setItems(labels.toTypedArray()) { _, which ->
+                if (which == labels.size - 1) { pickProviderThenModel(); return@setItems }
+                useApi(models.getJSONObject(which).optString("uid"))
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 两级选择：运营商 → 该家下的模型。 */
     private fun pickProviderThenModel() {
         if (providers.isEmpty()) return toast("还没有生图运营商")
-        val names = providers.map { it.optString("name").ifBlank { it.optString("baseUrl") } }
+        val names = providers.map { it.optString("name").ifBlank { "(未命名)" } }
         AlertDialog.Builder(this)
             .setTitle("选择生图运营商")
             .setItems(names.toTypedArray()) { _, i ->
                 val models = providers[i].optJSONArray("models") ?: JSONArray()
                 if (models.length() == 0) return@setItems toast("这家还没添加模型")
                 if (models.length() == 1) {
-                    val uid = models.getJSONObject(0).optString("uid")
-                    EngineBridge.command(JSONObject().put("cmd", "imgUseApi").put("uid", uid))
+                    useApi(models.getJSONObject(0).optString("uid"))
                     return@setItems
                 }
                 val labels = (0 until models.length()).map { j ->
@@ -174,11 +211,35 @@ class ChatImageConfigActivity : Activity() {
                 AlertDialog.Builder(this)
                     .setTitle("选择模型")
                     .setItems(labels.toTypedArray()) { _, j ->
-                        val uid = models.getJSONObject(j).optString("uid")
-                        EngineBridge.command(JSONObject().put("cmd", "imgUseApi").put("uid", uid))
+                        useApi(models.getJSONObject(j).optString("uid"))
                     }
                     .setNegativeButton("取消", null)
                     .show()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** scope=chat：同步写 currentApiId（网页自动配图也认它），不影响标签生图。 */
+    private fun useApi(uid: String) {
+        EngineBridge.command(
+            JSONObject().put("cmd", "imgUseApi").put("uid", uid).put("scope", "chat"),
+        )
+        load()
+    }
+
+    private fun pickEngine() {
+        val engines = ImageEngine.entries
+        val labels = engines.map { "${it.label} — ${it.hint}" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("选择渲染器")
+            .setSingleChoiceItems(labels, engines.indexOf(curEngine)) { dlg, which ->
+                EngineBridge.command(
+                    JSONObject().put("cmd", "imgSetEngine")
+                        .put("uid", apiUid).put("engine", engines[which].id),
+                )
+                dlg.dismiss()
+                load()
             }
             .setNegativeButton("取消", null)
             .show()
@@ -190,8 +251,10 @@ class ChatImageConfigActivity : Activity() {
         AlertDialog.Builder(this)
             .setTitle("选择出图风格")
             .setItems(names.toTypedArray()) { _, i ->
-                val uid = styles[i].optString("uid")
-                EngineBridge.command(JSONObject().put("cmd", "imgUseStyle").put("uid", uid))
+                EngineBridge.command(
+                    JSONObject().put("cmd", "imgUseStyle").put("uid", styles[i].optString("uid")),
+                )
+                load()
             }
             .setNegativeButton("取消", null)
             .show()
@@ -218,17 +281,27 @@ class ChatImageConfigActivity : Activity() {
     }
 
     private fun pickSampler() {
-        val options = arrayOf(
-            "k_euler_ancestral", "k_euler", "k_dpmpp_2m", "k_dpmpp_sde", "ddim",
-        )
+        val options = ImageEngineSupport.NAI_SAMPLERS
         AlertDialog.Builder(this)
-            .setTitle("采样器")
-            .setItems(options) { _, i ->
+            .setTitle("采样器（${curEngine.label}）")
+            .setItems(options.toTypedArray()) { _, i ->
                 sampler = options[i]
                 samplerSelect.text = "采样器：$sampler"
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    /** 小图快捷档位，与标签生图页、风格页共用同一份配置。 */
+    private fun buildSizeChips() {
+        SizePresetChips.render(this, sizeChips, curWidth, curHeight) { w, h ->
+            curWidth = w
+            curHeight = h
+            EngineBridge.command(
+                JSONObject().put("cmd", "imgSaveSize").put("width", w).put("height", h),
+            )
+            buildSizeChips()
+        }
     }
 
     // ------------------------------------------------------------ 保存
@@ -252,6 +325,10 @@ class ChatImageConfigActivity : Activity() {
                     .put("sampler", sampler),
             ),
         )
+        EngineBridge.command(
+            JSONObject().put("cmd", "imgSaveSize").put("width", curWidth).put("height", curHeight),
+        )
+        toast("已保存")
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()

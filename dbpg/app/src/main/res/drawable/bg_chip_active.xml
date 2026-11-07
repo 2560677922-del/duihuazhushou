@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  选中态 chip：深蓝实底 + 白字。
+  bg_btn_accent 是「淡蓝底配深色文字」的主按钮背景，之前被拿去当选中态
+  又配了白字，结果 832×1216 这种选中档位几乎看不清。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FF2F66D8" />
+    <corners android:radius="10dp" />
+</shape>

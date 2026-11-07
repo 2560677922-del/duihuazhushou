@@ -3,6 +3,8 @@ package com.dbpg.duihuazhushou.imagegen
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import com.dbpg.stcore.imagegen.ImageEngineSupport
+import com.dbpg.stcore.imagegen.ImageParams
 import com.dbpg.stcore.imagegen.ImagePayloadExtractor
 import com.dbpg.stcore.imagegen.ImageRequestBuilder
 import java.util.concurrent.Executors
@@ -12,6 +14,18 @@ import java.util.concurrent.Executors
  *
  * 刻意保持扁平：网络交给 [HttpImageClient]，解析交给 stcore 的 [ImagePayloadExtractor]，
  * 存储交给 [ImageStore]，本类只做编排，不写具体 IO 细节。
+ *
+ * ## 2026-11-07：渲染器分流
+ *
+ * 以前无论哪家运营商都发 OpenAI 的 `{model,prompt,size}`，选了 NovelAI 中转
+ * （砂糖之类）时 `sampler / steps / scale / negative_prompt` 全部被丢掉，
+ * 用户会以为「参数选了没用」。现在：
+ *
+ * - 传了 [Request.params] → 交给 [ImageEngineSupport.buildBody] 按引擎构造，
+ *   NovelAI 官方格式 / 本地 SD 包装 / DALL·E / 通用 OpenAI 各发各的字段；
+ * - 没传 → 保持旧行为（自动配图、对话快捷生图等老调用方不用改）；
+ * - [Request.endpointCandidates] 里的备用地址会按顺序重试，中转站把
+ *   `/ai/generate-image` 挂在哪个前缀下都不用用户自己猜。
  */
 class ImageGenService(context: Context) {
 
@@ -26,6 +40,10 @@ class ImageGenService(context: Context) {
         val responseFormat: String = "b64_json",
         val headers: Map<String, String> = emptyMap(),
         val extraBody: Map<String, Any?> = emptyMap(),
+        /** 新渲染器参数：非空时按引擎构造请求体，忽略上面的 size/extraBody。 */
+        val params: ImageParams? = null,
+        /** 主地址失败后依次尝试的备用端点（由 ImageEngineSupport.candidateUrls 生成）。 */
+        val endpointCandidates: List<String> = emptyList(),
     )
 
     interface Callback {
@@ -63,24 +81,42 @@ class ImageGenService(context: Context) {
     fun generateSync(req: Request): List<ImageStore.StoredImage> = doGenerate(req)
 
     private fun doGenerate(req: Request): List<ImageStore.StoredImage> {
-        val body = ImageRequestBuilder.buildOpenAiJson(
-            model = req.model,
-            prompt = req.prompt,
-            size = req.size,
-            n = req.n,
-            responseFormat = req.responseFormat,
-            extra = req.extraBody,
-        )
+        val body = req.params?.let { ImageEngineSupport.buildBody(it).toString() }
+            ?: ImageRequestBuilder.buildOpenAiJson(
+                model = req.model,
+                prompt = req.prompt,
+                size = req.size,
+                n = req.n,
+                responseFormat = req.responseFormat,
+                extra = req.extraBody,
+            )
         val headers = ImageRequestBuilder.buildHeaders(req.apiKey, req.headers)
-        val raw = client.postJson(req.url, headers, body)
+        val urls = (listOf(req.url) + req.endpointCandidates)
+            .map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        if (urls.isEmpty()) throw IllegalStateException("还没配置生图地址")
 
-        // 解析（ZIP / 图片 / JSON / dataUrl / base64 全部在 extract 内部处理）
-        val parsed = ImagePayloadExtractor.extract(raw.contentType, raw.body)
-        if (parsed.isEmpty) {
-            val reason = parsed.rawText?.take(300) ?: "HTTP ${raw.code}，未返回图片"
-            throw IllegalStateException(reason)
+        var lastError: Throwable? = null
+        for (url in urls) {
+            val raw = try {
+                client.postJson(url, headers, body)
+            } catch (e: Throwable) {
+                lastError = e
+                continue
+            }
+            // 解析（ZIP / 图片 / JSON / dataUrl / base64 全部在 extract 内部处理）
+            val parsed = ImagePayloadExtractor.extract(raw.contentType, raw.body)
+            if (parsed.isEmpty) {
+                lastError = IllegalStateException(
+                    parsed.rawText?.take(300) ?: "HTTP ${raw.code}，未返回图片（$url）",
+                )
+                continue
+            }
+            return storeAll(parsed)
         }
+        throw lastError ?: IllegalStateException("生图失败")
+    }
 
+    private fun storeAll(parsed: ImagePayloadExtractor.Result): List<ImageStore.StoredImage> {
         val stored = ArrayList<ImageStore.StoredImage>()
         for (src in parsed.images) {
             when (src) {

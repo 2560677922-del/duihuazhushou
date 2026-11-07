@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  原生「标签生图」试验页：走纯 Kotlin 原生生图管线（OkHttp + ZIP 解压 + 私有目录落盘）。
-  这是把网页 Tags 页的「生图动作」搬到原生的最小可用版本：
-  标签/提示词先手填，后续可接标签库做选择器。
+  原生「标签生图」页。
+
+  2026-11-07 重构：地址 / 密钥 / 模型三个裸输入框全部撤掉。
+  用户已经在「生图运营商」里配好了「砂糖」这类中转，出图时只需要
+  「选哪家 → 选哪个模型 → 选渲染器 → 选尺寸」，把连接细节藏在内部，
+  界面上不该再出现一长串 URL 和 sk-。
+
+  这里的选择与「对话生图」（聊天里的 🎨）互相独立：切换运营商/模型只写
+  sceneApiIds.tag，不会把聊天那套带着改掉。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -19,13 +25,14 @@
         android:paddingEnd="12dp"
         android:paddingTop="10dp"
         android:paddingBottom="10dp"
+        android:background="#FFFFFFFF"
         android:gravity="center_vertical">
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="生图"
+            android:text="标签生图"
             android:textColor="#1A2230"
             android:textSize="17sp"
             android:textStyle="bold" />
@@ -35,9 +42,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:padding="8dp"
-            android:text="配置"
+            android:text="运营商"
             android:textColor="#2F66D8"
-            android:textSize="14sp" />
+            android:textSize="13sp" />
 
         <TextView
             android:id="@+id/gen_gallery"
@@ -46,7 +53,7 @@
             android:padding="8dp"
             android:text="图片库"
             android:textColor="#2F66D8"
-            android:textSize="14sp" />
+            android:textSize="13sp" />
 
         <TextView
             android:id="@+id/gen_close"
@@ -55,7 +62,7 @@
             android:padding="8dp"
             android:text="关闭"
             android:textColor="#5A6B85"
-            android:textSize="14sp" />
+            android:textSize="13sp" />
     </LinearLayout>
 
     <ScrollView
@@ -70,93 +77,160 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+            <!-- 出图配置卡片 -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:orientation="vertical"
+                android:background="@drawable/bg_card"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="出图配置 · 仅用于标签生图"
+                    android:textColor="#8A94A6"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
 
                 <TextView
                     android:id="@+id/gen_api_select"
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:layout_marginEnd="4dp"
-                    android:background="@drawable/bg_card"
-                    android:padding="10dp"
-                    android:text="运营商：读取中…"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_input"
+                    android:padding="11dp"
+                    android:text="运营商 · 模型：读取中…"
                     android:textColor="#1A2230"
-                    android:textSize="12sp"
+                    android:textSize="13sp"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
+
+                <TextView
+                    android:id="@+id/gen_engine_select"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/bg_input"
+                    android:padding="11dp"
+                    android:text="渲染器：读取中…"
+                    android:textColor="#1A2230"
+                    android:textSize="13sp"
                     android:maxLines="1"
                     android:ellipsize="end" />
 
                 <TextView
                     android:id="@+id/gen_style_select"
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:layout_marginStart="4dp"
-                    android:background="@drawable/bg_card"
-                    android:padding="10dp"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/bg_input"
+                    android:padding="11dp"
                     android:text="风格：读取中…"
                     android:textColor="#1A2230"
-                    android:textSize="12sp"
+                    android:textSize="13sp"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
+
+                <!-- 尺寸快捷档位：只给小图，省额度也出得快 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="图片大小"
+                        android:textColor="#1A2230"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/gen_size_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="832 × 1216"
+                        android:textColor="#2F66D8"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <!-- 三列网格一次铺开，不用横滑找 1216x832 -->
+                <LinearLayout
+                    android:id="@+id/gen_size_chips"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="vertical" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="只列小图档位；点一下即时生效，风格页与这里共用同一尺寸。"
+                    android:textColor="#9AA4B2"
+                    android:textSize="10sp" />
+
+                <!-- 采样参数：NovelAI / 本地部署会真正带进请求体 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal">
+
+                    <EditText
+                        android:id="@+id/gen_steps"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/bg_input"
+                        android:hint="步数"
+                        android:importantForAutofill="no"
+                        android:inputType="number"
+                        android:padding="10dp"
+                        android:textColor="#1A2230"
+                        android:textColorHint="#9AA4B2"
+                        android:textSize="12sp" />
+
+                    <EditText
+                        android:id="@+id/gen_cfg"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/bg_input"
+                        android:hint="CFG"
+                        android:importantForAutofill="no"
+                        android:inputType="numberDecimal"
+                        android:padding="10dp"
+                        android:textColor="#1A2230"
+                        android:textColorHint="#9AA4B2"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/gen_sampler_select"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/bg_input"
+                    android:padding="11dp"
+                    android:text="采样器：k_euler_ancestral"
+                    android:textColor="#1A2230"
+                    android:textSize="13sp"
                     android:maxLines="1"
                     android:ellipsize="end" />
             </LinearLayout>
 
             <EditText
-                android:id="@+id/gen_url"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="中转站地址，如 https://api.xxx.com/v1/images/generations"
-                android:textColorHint="#9AA4B2"
-                android:textColor="#1A2230"
-                android:textSize="14sp"
-                android:inputType="textUri"
-                android:maxLines="2"
-                android:background="@drawable/bg_input"
-                android:padding="12dp" />
-
-            <EditText
-                android:id="@+id/gen_key"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="API Key（可留空）"
-                android:textColorHint="#9AA4B2"
-                android:textColor="#1A2230"
-                android:textSize="14sp"
-                android:inputType="text"
-                android:background="@drawable/bg_input"
-                android:padding="12dp" />
-
-            <EditText
-                android:id="@+id/gen_model"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="模型，如 flux / dall-e-3"
-                android:textColorHint="#9AA4B2"
-                android:textColor="#1A2230"
-                android:textSize="14sp"
-                android:inputType="text"
-                android:background="@drawable/bg_input"
-                android:padding="12dp" />
-
-            <EditText
-                android:id="@+id/gen_size"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="尺寸，如 1024x1024"
-                android:textColorHint="#9AA4B2"
-                android:textColor="#1A2230"
-                android:textSize="14sp"
-                android:inputType="text"
-                android:background="@drawable/bg_input"
-                android:padding="12dp" />
-
-            <EditText
                 android:id="@+id/gen_prompt"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
                 android:minLines="3"
                 android:gravity="top|start"
                 android:hint="标签 / 提示词"
@@ -167,8 +241,7 @@
                 android:background="@drawable/bg_input"
                 android:padding="12dp" />
 
-            <!-- 快捷标签：搜标签库，点一下追加到提示词（对齐网页 Tags 页） -->
-            <!-- 一级/二级分类（与网页 Tags 页一致） -->
+            <!-- 标签一级 / 二级分类（与网页 Tags 页一致） -->
             <HorizontalScrollView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

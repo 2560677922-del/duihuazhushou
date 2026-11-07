@@ -198,10 +198,44 @@
                 android:textColor="#1A2230"
                 android:textSize="13sp" />
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="图片大小"
+                android:textColor="#1A2230"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <!-- 只给小图档位：三列网格全展开，点一下即写入配置，标签生图页会同步 -->
+            <LinearLayout
+                android:id="@+id/style_size_chips"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="vertical" />
+
+            <TextView
+                android:id="@+id/style_engine_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="渲染器：读取中…"
+                android:textColor="#8A94A6"
+                android:textSize="11sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="自定义宽高（建议 8 的倍数）"
+                android:textColor="#8A94A6"
+                android:textSize="11sp" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
+                android:layout_marginTop="6dp"
                 android:orientation="horizontal">
 
                 <EditText

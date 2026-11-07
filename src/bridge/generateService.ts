@@ -387,6 +387,9 @@ function imageConfig(): string {
   return JSON.stringify({
     config: {
       provider: cfg.provider || 'custom',
+      // 原生按渲染引擎构造请求体：NovelAI 官方格式 / 本地部署 / 通用 OpenAI。
+      // engine 是原生新加的显式字段，没有时回落到 web 原有的 provider。
+      engine: cfg.engine || cfg.provider || 'custom',
       baseUrl: cfg.baseUrl || '',
       apiKey: cfg.apiKey || '',
       model: cfg.model || cfg.novelaiModel || '',
@@ -394,6 +397,10 @@ function imageConfig(): string {
       endpoint: cfg.endpoint || '',
       width: cfg.width || 832,
       height: cfg.height || 1216,
+      steps: cfg.steps || 28,
+      cfgScale: cfg.cfgScale ?? 6,
+      sampler: cfg.sampler || '',
+      noiseSchedule: cfg.noiseSchedule || '',
       negativePrompt: cfg.negativePrompt || '',
       artistTags: cfg.artistTags || '',
       qualityTags: cfg.qualityTags || '',

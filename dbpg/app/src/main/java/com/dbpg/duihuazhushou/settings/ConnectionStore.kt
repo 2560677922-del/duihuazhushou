@@ -60,6 +60,8 @@ object ConnectionStore {
         "imgAddProvider", "imgRenameProvider",
         "imgAddStyle", "imgUseStyle", "imgRemoveStyle", "imgRenameStyle", "imgSaveStyle",
         "imgSaveAuto", "imgSaveSampling",
+        // 2026-11-07 新增：场景隔离 / 渲染引擎 / 尺寸快捷档位
+        "imgSetEngine", "imgSaveSize",
     )
 
     private val lock = Any()
@@ -77,6 +79,31 @@ object ConnectionStore {
             runCatching { doc = JSONObject(f.readText()) }
         }
         normalize()
+        healCurrentApi()
+    }
+
+    /**
+     * 启动时把「当前接口」从空壳里捞出来。
+     *
+     * 老数据（或测试时新建的空运营商）常出现 `currentApiId` 指向一个只填了
+     * 地址、还没拉模型的条目；网页自动配图读的正是它，会拿到空 model。
+     * 这里自愈到第一个真的带模型的接口。**只在读盘时做一次**：如果在每次
+     * 命令后都做，用户刚新建运营商还没来得及拉模型就会被切走。
+     */
+    private fun healCurrentApi() {
+        val image = doc.optJSONObject("image") ?: return
+        val apis = arr(image, "apiConfigs")
+        fun usable(x: JSONObject?): Boolean =
+            x != null && (x.optString("model").isNotEmpty() || x.optString("novelaiModel").isNotEmpty())
+        if (usable(findByUid(apis, image.optString("currentApiId")))) return
+        for (i in 0 until apis.length()) {
+            val x = apis.optJSONObject(i) ?: continue
+            if (usable(x)) {
+                image.put("currentApiId", x.optString("_uid"))
+                persist()
+                return
+            }
+        }
     }
 
     private fun initFromApp() {
@@ -104,6 +131,7 @@ object ConnectionStore {
         if (llm != null) doc.put("llm", llm)
         if (image != null) doc.put("image", image)
         normalize()
+        healCurrentApi()
         persist()
         return true
     }
@@ -285,9 +313,47 @@ object ConnectionStore {
         val apiName = groups[curKey]?.optJSONObject(0)?.optString("name").orEmpty()
             .ifEmpty { hostOf(cur?.optString("baseUrl") ?: "") }
         val style = findByUid(arr(image, "styleConfigs"), image.optString("currentStyleId"))
+        val sceneIds = image.optJSONObject("sceneApiIds") ?: JSONObject()
+
+        /**
+         * 场景视图：只为 UI 显示，地址/密钥供内部发请求用，界面不展示。
+         *
+         * 老数据里常有「只填了地址、还没拉模型」的空壳接口，若直接回落当前
+         * 接口，界面会显示「未选模型」而用户明明配好了砂糖。没显式选过场景时
+         * 优先挑一个真的带模型的接口。
+         */
+        fun sceneView(scene: String): JSONObject {
+            fun hasModel(x: JSONObject?): Boolean =
+                x != null && (x.optString("model").isNotEmpty() || x.optString("novelaiModel").isNotEmpty())
+            fun firstWithModel(): JSONObject? {
+                for (i in 0 until apis.length()) {
+                    val x = apis.optJSONObject(i)
+                    if (hasModel(x)) return x
+                }
+                return null
+            }
+            val a = findByUid(apis, sceneIds.optString(scene))
+                ?: if (hasModel(cur)) cur else firstWithModel() ?: cur
+            val groupName = if (a != null) groups[imageKey(a)]?.optJSONObject(0)?.optString("name").orEmpty() else ""
+            return JSONObject()
+                .put("uid", a?.optString("_uid") ?: "")
+                .put("apiName", groupName.ifEmpty { a?.optString("name").orEmpty() }
+                    .ifEmpty { hostOf(a?.optString("baseUrl") ?: "") }.ifEmpty { "未选运营商" })
+                .put("baseUrl", a?.optString("baseUrl") ?: "")
+                .put("apiKey", a?.optString("apiKey") ?: "")
+                .put("model", a?.optString("model").orEmpty().ifEmpty { a?.optString("novelaiModel") ?: "" })
+                .put("engine", if (a != null) engineOf(a) else "custom")
+                .put("width", style?.optInt("width", 832) ?: a?.optInt("width", 832) ?: 832)
+                .put("height", style?.optInt("height", 1216) ?: a?.optInt("height", 1216) ?: 1216)
+                // 优化开关挂在接口上：读同一个场景，写才不会落到别的接口去
+                .put("useLlmOptimization", a?.optBoolean("useLlmOptimization", true) ?: true)
+                .put("llmConfigId", a?.optString("llmConfigId") ?: "")
+        }
         return JSONObject()
             .put("apis", flat)
             .put("providers", providers)
+            .put("scenes", JSONObject().put("chat", sceneView("chat")).put("tag", sceneView("tag")))
+            .put("sizePreset", image.optString("sizePreset").ifEmpty { "832x1216" })
             .put(
                 "current", JSONObject()
                     .put("uid", cur?.optString("_uid") ?: "")
@@ -295,6 +361,7 @@ object ConnectionStore {
                     .put("baseUrl", cur?.optString("baseUrl") ?: "")
                     .put("apiKey", cur?.optString("apiKey") ?: "")
                     .put("model", cur?.optString("model").orEmpty().ifEmpty { cur?.optString("novelaiModel") ?: "" })
+                    .put("engine", if (cur != null) engineOf(cur) else "custom")
                     .put("width", style?.optInt("width", 832) ?: cur?.optInt("width", 832) ?: 832)
                     .put("height", style?.optInt("height", 1216) ?: cur?.optInt("height", 1216) ?: 1216)
                     .put("negativePrompt", style?.optString("negativePrompt") ?: "")
@@ -330,8 +397,12 @@ object ConnectionStore {
                     .put("thumb", if (thumb.startsWith("data:")) thumb else ""),
             )
         }
+        val curApi = findByUid(arr(image, "apiConfigs"), image.optString("currentApiId"))
+            ?: arr(image, "apiConfigs").optJSONObject(0)
         return JSONObject()
             .put("styles", list)
+            .put("engine", if (curApi != null) engineOf(curApi) else "custom")
+            .put("sizePreset", image.optString("sizePreset").ifEmpty { "832x1216" })
             .put("styleUid", style?.optString("_uid") ?: "")
             .put("styleName", style?.optString("name").orEmpty().ifEmpty { "默认风格" })
             .put("artistTags", style?.optString("artistTags") ?: "")
@@ -341,7 +412,7 @@ object ConnectionStore {
             .put("thumb", style?.optString("thumb") ?: "")
             .put("sampler", style?.optString("sampler") ?: "")
             .put("steps", style?.optInt("steps", 28) ?: 28)
-            .put("cfgScale", style?.optInt("cfgScale", 6) ?: 6)
+            .put("cfgScale", style?.optDouble("cfgScale", 6.0) ?: 6.0)
             .put("noiseSchedule", style?.optString("noiseSchedule") ?: "")
             .put("width", style?.optInt("width", 832) ?: 832)
             .put("height", style?.optInt("height", 1216) ?: 1216)
@@ -362,6 +433,7 @@ object ConnectionStore {
         val configs = arr(llm, "configs")
         val apis = arr(image, "apiConfigs")
         val styles = arr(image, "styleConfigs")
+        val sceneIds = image.optJSONObject("sceneApiIds") ?: JSONObject().also { image.put("sceneApiIds", it) }
         val reply = JSONObject()
         var curLlm = findByUid(configs, llm.optString("currentConfigId")) ?: configs.optJSONObject(0)
         var curApi = findByUid(apis, image.optString("currentApiId")) ?: apis.optJSONObject(0)
@@ -463,12 +535,46 @@ object ConnectionStore {
                 }
                 reply.put("added", added).put("skipped", skipped)
             }
-            "imgUseApi" -> image.put("currentApiId", a.optString("uid"))
+            "imgUseApi" -> {
+                val uid = a.optString("uid")
+                // 场景隔离：标签生图换运营商/模型不该把对话生图跟着改掉，反之亦然。
+                // chat 同时写 currentApiId（网页自动配图与 optimizeImagePrompt 认它）。
+                when (a.optString("scope")) {
+                    "chat" -> {
+                        image.put("currentApiId", uid)
+                        sceneIds.put("chat", uid)
+                    }
+                    "tag" -> sceneIds.put("tag", uid)
+                    else -> image.put("currentApiId", uid)
+                }
+            }
             "imgRemoveApi" -> {
                 val uid = a.optString("uid")
                 if (removeByUid(apis, uid) && image.optString("currentApiId") == uid) {
                     image.put("currentApiId", apis.optJSONObject(0)?.optString("_uid") ?: "")
                 }
+                if (sceneIds.optString("chat") == uid) sceneIds.put("chat", "")
+                if (sceneIds.optString("tag") == uid) sceneIds.put("tag", "")
+            }
+            "imgSetEngine" -> {
+                // 同一家运营商（同一 baseUrl）下的模型共享渲染器，避免逐条设。
+                val target = findByUid(apis, a.optString("uid").ifBlank { image.optString("currentApiId") }) ?: curApi
+                val key = target?.let { imageKey(it) }
+                for (i in 0 until apis.length()) {
+                    val x = apis.optJSONObject(i) ?: continue
+                    if (x === target || (key != null && imageKey(x) == key)) {
+                        x.put("engine", a.optString("engine"))
+                    }
+                }
+            }
+            "imgSaveSize" -> {
+                // 尺寸是「一套配置两处用」：风格页和标签生图页选了同一个尺寸，
+                // 同时写进接口与当前风格，读快照时就不会出现两处不一致。
+                val w = a.optInt("width", 832)
+                val h = a.optInt("height", 1216)
+                image.put("sizePreset", "${w}x${h}")
+                curApi?.put("width", w)?.put("height", h)
+                currentStyle(image)?.put("width", w)?.put("height", h)
             }
             "imgSaveParams" -> {
                 val p = a.optJSONObject("params") ?: JSONObject()
@@ -476,10 +582,16 @@ object ConnectionStore {
                     if (p.has("width")) it.put("width", p.optInt("width"))
                     if (p.has("height")) it.put("height", p.optInt("height"))
                 }
+                // 风格页保存时同步尺寸，兼容老页面的 imgSaveParams 写法
                 currentStyle(image)?.let {
+                    if (p.has("width")) it.put("width", p.optInt("width"))
+                    if (p.has("height")) it.put("height", p.optInt("height"))
                     listOf("negativePrompt", "artistTags", "qualityTags", "promptTemplate").forEach { k ->
                         if (p.has(k)) it.put(k, p.optString(k))
                     }
+                }
+                if (p.has("width") && p.has("height")) {
+                    image.put("sizePreset", "${p.optInt("width")}x${p.optInt("height")}")
                 }
             }
             "imgAddProvider" -> {
@@ -539,7 +651,8 @@ object ConnectionStore {
                 val s = findByUid(styles, uid) ?: return reply
                 val p = a.optJSONObject("sampling") ?: JSONObject()
                 if (p.has("steps")) s.put("steps", p.optInt("steps"))
-                if (p.has("cfgScale")) s.put("cfgScale", p.optInt("cfgScale"))
+                // CFG 允许小数（NovelAI 常用 5.5 / 6.5），别用 optInt 截断
+                if (p.has("cfgScale")) s.put("cfgScale", p.optDouble("cfgScale"))
                 if (p.has("sampler")) s.put("sampler", p.optString("sampler"))
                 if (p.has("noiseSchedule")) s.put("noiseSchedule", p.optString("noiseSchedule"))
             }
@@ -558,7 +671,11 @@ object ConnectionStore {
                 .put("apiConfigs", JSONArray()).put("styleConfigs", JSONArray())
                 .put("currentApiId", "").put("currentStyleId", "")
                 .put("autoImage", JSONObject().put("enabled", false).put("maxPerReply", 2).put("skipOptimization", true))
-                .put("quickContextWindow", 5).put("quickAiOnly", false),
+                .put("quickContextWindow", 5).put("quickAiOnly", false)
+                // 对话生图 / 标签生图各记各的选中接口，互不干扰。
+                // 为空时回落到 currentApiId（老数据、网页自动配图都走它）。
+                .put("sceneApiIds", JSONObject().put("chat", "").put("tag", ""))
+                .put("sizePreset", "832x1216"),
         )
 
     /** 补齐缺省容器与默认条目，保证任何渲染/命令都不会踩空。 */
@@ -570,6 +687,34 @@ object ConnectionStore {
         if (image.optJSONArray("apiConfigs") == null) image.put("apiConfigs", JSONArray())
         if (image.optJSONArray("styleConfigs") == null) image.put("styleConfigs", JSONArray())
         if (image.optJSONObject("autoImage") == null) image.put("autoImage", JSONObject())
+        if (image.optJSONObject("sceneApiIds") == null) {
+            image.put("sceneApiIds", JSONObject().put("chat", "").put("tag", ""))
+        }
+        // 老数据没有 engine 字段：从 web 端原有的 provider 推断，
+        // 这样「砂糖」这类 NovelAI 中转不用用户重选就能走对渲染器。
+        val apis = arr(image, "apiConfigs")
+        for (i in 0 until apis.length()) {
+            val a = apis.optJSONObject(i) ?: continue
+            if (a.optString("engine").isEmpty()) a.put("engine", engineOf(a))
+        }
+    }
+
+    /**
+     * 渲染引擎默认值：优先看用户显式选过的 `engine`，其次复刻 web 端
+     * `provider` 的语义（`novelai-relay` / `local` / `dall-e` / `custom`）。
+     * 模型名以 `nai-diffusion` 开头也算 NovelAI 格式，避免老接口漏判。
+     */
+    private fun engineOf(a: JSONObject): String {
+        val explicit = a.optString("engine").trim()
+        if (explicit.isNotEmpty()) return explicit
+        val p = a.optString("provider").trim()
+        if (p in setOf("novelai", "novelai-relay", "local", "custom", "dall-e")) return p
+        val model = a.optString("model").ifEmpty { a.optString("novelaiModel") }
+        return when {
+            p.contains("novelai") || model.startsWith("nai-diffusion") -> "novelai-relay"
+            a.optString("baseUrl").contains("novelai.net") -> "novelai"
+            else -> "custom"
+        }
     }
 
     private fun persist() {

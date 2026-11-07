@@ -102,17 +102,20 @@ class SessionEditorTest {
 
     @Test
     fun `空版本不会进入历史`() {
+        // 「幽灵版本」= ai 与 user 都空，判定与 web 的 onlyReal 一致
+        // （src/stores/adventure.ts:123）。只有 ai 为空、user 仍有内容的
+        // 版本是合法历史，不该被丢掉。
         val dirty = doc(
             act(
                 variants = listOf(
-                    MessageVariant(user = "旧指令", ai = ""),
+                    MessageVariant(user = "", ai = ""),
                     MessageVariant(user = "旧指令", ai = "旧回复"),
                 ),
             ),
         )
         val out = SessionEditor.replaceAi(dirty, "a1", "新回复")
         val a = out.actions.single()
-        assertTrue(a.variants.all { it.ai.isNotBlank() })
+        assertTrue(a.variants.all { it.ai.isNotBlank() || it.user.isNotBlank() })
         assertEquals(2, a.variants.size)
     }
 
@@ -145,12 +148,15 @@ class SessionEditorTest {
 
     @Test
     fun `切换前剔除历史里的空版本`() {
+        // 与 web switchVariant（src/stores/adventure.ts:506）一样只剔除
+        // ai 和 user 都空的幽灵版本。ai 是空白但 user 有内容的版本按 web
+        // 语义保留，不能在这里假设它会被删，否则原生会偏离网页版行为。
         val dirty = doc(
             act(
                 ai = "当前",
                 variants = listOf(
                     MessageVariant(user = "u", ai = "当前"),
-                    MessageVariant(user = "u", ai = "   "),
+                    MessageVariant(user = "", ai = "   "),
                     MessageVariant(user = "u", ai = "更早"),
                 ),
                 variantIndex = 0,
