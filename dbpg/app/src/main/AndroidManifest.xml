@@ -133,6 +133,14 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.DHP.Content" />
 
+        <!-- 对话生图：上文条数/提示词模型/运营商与风格/采样参数 -->
+        <activity
+            android:name=".settings.ChatImageConfigActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
+
         <!-- 显示设置：思维链隐藏 / 发给后端带不带正则 / 导出原文 -->
         <activity
             android:name=".settings.DisplayActivity"

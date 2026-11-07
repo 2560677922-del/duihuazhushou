@@ -90,6 +90,19 @@
         android:padding="8dp"
         android:gravity="center_vertical">
 
+        <!-- 快捷生图：按「对话生图」配置出图，插到最新一条 AI 回复上 -->
+        <TextView
+            android:id="@+id/chat_quickimg"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:text="🎨"
+            android:textSize="18sp"
+            android:contentDescription="按对话生图配置快速出图" />
+
         <EditText
             android:id="@+id/chat_input"
             android:layout_width="0dp"

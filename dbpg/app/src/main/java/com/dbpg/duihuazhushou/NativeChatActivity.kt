@@ -18,6 +18,8 @@ import com.dbpg.duihuazhushou.chat.ChatController
 import com.dbpg.duihuazhushou.chat.ChatItem
 import com.dbpg.duihuazhushou.chat.ChatLogLoader
 import com.dbpg.duihuazhushou.chat.ImageFileCache
+import com.dbpg.duihuazhushou.imagegen.ImageGenService
+import com.dbpg.duihuazhushou.settings.EngineBridge
 import com.dbpg.duihuazhushou.gallery.ImageViewerActivity
 import com.dbpg.duihuazhushou.session.SessionRepo
 import org.json.JSONObject
@@ -51,6 +53,22 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     private lateinit var adapter: ChatAdapter
     private lateinit var input: EditText
     private lateinit var titleView: TextView
+    private lateinit var quickImgBtn: TextView
+
+    /** 快捷生图是否在跑；以及"等模型回标签"时暂存的动作 id。 */
+    private var quickBusy = false
+    private var quickActionId: String = ""
+    private var quickStyleArtist = ""
+    private var quickStyleQuality = ""
+    private var quickStyleNegative = ""
+    private var quickSize = ""
+    private var quickApiUrl = ""
+    private var quickApiKey = ""
+    private var quickApiModel = ""
+
+    private val apiListener = com.dbpg.duihuazhushou.NativeBridge.ApiResultListener { json ->
+        runOnUiThread { onQuickImageResult(json) }
+    }
     private lateinit var sendBtn: TextView
     private lateinit var stopBtn: TextView
     private lateinit var appearance: AppearanceConfig
@@ -68,6 +86,8 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         list = findViewById(R.id.chat_list)
         input = findViewById(R.id.chat_input)
         titleView = findViewById(R.id.chat_title)
+        quickImgBtn = findViewById(R.id.chat_quickimg)
+        quickImgBtn.setOnClickListener { quickImage() }
         sendBtn = findViewById(R.id.chat_send)
         stopBtn = findViewById(R.id.chat_stop)
         val close = findViewById<TextView>(R.id.chat_close)
@@ -109,6 +129,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
 
     override fun onResume() {
         super.onResume()
+        com.dbpg.duihuazhushou.NativeBridge.setApiResultListener(apiListener)
         val latest = Appearance.load(this)
         if (latest != appearance) {
             appearance = latest
@@ -258,4 +279,145 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         adapter.submitList(items) { list.scrollToPosition(items.size - 1) }
         Toast.makeText(this, "已加载 ${items.size} 条", Toast.LENGTH_SHORT).show()
     }
+
+    // ------------------------------------------------------------ 快捷生图
+
+    /**
+     * 按「对话生图」配置快速出图：
+     *   读配置 → 取最近 N 条上文 → （可选）LLM 转标签 → 原生生图 → 挂到最新 AI 消息。
+     * 配置来源与聊天自动配图同一套（web image store）。
+     */
+    private fun quickImage() {
+        if (quickBusy) {
+            toast("还在出图，稍等一下")
+            return
+        }
+        val actionId = controller?.latestActionId()
+        if (actionId == null) {
+            toast("还没有可配图的回复")
+            return
+        }
+        quickBusy = true
+        quickImgBtn.alpha = 0.4f
+        toast("读取生图配置…")
+
+        EngineBridge.fetch(this, "getImageConfig") { cfg ->
+            if (cfg == null) {
+                finishQuick("引擎还没就绪")
+                return@fetch
+            }
+            val cur = cfg.optJSONObject("current") ?: JSONObject()
+            val auto = cfg.optJSONObject("auto") ?: JSONObject()
+            val n = auto.optInt("quickContextWindow", 5)
+            val useLlm = cur.optBoolean("useLlmOptimization", true)
+            val llmId = cur.optString("llmConfigId")
+
+            quickApiUrl = cur.optString("baseUrl")
+            quickApiKey = cur.optString("apiKey")
+            quickApiModel = cur.optString("model")
+            quickSize = "${cur.optInt("width", 832)}x${cur.optInt("height", 1216)}"
+            quickActionId = actionId
+
+            EngineBridge.fetch(this, "getImageStyle") { st ->
+                if (st == null) {
+                    finishQuick("风格读取失败")
+                    return@fetch
+                }
+                quickStyleArtist = st.optString("artistTags")
+                quickStyleQuality = st.optString("qualityTags")
+                quickStyleNegative = st.optString("negativePrompt")
+
+                if (quickApiUrl.isBlank()) {
+                    finishQuick("还没配置生图运营商")
+                    return@fetch
+                }
+
+                val context = controller?.contextText(n).orEmpty()
+                if (context.isBlank()) {
+                    finishQuick("上下文为空")
+                    return@fetch
+                }
+                if (useLlm) {
+                    toast("让模型生成画面标签…")
+                    EngineBridge.command(
+                        JSONObject().put("cmd", "optimizeImagePrompt")
+                            .put("context", context).put("llmConfigId", llmId),
+                    )
+                } else {
+                    // 不用模型：直接用这段上下文（截断），够用且零额外成本
+                    generateQuickImage(context.take(600))
+                }
+            }
+        }
+    }
+
+    private fun onQuickImageResult(json: String) {
+        val o = try {
+            JSONObject(json)
+        } catch (_: Throwable) {
+            return
+        }
+        if (o.optString("kind") != "optimizeImagePrompt") return
+        if (!o.optBoolean("ok")) {
+            // 模型失败不阻塞出图：退回原文当标签，至少能出一张
+            toast("标签生成失败（${o.optString("error")}），改用原文")
+            val fallback = controller?.let { c ->
+                c.doc?.actions?.lastOrNull { it.ai.isNotBlank() }?.let { c.plainTextOf(it) }
+            }.orEmpty()
+            generateQuickImage(fallback.take(600))
+            return
+        }
+        generateQuickImage(o.optString("prompt"))
+    }
+
+    private fun generateQuickImage(tags: String) {
+        if (tags.isBlank()) {
+            finishQuick("提示词为空")
+            return
+        }
+        val full = listOf(quickStyleArtist, quickStyleQuality, tags)
+            .map { it.trim() }.filter { it.isNotEmpty() }.joinToString(", ")
+        toast("出图中…")
+        val req = ImageGenService.Request(
+            url = quickApiUrl,
+            apiKey = quickApiKey,
+            model = quickApiModel.ifBlank { "nai-diffusion-4-5-full" },
+            prompt = full,
+            size = quickSize.ifBlank { null },
+            responseFormat = "b64_json",
+            extraBody = if (quickStyleNegative.isBlank()) emptyMap()
+            else mapOf("negative_prompt" to quickStyleNegative),
+        )
+        val svc = ImageGenService(applicationContext)
+        svc.generate(req, object : ImageGenService.Callback {
+            override fun onSuccess(images: List<com.dbpg.duihuazhushou.imagegen.ImageStore.StoredImage>) {
+                svc.shutdown()
+                val first = images.firstOrNull()
+                if (first == null) {
+                    finishQuick("没有解析到图片")
+                    return
+                }
+                runOnUiThread {
+                    controller?.attachImage(quickActionId, first.path, full)
+                    finishQuick("已生成 1 张")
+                }
+            }
+
+            override fun onError(message: String) {
+                svc.shutdown()
+                runOnUiThread { finishQuick("出图失败：$message") }
+            }
+        })
+    }
+
+    private fun finishQuick(msg: String) {
+        quickBusy = false
+        quickImgBtn.alpha = 1f
+        toast(msg)
+    }
+
+    private fun toast(msg: String) {
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
 }

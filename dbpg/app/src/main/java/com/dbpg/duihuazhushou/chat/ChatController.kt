@@ -15,6 +15,8 @@ import com.dbpg.stcore.session.SessionAction
 import com.dbpg.stcore.session.SessionDoc
 import com.dbpg.stcore.session.SessionEditor
 import com.dbpg.stcore.session.SessionHistory
+import com.dbpg.stcore.stripHtmlNoise
+import com.dbpg.stcore.stripImageMarkers
 import com.dbpg.stcore.transformForDisplay
 import java.util.concurrent.Executors
 
@@ -454,6 +456,57 @@ class ChatController(
         genActionId = ""
         genText = ""
         genIsNew = false
+    }
+
+    // ------------------------------------------------------------ 快捷生图支撑
+
+    /** 最近 N 条对话的纯文本上下文（用户 + AI 各算一条），给"生成画面标签"用。 */
+    fun contextText(n: Int): String {
+        val d = doc ?: return ""
+        val take = n.coerceIn(1, 20)
+        val actions = d.actions.takeLast(take)
+        return actions.joinToString("\n") { a ->
+            buildString {
+                if (a.user.isNotBlank()) append("用户：").append(a.user.trim()).append('\n')
+                if (a.ai.isNotBlank()) append("AI：").append(plainTextOf(a)).append('\n')
+            }.trim()
+        }
+    }
+
+    /** 一条消息的可读纯文本（跑显示清洗：剥 HTML 噪声/图片标记，不跑正则美化）。 */
+    fun plainTextOf(a: SessionAction): String {
+        var t = a.ai
+        t = stripHtmlNoise(t)
+        t = stripImageMarkers(t)
+        return t.trim()
+    }
+
+    /** 最新一条有 AI 正文的消息（快捷出图的目标）。 */
+    fun latestActionId(): String? =
+        doc?.actions?.lastOrNull { it.ai.isNotBlank() }?.id
+
+    /**
+     * 把生成的图片挂到某条消息上并刷新。
+     * 只动 images，不改正文 —— 出图失败不会影响聊天内容。
+     */
+    fun attachImage(actionId: String, localPath: String, prompt: String) {
+        val d = doc ?: return
+        val act = d.actions.find { it.id == actionId } ?: return
+        val img = ActionImage(
+            id = "img-" + System.currentTimeMillis(),
+            description = "快捷生图",
+            markdownIndex = -1,
+            prompt = prompt.take(1000),
+            localPath = localPath,
+        )
+        val next = act.copy(images = act.images + img)
+        val doc2 = d.copy(
+            actions = d.actions.map { if (it.id == actionId) next else it },
+            updatedAt = System.currentTimeMillis(),
+        )
+        doc = doc2
+        SessionRepo.save(doc2)
+        render(true)
     }
 
     // ------------------------------------------------------------ 消息操作

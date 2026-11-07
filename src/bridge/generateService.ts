@@ -734,6 +734,81 @@ async function apiCommand(raw: string): Promise<void> {
         break;
       }
 
+      // ─────────── 对话生图（自动配图的配置与快速出图） ───────────
+
+      /** 保存对话生图全局设置：上文条数 / 优化开关 / 提示词模型。 */
+      case 'imgSaveAuto': {
+        const img = useImageStore();
+        const p = req.auto || {};
+        if (p.enabled !== undefined) await img.updateAutoImage({ enabled: !!p.enabled });
+        if (p.maxPerReply !== undefined) await img.updateAutoImage({ maxPerReply: Number(p.maxPerReply) });
+        if (p.quickContextWindow !== undefined) {
+          await img.updateQuickContext(Number(p.quickContextWindow), !!p.aiOnly);
+        }
+        // 优化开关与提示词模型挂在"接口"上（同一家共用一套 LLM 设置）
+        const apiId = String(req.uid || img.currentApiId || '');
+        const target = img.apiConfigs.find((c) => c._uid === apiId);
+        if (target) {
+          const patch: Record<string, unknown> = {};
+          if (p.useLlmOptimization !== undefined) patch.useLlmOptimization = !!p.useLlmOptimization;
+          if (typeof p.llmConfigId === 'string') patch.llmConfigId = p.llmConfigId || undefined;
+          if (Object.keys(patch).length) await img.updateApi(target._uid, patch);
+        }
+        break;
+      }
+
+      /** 保存采样参数（挂在当前风格上）。 */
+      case 'imgSaveSampling': {
+        const img = useImageStore();
+        const uid = String(req.uid || img.currentStyleId || '');
+        const st = img.styleConfigs.find((x) => x._uid === uid);
+        if (!st) throw new Error('风格不存在');
+        const p = req.sampling || {};
+        const patch: Record<string, unknown> = {};
+        if (p.steps !== undefined) patch.steps = Number(p.steps);
+        if (typeof p.sampler === 'string') patch.sampler = p.sampler;
+        if (p.cfgScale !== undefined) patch.cfgScale = Number(p.cfgScale);
+        if (typeof p.noiseSchedule === 'string') patch.noiseSchedule = p.noiseSchedule;
+        if (Object.keys(patch).length) await img.updateStyle(uid, patch);
+        break;
+      }
+
+      /**
+       * 对话生图：把"最近 N 条上下文"交给 LLM 转成生图标签。
+       * 用不用模型由调用方决定；这里只负责"用模型时怎么调"。
+       * 结果经 onApiResult(kind=optimizeImagePrompt, prompt=…)。
+       */
+      case 'optimizeImagePrompt': {
+        const api = useApiConfigStore();
+        await api.load();
+        const reqCfg = (api.configs || []).find((c) => c._uid === req.llmConfigId);
+        const cfg = reqCfg || api.currentConfig;
+        if (!cfg) throw new Error('没有可用的对话模型配置');
+        const text = String(req.context || '').slice(0, 6000);
+        if (!text.trim()) throw new Error('上下文为空');
+        const sys =
+          '你是 NovelAI 标签撰写器。把给定的剧情片段概括成一段英文 Danbooru 风格标签，' +
+          '只输出标签本身，用英文逗号分隔，不要解释、不要引号、不要换行。' +
+          '包含人物外观、服装、动作、场景、镜头与氛围；不要出现人名。';
+        const out = await streamChatCompletion(
+          {
+            ...(cfg as any),
+            temperature: 0.5,
+            maxTokens: 220,
+            stream: false,
+          } as any,
+          [
+            { role: 'system', content: sys },
+            { role: 'user', content: text },
+          ],
+          {},
+        );
+        const tags = String(out || '').replace(/^["'`]|["'`]$/g, '').trim();
+        if (!tags) throw new Error('模型没有返回标签');
+        replyApiResult({ kind: cmd, ok: true, prompt: tags });
+        return;
+      }
+
       /** 保存显示设置（思维链/正则作用范围）。 */
       case 'saveDisplay': {
         const s = useStorageSettingsStore();
@@ -909,6 +984,7 @@ async function apiCommand(raw: string): Promise<void> {
 /** 生图接口列表：交互对齐 LLM 运营商（地址/密钥/拉模型/多选添加/快捷切换）。 */
 function imageApiSummary(): string {
   const img = useImageStore();
+  const api = useApiConfigStore();
   const cur: any = img.currentConfig || {};
   return JSON.stringify({
     apis: (img.apiConfigs || []).map((a) => ({
@@ -928,7 +1004,24 @@ function imageApiSummary(): string {
       width: cur.width || 832,
       height: cur.height || 1216,
       negativePrompt: cur.negativePrompt || '',
+      // 对话生图：提示词优化开关与所用 LLM
+      useLlmOptimization: img.currentApi?.useLlmOptimization !== false,
+      llmConfigId: img.currentApi?.llmConfigId || '',
     },
+    // 对话生图全局设置
+    auto: {
+      enabled: !!img.autoImage?.enabled,
+      maxPerReply: img.autoImage?.maxPerReply ?? 2,
+      quickContextWindow: img.quickContextWindow ?? 5,
+      skipOptimization: img.autoImage?.skipOptimization !== false,
+    },
+    // 可选的提示词模型（LLM 配置清单）
+    llmConfigs: (api.configs || []).map((c) => ({
+      uid: c._uid,
+      name: c._name || c.model || '未命名',
+      model: c.model || '',
+      current: c._uid === api.currentConfigId,
+    })),
   });
 }
 
@@ -1037,6 +1130,10 @@ function imageStyleSummary(): string {
     negativePrompt: style.negativePrompt || '',
     promptTemplate: style.promptTemplate || '',
     thumb: style.thumb || '',
+    sampler: style.sampler || '',
+    steps: style.steps ?? 28,
+    cfgScale: style.cfgScale ?? 6,
+    noiseSchedule: style.noiseSchedule || '',
     width: cur.width || 832,
     height: cur.height || 1216,
   });

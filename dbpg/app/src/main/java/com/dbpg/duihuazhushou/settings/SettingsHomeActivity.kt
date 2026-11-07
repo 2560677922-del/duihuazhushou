@@ -33,6 +33,9 @@ class SettingsHomeActivity : Activity() {
         findViewById<View>(R.id.shome_style).setOnClickListener {
             startActivity(Intent(this, ImageStyleActivity::class.java))
         }
+        findViewById<View>(R.id.shome_chatimg).setOnClickListener {
+            startActivity(Intent(this, ChatImageConfigActivity::class.java))
+        }
         findViewById<View>(R.id.shome_display).setOnClickListener {
             startActivity(Intent(this, DisplayActivity::class.java))
         }
