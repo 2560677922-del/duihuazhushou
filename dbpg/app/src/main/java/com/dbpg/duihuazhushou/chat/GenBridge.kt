@@ -4,6 +4,8 @@ import android.os.Handler
 import android.os.Looper
 import android.webkit.WebView
 import com.dbpg.duihuazhushou.MainActivity
+import com.dbpg.duihuazhushou.settings.ConnectionStore
+import com.dbpg.duihuazhushou.settings.EngineBridge
 import com.dbpg.stcore.session.PromptMessage
 import org.json.JSONArray
 import org.json.JSONObject
@@ -60,6 +62,12 @@ object GenBridge {
         sink: Sink,
     ): String? {
         val wv: WebView = MainActivity.getWebView() ?: return null
+
+        // 配置已改由原生 ConnectionStore 掌管。每次生成前补一次单向镜像推送：
+        // 配置变更时引擎可能还没启动/刚重建，这里兜底保证 imageConfig() 与
+        // buildMessages() 拿到的都是最新配置；req 里再带一份 LLM config 双保险。
+        EngineBridge.pushToEngine()
+
         val id = "g" + System.nanoTime().toString(36)
         entries[id] = Holder(sink)
 
@@ -75,6 +83,7 @@ object GenBridge {
             // null = "还没读到配置，让 web 按它自己的设置判断"
             .put("imageInstruction", imageInstruction ?: JSONObject.NULL)
             .put("imageInstructionMax", imageMax)
+            .put("config", ConnectionStore.llmRuntime())
 
         MainActivity.runOnUi {
             wv.evaluateJavascript(

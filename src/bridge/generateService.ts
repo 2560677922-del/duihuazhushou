@@ -38,6 +38,97 @@ import { useImageStore } from '../stores/image';
 import { resolveCached } from '../lib/lazyImage';
 import { fetchModels } from '../engine/imageGen';
 
+// ───────────────────── 原生配置镜像（只读，2026-11-07） ─────────────────────
+/**
+ * 运营商 / 模型 / 风格这些「连接配置」已经搬到安卓原生 ConnectionStore。
+ * 引擎不再把 Pinia store 当配置数据库，只读原生推来的镜像：
+ *
+ *   · 原生每次配置变更后调 __dhpApi.applyNativeConfig 单向推一份；
+ *   · 每次生成请求再带一份 req.config 作双保险（引擎刚启动/镜像还没到时）；
+ *   · 网页版独立运行时没有注入，所有读取点自动回退到 store，行为不变。
+ *
+ * ★ 刻意**不写回 store**：两份权威源迟早分叉，而且 store 落盘是异步的，
+ *   写回来的时序根本不可靠。预设 / 世界书 / 正则 / 变量等 ST 兼容层
+ *   仍然原样读 store，一个字没动 —— 这是兼容 SillyTavern 的底线。
+ */
+interface NativeConfigDoc {
+  llm: { configs: any[]; currentConfigId?: string; providerNotes?: Record<string, string> };
+  image: {
+    apiConfigs: any[];
+    styleConfigs: any[];
+    currentApiId?: string;
+    currentStyleId?: string;
+    autoImage?: any;
+    quickContextWindow?: number;
+    quickAiOnly?: boolean;
+  };
+}
+
+function nativeDoc(): NativeConfigDoc | null {
+  const d = (window as any).__dhpNativeConfig as NativeConfigDoc | undefined;
+  return d && Array.isArray(d?.llm?.configs) ? d : null;
+}
+
+/** 当前对话配置。生成请求里带的 req.config 优先级最高（时序最可靠）。 */
+function nativeLlm(uid?: string): any | undefined {
+  if (!uid) {
+    const rt = (window as any).__dhpRuntimeLlm;
+    if (rt) return rt;
+  }
+  const d = nativeDoc();
+  if (!d) return undefined;
+  const list = d.llm.configs || [];
+  return list.find((c) => c._uid === (uid || d.llm.currentConfigId)) || list[0];
+}
+
+/** 合并当前生图 API + 当前风格，形状对齐 image.ts 的 merged()。 */
+function nativeImageMerged(): any | null {
+  const d = nativeDoc();
+  if (!d) return null;
+  const apis = d.image.apiConfigs || [];
+  const styles = d.image.styleConfigs || [];
+  const a = apis.find((x) => x._uid === d.image.currentApiId) || apis[0] || {};
+  const s = styles.find((x) => x._uid === d.image.currentStyleId) || styles[0] || {};
+  return { ...a, ...s, _uid: s._uid ?? a._uid, name: s.name ?? a.name };
+}
+
+function nativeAuto(): any | null {
+  return nativeDoc()?.image.autoImage ?? null;
+}
+
+/**
+ * 一次性迁移：把 web store 里的老配置整份交给原生，之后永不再用。
+ * 只导出配置，绝不碰预设 / 世界书 / 正则等 ST 兼容层数据。
+ */
+function exportNativeConfig(): string {
+  const api = useApiConfigStore();
+  const img = useImageStore();
+  return JSON.stringify({
+    llm: {
+      configs: api.configs || [],
+      currentConfigId: api.currentConfigId || '',
+      providerNotes: api.providerNotes || {},
+    },
+    image: {
+      apiConfigs: img.apiConfigs || [],
+      styleConfigs: img.styleConfigs || [],
+      currentApiId: img.currentApiId || '',
+      currentStyleId: img.currentStyleId || '',
+      autoImage: img.autoImage || {},
+      quickContextWindow: img.quickContextWindow ?? 5,
+    },
+  });
+}
+
+/** 原生配置变更时推来的镜像。只存内存，不写 store。 */
+function applyNativeConfig(raw: string): void {
+  try {
+    (window as any).__dhpNativeConfig = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch (e) {
+    console.warn('[bridge] applyNativeConfig 解析失败', e);
+  }
+}
+
 /** 原生交来的一次生成请求。 */
 interface NativeGenRequest {
   requestId: string;
@@ -115,7 +206,8 @@ function buildMessages(
   );
   const storageSettings = useStorageSettingsStore();
   const regexScripts = storageSettings.llmContextRaw ? [] : assets.getCurrentRegexScripts();
-  const api = useApiConfigStore();
+  // 上下文裁剪预算来自原生配置镜像；网页版独立运行时回退到 store。
+  const llmCfg = nativeLlm() ?? useApiConfigStore().currentConfig;
   const variables = useVariablesStore();
 
   const chatHistory: ChatMessage[] = [...history];
@@ -127,8 +219,8 @@ function buildMessages(
     worldBooks,
     regexScripts,
     chatHistory,
-    contextWindowTokens: api.currentConfig?.contextWindow,
-    userLookbackTokens: api.currentConfig?.userLookbackTokens,
+    contextWindowTokens: llmCfg?.contextWindow,
+    userLookbackTokens: llmCfg?.userLookbackTokens,
     /*
      * ★ 必须用**原生会话 id**。
      *   用 `snapshot()` 的默认值会落到"网页当前会话"上 —— 那个 id 跟原生不是同一个，
@@ -198,12 +290,12 @@ async function generate(reqJson: string): Promise<void> {
     if (cancelled.delete(requestId)) return;
 
     const history = toChatMessages(req.messages || []);
-    const imageStore = useImageStore();
+    // 请求里带的是原生权威源，先落下：buildMessages / 发请求都读同一份。
+    if ((req as any).config) (window as any).__dhpRuntimeLlm = (req as any).config;
+    const auto = nativeAuto() ?? useImageStore().autoImage;
     const wantImage =
-      typeof req.imageInstruction === 'boolean'
-        ? req.imageInstruction
-        : imageStore.autoImage.enabled;
-    const imageMax = req.imageInstructionMax ?? imageStore.autoImage.maxPerReply;
+      typeof req.imageInstruction === 'boolean' ? req.imageInstruction : !!auto.enabled;
+    const imageMax = req.imageInstructionMax ?? auto.maxPerReply ?? 2;
 
     const finalMessages = buildMessages(history, cleanInput, wantImage, imageMax, sessionId);
     if (!finalMessages) {
@@ -211,7 +303,7 @@ async function generate(reqJson: string): Promise<void> {
       return;
     }
 
-    const cfg = useApiConfigStore().currentConfig;
+    const cfg = nativeLlm() ?? useApiConfigStore().currentConfig;
     if (!cfg) {
       callNative('onGenError', requestId, '还没有配置对话 API');
       return;
@@ -287,9 +379,10 @@ function stop(requestId: string): void {
  */
 function imageConfig(): string {
   const img = useImageStore();
-  const api = useApiConfigStore();
-  const cfg: any = img.currentConfig || {};
-  const llm: any = api.currentConfig || {};
+  // 原生注入优先；网页版独立运行时回退到 store。
+  const cfg: any = nativeImageMerged() ?? img.currentConfig ?? {};
+  const llm: any = nativeLlm() ?? useApiConfigStore().currentConfig ?? {};
+  const auto: any = nativeAuto() ?? img.autoImage;
 
   return JSON.stringify({
     config: {
@@ -307,11 +400,11 @@ function imageConfig(): string {
       promptTemplate: cfg.promptTemplate || '',
     },
     autoImage: {
-      enabled: !!img.autoImage.enabled,
-      maxPerReply: img.autoImage.maxPerReply || 2,
-      skipOptimization: img.autoImage.skipOptimization !== false,
-      usePreset: !!img.autoImage.usePreset,
-      presetMaxChars: img.autoImage.presetMaxChars || 4000,
+      enabled: !!auto.enabled,
+      maxPerReply: auto.maxPerReply || 2,
+      skipOptimization: auto.skipOptimization !== false,
+      usePreset: !!auto.usePreset,
+      presetMaxChars: auto.presetMaxChars || 4000,
     },
     llm: {
       baseUrl: llm.baseUrl || '',
@@ -321,7 +414,7 @@ function imageConfig(): string {
       maxTokens: llm.maxTokens || 900,
     },
     // 预设里跟画面相关的片段（可选）。原生只在 usePreset 时拼进提示词。
-    presetBlock: img.autoImage.usePreset ? presetSnippet(img.autoImage.presetMaxChars) : '',
+    presetBlock: auto.usePreset ? presetSnippet(auto.presetMaxChars) : '',
     dnaTags: '',
   });
 }
@@ -871,10 +964,13 @@ async function apiCommand(raw: string): Promise<void> {
        * 结果经 onApiResult(kind=optimizeImagePrompt, prompt=…)。
        */
       case 'optimizeImagePrompt': {
+        // 提示词模型配置来自原生镜像；网页版独立运行时才回退到 store。
+        const doc = nativeDoc();
         const api = useApiConfigStore();
-        await api.load();
-        const reqCfg = (api.configs || []).find((c) => c._uid === req.llmConfigId);
-        const cfg = reqCfg || api.currentConfig;
+        if (!doc) await api.load();
+        const list: any[] = doc ? doc.llm.configs || [] : (api.configs || []);
+        const reqCfg = list.find((c) => c._uid === req.llmConfigId);
+        const cfg = reqCfg || (doc ? nativeLlm(req.llmConfigId) || nativeLlm() : api.currentConfig);
         if (!cfg) throw new Error('没有可用的对话模型配置');
         const text = String(req.context || '').slice(0, 6000);
         if (!text.trim()) throw new Error('上下文为空');
@@ -1281,6 +1377,11 @@ function imageStyleSummary(): string {
 
 /** 装到 window 上，供原生 evaluateJavascript 调用。 */
 export function installGenerateService(): void {
+  // 配置 store 的持久化是异步的（IndexedDB）。引擎启动就预热，
+  // 保证原生首次迁移调 exportNativeConfig() 时拿到的是真实老数据，
+  // 而不是「store 还没 load 完」的空数组。
+  void useApiConfigStore().load();
+  void useImageStore().load();
   (window as any).__dhpGen = {
     generate: (json: string) => {
       void generate(json);
@@ -1300,6 +1401,9 @@ export function installGenerateService(): void {
     getImageStyle: imageStyleSummary,
     getDisplaySettings: displaySettingsSummary,
     getAssets: assetsDetail,
+    // 配置原生化：一次性迁移 + 单向镜像推送（见文件头「原生配置镜像」注释）
+    exportNativeConfig,
+    applyNativeConfig,
     fetchModels: (json: string) => {
       void fetchApiModels(json);
     },

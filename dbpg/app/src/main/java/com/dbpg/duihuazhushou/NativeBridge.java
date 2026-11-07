@@ -172,14 +172,25 @@ public final class NativeBridge {
         sApiListener = l;
     }
 
-    @JavascriptInterface
-    public void onApiResult(String json) {
+    /**
+     * 本地配置命令执行完后主动广播一条结果。
+     *
+     * 配置改成原生权威源之后，写命令不再等引擎回包；但设置页原本是靠
+     * onApiResult(kind=命令名) 触发 loadConfig()/load() 的。这里复用同一条
+     * 通道发一份本地结果，页面业务逻辑一行都不用改，也不会出现「改了不刷新」。
+     */
+    public static void fireLocal(String json) {
         ApiResultListener l = sApiListener;
         if (l == null) return;
-        String payload = json == null ? "{}" : json;
+        final String payload = json == null ? "{}" : json;
         MainActivity.runOnUi(() -> {
             ApiResultListener cur = sApiListener;
             if (cur != null) cur.onApiResult(payload);
         });
+    }
+
+    @JavascriptInterface
+    public void onApiResult(String json) {
+        fireLocal(json);
     }
 }

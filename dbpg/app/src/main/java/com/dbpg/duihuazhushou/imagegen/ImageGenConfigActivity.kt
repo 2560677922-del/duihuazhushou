@@ -336,29 +336,19 @@ class ImageGenConfigActivity : Activity() {
     // ------------------------------------------------------------ 拉取 / 命令
 
     private fun fetchModels() {
-        if (!EngineBridge.ready()) {
-            status.text = "引擎还没启动，稍后重试"
-            return
-        }
-        if (baseEdit.text?.toString()?.trim().isNullOrEmpty()) {
+        val baseUrl = baseEdit.text?.toString()?.trim().orEmpty()
+        val apiKey = keyEdit.text?.toString()?.trim().orEmpty()
+        if (baseUrl.isEmpty()) {
             status.text = "请先填写请求地址（Base URL）"
             return
         }
         status.text = "拉取中…"
         EngineBridge.command(
-            JSONObject()
-                .put("cmd", "imgSaveConn")
-                .put("baseUrl", baseEdit.text?.toString()?.trim() ?: "")
-                .put("apiKey", keyEdit.text?.toString()?.trim() ?: ""),
+            JSONObject().put("cmd", "imgSaveConn")
+                .put("baseUrl", baseUrl).put("apiKey", apiKey),
         )
-        val w = com.dbpg.duihuazhushou.MainActivity.getWebView() ?: return
-        val payload = org.json.JSONObject.quote(
-            JSONObject()
-                .put("baseUrl", baseEdit.text?.toString()?.trim() ?: "")
-                .put("apiKey", keyEdit.text?.toString()?.trim() ?: "")
-                .toString(),
-        )
-        w.evaluateJavascript("window.__dhpApi && window.__dhpApi.fetchModels($payload)") {}
+        // 原生 OkHttp 拉取，配置页不再依赖引擎 WebView
+        EngineBridge.fetchModels(baseUrl, apiKey)
     }
 
     private fun onApiResult(json: String) {

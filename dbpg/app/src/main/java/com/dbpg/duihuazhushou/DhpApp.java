@@ -19,9 +19,13 @@ import android.os.Bundle;
  */
 public final class DhpApp extends Application {
 
+    /** 全局引用：给没有 Context 的单例（ConnectionStore 落盘）用，不持有 Activity。 */
+    public static DhpApp instance;
+
     @Override
     public void onCreate() {
         super.onCreate();
+        instance = this;
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
             @Override public void onActivityStarted(Activity a) { MainActivity.attachEngineTo(a); }
 

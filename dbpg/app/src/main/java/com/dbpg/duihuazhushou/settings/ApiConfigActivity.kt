@@ -383,35 +383,34 @@ class ApiConfigActivity : Activity() {
     /** 连接信息 JSON（带 cmd 前缀的命令体）。 */
     private fun connJson(): JSONObject = JSONObject().put("baseUrl", baseEdit.text?.toString()?.trim() ?: "").put("apiKey", keyEdit.text?.toString()?.trim() ?: "")
 
+    /**
+     * 发一条配置命令。
+     *
+     * 2026-11-07 起全部走 [EngineBridge]：配置命令在原生就地执行、立即落盘，
+     * 不再需要 WebView 活着，也不会出现「引擎还在加载 → 点了没反应」。
+     * `connJson()` 带上输入框里的地址/密钥，保存前顺带把连接信息对齐。
+     */
     private fun command(cmd: String, extra: JSONObject = JSONObject()) {
-        val w = MainActivity.getWebView()
-        if (w == null) {
-            status.text = "引擎还没启动，稍后重试"
-            return
-        }
         val body = connJson().put("cmd", cmd)
         for (k in extra.keys()) body.put(k, extra.get(k))
-        // web 侧要 JSON 字符串（内部 JSON.parse），必须 quote 成 JS 字符串字面量
-        w.evaluateJavascript("window.__dhpApi && window.__dhpApi.command(${JSONObject.quote(body.toString())})") {}
+        EngineBridge.command(body)
     }
 
     private fun fetchModels() {
-        val w = MainActivity.getWebView()
-        if (w == null) {
-            status.text = "引擎还没启动，稍后重试"
-            return
-        }
-        if (baseEdit.text?.toString()?.trim().isNullOrEmpty()) {
+        val baseUrl = baseEdit.text?.toString()?.trim().orEmpty()
+        val apiKey = keyEdit.text?.toString()?.trim().orEmpty()
+        if (baseUrl.isEmpty()) {
             status.text = "请先填写请求地址（Base URL）"
             return
         }
         status.text = "拉取中…"
-        val payload = JSONObject.quote(JSONObject()
-            .put("baseUrl", baseEdit.text?.toString()?.trim() ?: "")
-            .put("apiKey", keyEdit.text?.toString()?.trim() ?: "").toString())
-        // 先把地址/密钥落库（运营商级同步），再拉列表 —— 两件事互不阻塞
-        w.evaluateJavascript("window.__dhpApi && window.__dhpApi.command(${JSONObject.quote(JSONObject().put("cmd", "saveConn").put("baseUrl", baseEdit.text?.toString()?.trim() ?: "").put("apiKey", keyEdit.text?.toString()?.trim() ?: "").toString())})") {}
-        w.evaluateJavascript("window.__dhpApi && window.__dhpApi.fetchModels($payload)") {}
+        // 先把地址/密钥落到原生权威源（运营商级同步），再拉列表 —— 两件事互不阻塞
+        EngineBridge.command(
+            JSONObject().put("cmd", "saveConn")
+                .put("baseUrl", baseUrl).put("apiKey", apiKey),
+        )
+        // 网络请求也在原生（OkHttp），不再借 WebView 的 fetch
+        EngineBridge.fetchModels(baseUrl, apiKey)
     }
 
     private fun saveParams() {
