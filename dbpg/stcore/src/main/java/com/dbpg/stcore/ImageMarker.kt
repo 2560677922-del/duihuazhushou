@@ -156,6 +156,23 @@ fun buildContentBlocks(text: String, attachments: List<NativeImage> = emptyList(
 }
 
 /**
+ * 剥离 <script>/<style> 整块（含内容）。
+ *
+ * 为什么必须做：美化正则的替换串是一份完整 HTML（<style> + <script>）。
+ * web 侧 <style> 会真的生效、<script> 被 v-html 忽略；原生没有 DOM，
+ * 不剥就会把 `button.addEventListener(...)` 这类代码当正文渲染出来。
+ */
+fun stripHtmlNoise(text: String): String {
+    if (!text.contains("<")) return text
+    var out = text
+    out = Regex("<script\\b[^>]*>[\\s\\S]*?</script\\s*>", RegexOption.IGNORE_CASE).replace(out, "")
+    out = Regex("<style\\b[^>]*>[\\s\\S]*?</style\\s*>", RegexOption.IGNORE_CASE).replace(out, "")
+    out = Regex("<script\\b[^>]*/?>", RegexOption.IGNORE_CASE).replace(out, "")
+    out = Regex("<style\\b[^>]*/?>", RegexOption.IGNORE_CASE).replace(out, "")
+    return out
+}
+
+/**
  * 原生界面的一站式变换：剥思维链 → 跑显示正则 → 展开变量宏 → 剥图片标记 → 切块。
  * 对应 web 的 displayText + buildContentBlocks 组合。
  */
@@ -187,6 +204,9 @@ fun transformForDisplay(
         out = msgs.first().content
     }
     if (vars != null) out = readVariables(out, vars)
+    // 美化正则常带 <style>/<script>：web 里 style 生效、script 被忽略；
+    // 原生不执行也不解析它们，留着就会把整段 CSS/JS 当正文显示 —— 直接剥掉。
+    out = stripHtmlNoise(out)
     out = stripImageMarkers(out)
     return buildContentBlocks(out, attachments)
 }

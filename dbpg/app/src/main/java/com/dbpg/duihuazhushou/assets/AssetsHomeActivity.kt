@@ -131,7 +131,7 @@ class AssetsHomeActivity : Activity() {
             }
             TAB_PRESET -> {
                 val arr = a.optJSONArray("presets") ?: JSONArray()
-                status.text = "共 ${arr.length()} 个预设，点名称启用；展开可编辑子条目"
+                status.text = "共 ${arr.length()} 个预设；点「启用」切换，点名称展开子条目"
                 for (i in 0 until arr.length()) {
                     val p = arr.getJSONObject(i)
                     renderPreset(box, a, p)
@@ -199,6 +199,19 @@ class AssetsHomeActivity : Activity() {
             setTextColor(0xFF66707F.toInt())
             textSize = 11f
         })
+        // 显式的启用按钮：点名称只是展开，启用点这里（用户反馈"没法决定启用哪个"）
+        head.addView(TextView(this).apply {
+            text = if (current) "使用中" else "启用"
+            setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF2F66D8.toInt())
+            textSize = 12f
+            setTypeface(typeface, if (current) Typeface.BOLD else Typeface.NORMAL)
+            background = getDrawable(R.drawable.bg_btn_soft)
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            setOnClickListener {
+                commandSetAssets(JSONObject().put("presetId", if (current) "" else id))
+                toast(if (current) "已停用" else "已启用这个预设")
+            }
+        })
         head.addView(TextView(this).apply {
             text = if (open) "▾" else "▸"
             setTextColor(0xFF8A94A6.toInt())
@@ -206,23 +219,6 @@ class AssetsHomeActivity : Activity() {
             setPadding(dp(8), 0, 0, 0)
         })
         box.addView(head)
-
-        val toggle = TextView(this).apply {
-            text = if (current) "停用这个预设" else "启用这个预设"
-            setTextColor(0xFF5A6B85.toInt())
-            textSize = 12f
-            gravity = Gravity.CENTER
-            background = getDrawable(R.drawable.bg_btn_soft)
-            setPadding(0, dp(9), 0, dp(9))
-            (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(6)
-            setOnClickListener {
-                commandSetAssets(
-                    JSONObject()
-                        .put("presetId", if (current) "" else id),
-                )
-            }
-        }
-        box.addView(toggle)
 
         if (!open) return
 

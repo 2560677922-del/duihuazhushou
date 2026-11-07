@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 生图风格：固定画师串 / 质量串 / 负面 / LLM 转标签模板 / 尺寸 -->
+<!--
+  生图风格页（原生）。
+  多套风格可存可切（与网页版一致），每套含：画师串 / 质量串 / 负面 / LLM 模板 /
+  尺寸 / 风格参考图（只作展示，不参与出图）。
+-->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -53,157 +57,246 @@
         </LinearLayout>
 
         <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="4dp"
+            android:paddingBottom="6dp"
+            android:text="我的风格（点一下切换，长按重命名/删除）"
+            android:textColor="#8A94A6"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/style_list"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="8dp"
-            android:text="固定画师串（排在提示词最前）"
-            android:textColor="#5A6B85"
-            android:textSize="12sp" />
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
+            android:orientation="vertical" />
 
-        <EditText
-            android:id="@+id/style_artist"
+        <TextView
+            android:id="@+id/style_add"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="12dp"
             android:layout_marginEnd="12dp"
             android:layout_marginTop="6dp"
-            android:background="@drawable/bg_input"
-            android:hint="artist:xxx, yyy"
-            android:importantForAutofill="no"
-            android:inputType="textMultiLine"
-            android:minLines="2"
-            android:padding="12dp"
-            android:textColor="#1A2230"
-            android:textColorHint="#9AA4B2"
+            android:background="@drawable/bg_btn_soft"
+            android:gravity="center"
+            android:padding="11dp"
+            android:text="＋ 新建风格"
+            android:textColor="#2F66D8"
             android:textSize="13sp" />
 
         <TextView
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="12dp"
-            android:text="质量串"
-            android:textColor="#5A6B85"
-            android:textSize="12sp" />
-
-        <EditText
-            android:id="@+id/style_quality"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:layout_marginEnd="12dp"
-            android:layout_marginTop="6dp"
-            android:background="@drawable/bg_input"
-            android:hint="best quality, masterpiece"
-            android:importantForAutofill="no"
-            android:inputType="textMultiLine"
-            android:minLines="2"
-            android:padding="12dp"
-            android:textColor="#1A2230"
-            android:textColorHint="#9AA4B2"
-            android:textSize="13sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="12dp"
-            android:text="负面提示词"
-            android:textColor="#5A6B85"
-            android:textSize="12sp" />
-
-        <EditText
-            android:id="@+id/style_negative"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:layout_marginEnd="12dp"
-            android:layout_marginTop="6dp"
-            android:background="@drawable/bg_input"
-            android:hint="lowres, bad anatomy…"
-            android:importantForAutofill="no"
-            android:inputType="textMultiLine"
-            android:minLines="2"
-            android:padding="12dp"
-            android:textColor="#1A2230"
-            android:textColorHint="#9AA4B2"
-            android:textSize="13sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="12dp"
-            android:text="LLM 转标签模板（{{contextText}} 为正文占位）"
-            android:textColor="#5A6B85"
-            android:textSize="12sp" />
-
-        <EditText
-            android:id="@+id/style_template"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:layout_marginEnd="12dp"
-            android:layout_marginTop="6dp"
-            android:background="@drawable/bg_input"
-            android:importantForAutofill="no"
-            android:inputType="textMultiLine"
-            android:minLines="2"
-            android:padding="12dp"
-            android:textColor="#1A2230"
-            android:textSize="13sp" />
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="18dp"
+            android:paddingBottom="6dp"
+            android:text="当前风格"
+            android:textColor="#8A94A6"
+            android:textSize="12sp"
+            android:textStyle="bold" />
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="12dp"
             android:layout_marginEnd="12dp"
-            android:layout_marginTop="12dp"
-            android:orientation="horizontal">
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="固定画师串（排在提示词最前）"
+                android:textColor="#5A6B85"
+                android:textSize="12sp" />
 
             <EditText
-                android:id="@+id/style_width"
-                android:layout_width="0dp"
+                android:id="@+id/style_artist"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginEnd="6dp"
+                android:layout_marginTop="6dp"
                 android:background="@drawable/bg_input"
-                android:hint="宽"
+                android:hint="artist:xxx, yyy"
                 android:importantForAutofill="no"
-                android:inputType="number"
+                android:inputType="textMultiLine"
+                android:minLines="2"
+                android:padding="12dp"
+                android:textColor="#1A2230"
+                android:textColorHint="#9AA4B2"
+                android:textSize="13sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="质量串"
+                android:textColor="#5A6B85"
+                android:textSize="12sp" />
+
+            <EditText
+                android:id="@+id/style_quality"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_input"
+                android:hint="best quality, masterpiece"
+                android:importantForAutofill="no"
+                android:inputType="textMultiLine"
+                android:minLines="2"
+                android:padding="12dp"
+                android:textColor="#1A2230"
+                android:textColorHint="#9AA4B2"
+                android:textSize="13sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="负面提示词"
+                android:textColor="#5A6B85"
+                android:textSize="12sp" />
+
+            <EditText
+                android:id="@+id/style_negative"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_input"
+                android:hint="lowres, bad anatomy…"
+                android:importantForAutofill="no"
+                android:inputType="textMultiLine"
+                android:minLines="2"
+                android:padding="12dp"
+                android:textColor="#1A2230"
+                android:textColorHint="#9AA4B2"
+                android:textSize="13sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="LLM 转标签模板（{{contextText}} 为正文占位）"
+                android:textColor="#5A6B85"
+                android:textSize="12sp" />
+
+            <EditText
+                android:id="@+id/style_template"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_input"
+                android:importantForAutofill="no"
+                android:inputType="textMultiLine"
+                android:minLines="2"
                 android:padding="12dp"
                 android:textColor="#1A2230"
                 android:textSize="13sp" />
 
-            <EditText
-                android:id="@+id/style_height"
-                android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginStart="6dp"
+                android:layout_marginTop="12dp"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/style_width"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/bg_input"
+                    android:hint="宽"
+                    android:importantForAutofill="no"
+                    android:inputType="number"
+                    android:padding="12dp"
+                    android:textColor="#1A2230"
+                    android:textColorHint="#9AA4B2"
+                    android:textSize="13sp" />
+
+                <EditText
+                    android:id="@+id/style_height"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_input"
+                    android:hint="高"
+                    android:importantForAutofill="no"
+                    android:inputType="number"
+                    android:padding="12dp"
+                    android:textColor="#1A2230"
+                    android:textColorHint="#9AA4B2"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="风格参考图（只作展示，不参与出图）"
+                android:textColor="#5A6B85"
+                android:textSize="12sp" />
+
+            <ImageView
+                android:id="@+id/style_thumb"
+                android:layout_width="match_parent"
+                android:layout_height="120dp"
+                android:layout_marginTop="6dp"
                 android:background="@drawable/bg_input"
-                android:hint="高"
-                android:importantForAutofill="no"
-                android:inputType="number"
-                android:padding="12dp"
-                android:textColor="#1A2230"
-                android:textSize="13sp" />
+                android:scaleType="centerCrop"
+                android:contentDescription="风格参考图" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/style_thumb_pick"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/bg_btn_soft"
+                    android:gravity="center"
+                    android:padding="10dp"
+                    android:text="选择参考图"
+                    android:textColor="#2F66D8"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/style_thumb_clear"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_btn_soft"
+                    android:gravity="center"
+                    android:padding="10dp"
+                    android:text="清除参考图"
+                    android:textColor="#8A94A6"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/style_save"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_btn_accent"
+                android:gravity="center"
+                android:padding="13dp"
+                android:text="保存到当前风格"
+                android:textColor="#2F66D8"
+                android:textSize="14sp"
+                android:textStyle="bold" />
         </LinearLayout>
-
-        <TextView
-            android:id="@+id/style_save"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:layout_marginEnd="12dp"
-            android:layout_marginTop="16dp"
-            android:background="@drawable/bg_btn_accent"
-            android:gravity="center"
-            android:padding="13dp"
-            android:text="保存"
-            android:textColor="#2F66D8"
-            android:textSize="14sp"
-            android:textStyle="bold" />
     </LinearLayout>
 </ScrollView>

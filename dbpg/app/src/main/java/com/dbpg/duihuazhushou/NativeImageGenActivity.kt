@@ -121,7 +121,12 @@ class NativeImageGenActivity : Activity() {
                     topMargin = 4
                 }
                 setOnClickListener {
-                    promptInput.append("${promptInput.text.takeIf { it.isNotBlank() }?.takeLast(1) ?: ""}${t.tag}, ")
+                    // 追加到提示词末尾（不能把原文本的最后一个字符重复一遍 —— 老实现有这个 bug）
+                    val cur = promptInput.text?.toString()?.trimEnd()
+                        ?.trimEnd(',', '，')?.trimEnd().orEmpty()
+                    val next = if (cur.isEmpty()) "${t.tag}, " else "$cur, ${t.tag}, "
+                    promptInput.setText(next)
+                    promptInput.setSelection(next.length)
                 }
             }
             row?.addView(chip)

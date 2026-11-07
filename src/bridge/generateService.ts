@@ -683,6 +683,57 @@ async function apiCommand(raw: string): Promise<void> {
         break;
       }
 
+      // ─────────── 生图风格（多套 + 参考图） ───────────
+
+      /** 新建风格。 */
+      case 'imgAddStyle': {
+        const img = useImageStore();
+        const made = await img.addStyle(String(req.name || '新风格'));
+        replyApiResult({ kind: cmd, ok: true, uid: made?._uid || '' });
+        return;
+      }
+      /** 切换使用的风格。 */
+      case 'imgUseStyle': {
+        const img = useImageStore();
+        const uid = String(req.uid || '');
+        if (!img.styleConfigs.some((s) => s._uid === uid)) throw new Error('风格不存在或已删除');
+        await img.setCurrentStyle(uid);
+        break;
+      }
+      /** 删除风格（最后一支不允许删空）。 */
+      case 'imgRemoveStyle': {
+        const img = useImageStore();
+        const uid = String(req.uid || '');
+        if (img.styleConfigs.length <= 1) throw new Error('至少要保留一套风格');
+        await img.removeStyle(uid);
+        break;
+      }
+      /** 重命名风格。 */
+      case 'imgRenameStyle': {
+        const img = useImageStore();
+        const uid = String(req.uid || '');
+        const s = img.styleConfigs.find((x) => x._uid === uid);
+        if (!s) throw new Error('风格不存在');
+        await img.updateStyle(uid, { name: String(req.name || s.name) });
+        break;
+      }
+      /** 保存某套风格的提示词字段与参考图（thumb 只作展示）。 */
+      case 'imgSaveStyle': {
+        const img = useImageStore();
+        const uid = String(req.uid || img.currentStyleId || '');
+        const s = img.styleConfigs.find((x) => x._uid === uid);
+        if (!s) throw new Error('风格不存在');
+        const p = req.style || {};
+        const patch: Record<string, unknown> = {};
+        if (typeof p.artistTags === 'string') patch.artistTags = p.artistTags;
+        if (typeof p.qualityTags === 'string') patch.qualityTags = p.qualityTags;
+        if (typeof p.negativePrompt === 'string') patch.negativePrompt = p.negativePrompt;
+        if (typeof p.promptTemplate === 'string') patch.promptTemplate = p.promptTemplate;
+        if (typeof p.thumb === 'string') patch.thumb = p.thumb;
+        if (Object.keys(patch).length) await img.updateStyle(uid, patch);
+        break;
+      }
+
       /** 保存显示设置（思维链/正则作用范围）。 */
       case 'saveDisplay': {
         const s = useStorageSettingsStore();
@@ -963,19 +1014,29 @@ function displaySettingsSummary(): string {
   });
 }
 
-/** 当前生图风格（提示词层）+ 尺寸。 */
+/**
+ * 生图风格：多套配置列表 + 当前风格详情（含参考图 thumb）。
+ * 与网页版一致 —— 风格可存多套，随用随切，参考图只作展示（不参与出图）。
+ */
 function imageStyleSummary(): string {
   const img = useImageStore();
   const cur: any = img.currentConfig || {};
   const styleId = img.currentStyleId;
   const style: any = (img.styleConfigs || []).find((s) => s._uid === styleId) || {};
   return JSON.stringify({
+    styles: (img.styleConfigs || []).map((s) => ({
+      uid: s._uid,
+      name: s.name || '未命名风格',
+      current: s._uid === styleId,
+      hasThumb: !!s.thumb,
+    })),
     styleUid: style._uid || '',
     styleName: style.name || '默认风格',
     artistTags: style.artistTags || '',
     qualityTags: style.qualityTags || '',
     negativePrompt: style.negativePrompt || '',
     promptTemplate: style.promptTemplate || '',
+    thumb: style.thumb || '',
     width: cur.width || 832,
     height: cur.height || 1216,
   });
