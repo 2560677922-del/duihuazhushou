@@ -103,6 +103,17 @@ object SessionRepo {
     // ------------------------------------------------------------ 从网页快照兜底导入
 
     /**
+     * 只取快照里的 sessionId，不做其它解析。
+     *
+     * ★ 这个方法**必须在后台线程调用**：快照即使已经瘦身（去掉图片 base64），
+     *   一个长会话的正文也能到几 MB，JSONObject 化在主线程会卡住第一帧。
+     *
+     * 抓不到就返回空串，调用方按"新会话"处理。
+     */
+    fun sessionIdOf(snapshotJson: String): String =
+        runCatching { JSONObject(snapshotJson).optString("sessionId", "") }.getOrDefault("")
+
+    /**
      * 本地没有这个会话时，用网页快照构造一份。
      *
      * 快照里只有"展开后的消息"，没有 variants —— 所以这是**兜底**，

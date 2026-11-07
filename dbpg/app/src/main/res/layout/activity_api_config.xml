@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  原生 API 接口配置页。
+
+  交互照搬网页版设置页的「运营商」心智：
+    填地址 + 密钥 → 拉取模型 → 选中即用。
+  数据落在 web 的 apiConfig store（生成走引擎，配置必须同源），
+  本页只是把那套交互画成原生控件。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0F1115"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="32dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="6dp">
+
+            <TextView
+                android:id="@+id/api_back"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:padding="10dp"
+                android:text="返回"
+                android:textColor="#8FA6C8"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="接口配置"
+                android:textColor="#E6EAF2"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:padding="10dp"
+                android:text=" "
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="12dp"
+            android:text="请求地址（Base URL）"
+            android:textColor="#8FA6C8"
+            android:textSize="13sp" />
+
+        <EditText
+            android:id="@+id/api_base"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="6dp"
+            android:background="#161A22"
+            android:hint="https://api.example.com/v1"
+            android:importantForAutofill="no"
+            android:inputType="textUri"
+            android:padding="14dp"
+            android:textColor="#E6EAF2"
+            android:textColorHint="#4E5A6B"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="16dp"
+            android:text="API 密钥"
+            android:textColor="#8FA6C8"
+            android:textSize="13sp" />
+
+        <EditText
+            android:id="@+id/api_key"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="6dp"
+            android:background="#161A22"
+            android:hint="sk-…"
+            android:importantForAutofill="no"
+            android:inputType="textVisiblePassword"
+            android:padding="14dp"
+            android:textColor="#E6EAF2"
+            android:textColorHint="#4E5A6B"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/api_fetch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="18dp"
+            android:background="#232A3A"
+            android:gravity="center"
+            android:padding="14dp"
+            android:text="拉取模型列表"
+            android:textColor="#7FB2FF"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/api_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="10dp"
+            android:text=""
+            android:textColor="#6C7A90"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="22dp"
+            android:text="当前模型"
+            android:textColor="#8FA6C8"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/api_current"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="6dp"
+            android:background="#161A22"
+            android:padding="14dp"
+            android:text="读取中…"
+            android:textColor="#E6EAF2"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/api_providers"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="16dp"
+            android:background="#161A22"
+            android:padding="14dp"
+            android:text=""
+            android:textColor="#8FA6C8"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:gravity="center"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:text="地址与密钥按「运营商」保存：同一家下的所有模型共用，\n改一处即全部生效（与网页版一致）。"
+            android:textColor="#4E5A6B"
+            android:textSize="11sp" />
+    </LinearLayout>
+</ScrollView>

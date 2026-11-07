@@ -102,6 +102,21 @@
             android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.DHP.Content" />
+
+        <!-- 设置首页：接口配置 / 外观 / 引擎 / 图片库 / 迁移 的入口列表 -->
+        <activity
+            android:name=".settings.SettingsHomeActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
+
+        <!-- API 接口配置：地址 + 密钥 + 拉取模型（数据落在 web apiConfig store，同源） -->
+        <activity
+            android:name=".settings.ApiConfigActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
     </application>
 
 </manifest>

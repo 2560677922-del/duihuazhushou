@@ -35,6 +35,7 @@ import { useApiConfigStore } from '../stores/apiConfig';
 import { useVariablesStore } from '../stores/variables';
 import { useStorageSettingsStore } from '../stores/storageSettings';
 import { useImageStore } from '../stores/image';
+import { fetchModels } from '../engine/imageGen';
 
 /** 原生交来的一次生成请求。 */
 interface NativeGenRequest {
@@ -449,6 +450,104 @@ async function setActive(json: string): Promise<void> {
   }
 }
 
+// ===================== 原生设置页的 API 配置桥（window.__dhpApi） =====================
+//
+// 原生设置页的交互是「输入地址 + 密钥 → 拉取模型 → 选中即可用」，
+// 与网页版设置页一致。数据必须落在 apiConfig store：生成走 web 引擎，
+// 配置也必须同源，否则原生存一份、web 读一份必然打架。
+//
+// 通信方式：
+//   · getConfig()        —— 同步返回 JSON 串（evaluateJavascript 直接接返回值）
+//   · saveConfig(json)   —— 异步保存，完成后回调 AndroidNative.onApiResult
+//   · fetchModels(json)  —— 异步拉取模型列表，完成/失败都回调 onApiResult
+// 异步结果统一走 onApiResult，原生侧用一次性监听接住。
+
+/** 原生设置页的结果回传（saveConfig / fetchModels 共用一条通道）。 */
+function replyApiResult(payload: Record<string, unknown>): void {
+  try {
+    (window as any).AndroidNative?.onApiResult?.(JSON.stringify(payload));
+  } catch {
+    /* 不在 App 里（纯浏览器开发）时没有这个桥，静默即可 */
+  }
+}
+
+/** 当前 API 配置 + 运营商概览。同步调用，原生 evaluateJavascript 接返回值。 */
+function apiConfigSummary(): string {
+  const api = useApiConfigStore();
+  const cur = api.currentConfig;
+  return JSON.stringify({
+    baseUrl: cur?.baseUrl || '',
+    apiKey: cur?.apiKey || '',
+    model: cur?.model || '',
+    modelName: cur?._name || '',
+    providers: api.providers.map((p) => ({
+      key: p.key,
+      note: p.note || '',
+      baseUrl: p.baseUrl || '',
+      modelCount: p.models?.length ?? 0,
+    })),
+  });
+}
+
+/**
+ * 保存地址 / 密钥 / 选中模型。
+ *
+ * 地址与密钥按「运营商级」同步（updateProvider 会把同一家全部改掉，
+ * 与网页版行为一致）；选模型时这家下已有该模型就切过去，没有就新增。
+ */
+async function saveApiConfig(raw: string): Promise<void> {
+  try {
+    const api = useApiConfigStore();
+    await api.load();
+    const req = JSON.parse(raw || '{}') as { baseUrl?: string; apiKey?: string; model?: string };
+    let cur = api.currentConfig;
+    if (!cur) {
+      await api.addConfig('默认配置');
+      cur = api.currentConfig;
+    }
+    if (!cur) throw new Error('无法创建 API 配置');
+
+    const patch: { baseUrl?: string; apiKey?: string } = {};
+    if (typeof req.baseUrl === 'string') patch.baseUrl = req.baseUrl;
+    if (typeof req.apiKey === 'string') patch.apiKey = req.apiKey;
+    if (Object.keys(patch).length) await api.updateProvider(cur._uid, patch);
+
+    const model = (req.model || '').trim();
+    if (model) {
+      const prov = api.currentProviderFull;
+      const hit = prov?.models.find((m) => (m.model || '').trim() === model);
+      if (hit) {
+        api.currentConfigId = hit._uid;
+        await api.save();
+      } else {
+        await api.addModelToProvider(cur._uid, model);
+      }
+    }
+    replyApiResult({ kind: 'save', ok: true });
+  } catch (e) {
+    replyApiResult({
+      kind: 'save',
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
+/** 拉取对话模型列表（复用 imageGen 的 fetchModels：兼容 /v1/models 各形态）。 */
+async function fetchApiModels(raw: string): Promise<void> {
+  try {
+    const req = JSON.parse(raw || '{}') as { baseUrl?: string; apiKey?: string };
+    const models = await fetchModels({ baseUrl: req.baseUrl || '', apiKey: req.apiKey });
+    replyApiResult({ kind: 'models', ok: true, models });
+  } catch (e) {
+    replyApiResult({
+      kind: 'models',
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
 /** 装到 window 上，供原生 evaluateJavascript 调用。 */
 export function installGenerateService(): void {
   (window as any).__dhpGen = {
@@ -461,6 +560,16 @@ export function installGenerateService(): void {
     assetCatalog,
     setActive: (json: string) => {
       void setActive(json);
+    },
+  };
+  // 原生设置页的 API 配置桥（同一次安装，不用 main.ts 再 import 一遍）
+  (window as any).__dhpApi = {
+    getConfig: apiConfigSummary,
+    saveConfig: (json: string) => {
+      void saveApiConfig(json);
+    },
+    fetchModels: (json: string) => {
+      void fetchApiModels(json);
     },
   };
 }

@@ -25,14 +25,42 @@ public final class NativeBridge {
     }
 
     /**
-     * 由网页入口按钮调用：{@code AndroidNative.openNativeChat(JSON.stringify(snapshot))}。
+     * 由网页入口按钮调用：{@code AndroidNative.openNativeChatWithId(sessionId, snapshot)}。
      *
-     * @param snapshotJson 网页 window.__dhpNative.getSnapshot() 序列化的会话 + 显示配置
+     * <p>★ 为什么把 sessionId 单独当一个参数：
+     *
+     * <p>原生端只要有 id 就能直接读本地会话文件，**不需要解析快照**。
+     * 以前只有一个签名的 {@code openNativeChat(snapshotJson)}，原生为了拿 id
+     * 必须在 onCreate 里把整个快照 JSONObject 化一遍；而快照里带着全部消息，
+     * 会话一长就是几 MB 的字符串。主线程被这一步按住，第一帧画不出来，
+     * 用户看到的就是"点一下原生聊天就黑屏卡住"。
+     *
+     * <p>现在 sessionId 走独立参数，原生零解析；快照退化成兜底数据，
+     * 只有本地确实没有这份会话时才会用到。
+     *
+     * @param sessionId    会话 id，可为空（为空时原生再从快照里找）
+     * @param snapshotJson 瘦身后的快照（不含图片 base64、不含正则表），可为空
+     */
+    @JavascriptInterface
+    public void openNativeChatWithId(String sessionId, String snapshotJson) {
+        launch(sessionId, snapshotJson);
+    }
+
+    /**
+     * 旧签名，保留兼容（老网页产物 / 老 APK 混用时不会崩）。
+     *
+     * @param snapshotJson 网页 window.__dhpNative.getSnapshot() 序列化结果
      */
     @JavascriptInterface
     public void openNativeChat(String snapshotJson) {
+        // 这里不做解析：把整串原样交给 Activity，由它在后台线程提取 id。
+        launch("", snapshotJson);
+    }
+
+    private void launch(String sessionId, String snapshotJson) {
         try {
             Intent intent = new Intent(context, NativeChatActivity.class);
+            intent.putExtra(NativeChatActivity.EXTRA_SESSION_ID, sessionId == null ? "" : sessionId);
             intent.putExtra(NativeChatActivity.EXTRA_SNAPSHOT, snapshotJson == null ? "" : snapshotJson);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             context.startActivity(intent);
@@ -122,5 +150,36 @@ public final class NativeBridge {
     public void onGenStopped(String requestId) {
         com.dbpg.duihuazhushou.chat.GenBridge.INSTANCE
                 .onGenStopped(requestId == null ? "" : requestId);
+    }
+
+    // ------------------------------------------------------------------
+    // API 配置桥的结果回传（web apiConfig store → 原生设置页）
+    //
+    // 原生设置页调 window.__dhpApi.saveConfig / fetchModels（异步），
+    // web 处理完调这里把结果送回。监听是一次性的：设置页 onResume 注册、
+    // onPause 注销，别的页面注册前收到结果直接丢弃。
+    // ------------------------------------------------------------------
+
+    /** 原生设置页等待 web 异步结果的回调。 */
+    public interface ApiResultListener {
+        void onApiResult(String json);
+    }
+
+    private static volatile ApiResultListener sApiListener;
+
+    /** 设置页进入前台时注册，退到后台注销（见 ApiConfigActivity）。 */
+    public static void setApiResultListener(ApiResultListener l) {
+        sApiListener = l;
+    }
+
+    @JavascriptInterface
+    public void onApiResult(String json) {
+        ApiResultListener l = sApiListener;
+        if (l == null) return;
+        String payload = json == null ? "{}" : json;
+        MainActivity.runOnUi(() -> {
+            ApiResultListener cur = sApiListener;
+            if (cur != null) cur.onApiResult(payload);
+        });
     }
 }

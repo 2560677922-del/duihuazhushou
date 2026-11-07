@@ -81,13 +81,20 @@ class NativeChatActivity : Activity(), ChatController.Sink {
 
         controller = ChatController(applicationContext, ImageFileCache(this), this)
 
-        val sessionId = resolveSessionId()
-        if (sessionId.isBlank()) {
+        /*
+         * sessionId 直接从 Intent 拿，不在这里解析快照。
+         *
+         * 快照里带着整段会话正文，主线程 JSONObject 化一次就可能按住第一帧
+         * （黑屏卡死的直接原因）。解析交给 ChatController 的后台线程做。
+         */
+        val sessionId = intent.getStringExtra(EXTRA_SESSION_ID).orEmpty().trim()
+        val snapshot = intent.getStringExtra(EXTRA_SNAPSHOT).orEmpty()
+        if (sessionId.isBlank() && snapshot.isBlank()) {
             Toast.makeText(this, "没有指定会话", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
-        controller.open(sessionId, intent.getStringExtra(EXTRA_SNAPSHOT))
+        controller.open(sessionId, snapshot)
 
         close.setOnClickListener { finish() }
         sendBtn.setOnClickListener { submitInput() }
@@ -97,18 +104,6 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         engineBtn.setOnClickListener {
             startActivity(Intent(this, com.dbpg.duihuazhushou.engine.EngineSettingsActivity::class.java))
         }
-    }
-
-    /**
-     * 会话 id 从哪来：
-     *   1. 会话列表点进来 → EXTRA_SESSION_ID
-     *   2. 老入口（网页「原生聊天」按钮）→ 快照里的 sessionId
-     */
-    private fun resolveSessionId(): String {
-        intent.getStringExtra(EXTRA_SESSION_ID)?.let { if (it.isNotBlank()) return it }
-        val snap = intent.getStringExtra(EXTRA_SNAPSHOT)?.trim()
-        if (snap.isNullOrEmpty()) return ""
-        return runCatching { JSONObject(snap).optString("sessionId", "") }.getOrDefault("")
     }
 
     override fun onResume() {

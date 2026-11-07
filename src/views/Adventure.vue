@@ -660,9 +660,14 @@ onMounted(async () => {
         assets.currentCharacterId = obj._uid;
         await assets.save();
         await adventure.addSession(obj.name || '新的冒险', '');
-        const native = (window as any).AndroidNative;
-        if (native && typeof native.openNativeChat === 'function') {
-          native.openNativeChat('');
+        /*
+         * 走统一入口，不要在这里凭空调 AndroidNative.openNativeChat('')。
+         * 以前传空串，原生解析不出 sessionId 就直接 finish() ——
+         * 用户看到的就是"点了角色卡，闪一下又回来了"。
+         */
+        const bridge = (window as any).__dhpNative;
+        if (bridge && typeof bridge.openNativeChat === 'function') {
+          bridge.openNativeChat();
         }
       } catch (e) {
         console.error('原生角色卡导入失败', e);

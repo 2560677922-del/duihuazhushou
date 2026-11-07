@@ -90,6 +90,14 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // 先装崩溃记录：后面任何一个 Activity 崩了都能留下堆栈，
+        // 真机不方便连 adb 时，这是唯一能拿到证据的地方。
+        CrashLogger.INSTANCE.install(this);
+        String lastCrash = CrashLogger.INSTANCE.read(this);
+        if (lastCrash != null) {
+            Log.e(TAG, "上次崩溃记录：\n" + lastCrash);
+        }
+
         getWindow().setStatusBarColor(BG_COLOR);
         getWindow().setNavigationBarColor(BG_COLOR);
 
@@ -109,12 +117,35 @@ public final class MainActivity extends Activity {
         errorView.setOnClickListener(v -> loadApp());
         root.addView(errorView, fill);
 
-        webView = createWebView();
-        // 底部留出原生导航的高度：WebView 变矮而不是被遮住，
-        // 这样网页里的 100vh 仍然等于可见区域，不会挡掉输入框。
-        FrameLayout.LayoutParams webLp = new FrameLayout.LayoutParams(
+        /*
+         * 应用主界面 = 原生「冒险」页（会话列表）。
+         *
+         * 这一层以前是全屏 WebView —— 用户看到的是网页版 UI。
+         * 既然要做成纯原生应用，可见界面必须全部由原生绘制：
+         * 网页层退到后台，只负责 ST 兼容引擎（正则/宏/变量/提示词组装 + 发请求）。
+         */
+        FrameLayout content = new FrameLayout(this);
+        FrameLayout.LayoutParams contentLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
-        webLp.bottomMargin = dp(NAV_HEIGHT_DP);
+        contentLp.bottomMargin = dp(NAV_HEIGHT_DP);
+        root.addView(content, contentLp);
+        homeRefresher = com.dbpg.duihuazhushou.session.HomeBinder.INSTANCE.bind(this, content);
+
+        /*
+         * 引擎 WebView：1dp、全透明、不参与布局。
+         *
+         * 为什么还要留着它：预设 / 世界书 / 角色卡 / 变量 / 正则这些必须是
+         * ST 完全兼容的，那套解析与拼装逻辑已经在网页层跑通了，重写一遍
+         * 只会引入不一致。所以把它当"没有界面的后端"用：
+         *   · 原生通过 evaluateJavascript 调 __dhpGen / __dhpData；
+         *   · 它把结果回调给原生。
+         * 尺寸给 1dp 而不是 GONE：GONE 的 WebView 在部分机型上会被判定为
+         * 不可见而暂停 JS 定时器，1dp + alpha=0 能稳定执行又看不见。
+         */
+        webView = createWebView();
+        FrameLayout.LayoutParams webLp = new FrameLayout.LayoutParams(dp(1), dp(1));
+        webLp.gravity = Gravity.TOP | Gravity.START;
+        webView.setAlpha(0f);
         root.addView(webView, webLp);
 
         View nav = getLayoutInflater().inflate(R.layout.view_bottom_nav, root, false);
@@ -127,21 +158,30 @@ public final class MainActivity extends Activity {
         loadApp();
     }
 
-    /** 原生导航栏：只跳转，不承载业务（聊天仍走 WebView 里的页面）。 */
-    private void bindBottomNav(View nav) {
-        TextView chat = nav.findViewById(R.id.nav_chat);
-        chat.setTextColor(0xFF7FB2FF);
-        chat.setOnClickListener(v ->
-                startActivity(new Intent(this, com.dbpg.duihuazhushou.session.SessionListActivity.class)));
+    /** 首页（会话列表）刷新句柄：onResume 调一次，从聊天/迁移页回来立刻更新。 */
+    private com.dbpg.duihuazhushou.session.HomeBinder.Refresher homeRefresher;
 
-        nav.findViewById(R.id.nav_character).setOnClickListener(v ->
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (homeRefresher != null) homeRefresher.refresh();
+    }
+
+    /** 原生导航栏：只跳转，不承载业务。 */
+    private void bindBottomNav(View nav) {
+        // 当前就在「冒险」，再点一次当"回到顶部/刷新"用
+        nav.findViewById(R.id.nav_adventure).setOnClickListener(v -> {
+            if (homeRefresher != null) homeRefresher.refresh();
+        });
+
+        nav.findViewById(R.id.nav_assets).setOnClickListener(v ->
                 startActivity(new Intent(this, com.dbpg.duihuazhushou.character.CharacterListActivity.class)));
 
-        nav.findViewById(R.id.nav_image).setOnClickListener(v ->
-                startActivity(new Intent(this, NativeImageGenActivity.class)));
-
         nav.findViewById(R.id.nav_settings).setOnClickListener(v ->
-                startActivity(new Intent(this, com.dbpg.duihuazhushou.appearance.SettingsActivity.class)));
+                startActivity(new Intent(this, com.dbpg.duihuazhushou.settings.SettingsHomeActivity.class)));
+
+        nav.findViewById(R.id.nav_imagegen).setOnClickListener(v ->
+                startActivity(new Intent(this, NativeImageGenActivity.class)));
     }
 
     private int dp(int v) {

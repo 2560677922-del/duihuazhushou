@@ -1,6 +1,8 @@
 package com.dbpg.duihuazhushou.chat
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import com.dbpg.duihuazhushou.appearance.AppearanceConfig
 import com.dbpg.duihuazhushou.imagegen.AutoImageService
 import com.dbpg.duihuazhushou.session.SessionRepo
@@ -14,6 +16,7 @@ import com.dbpg.stcore.session.SessionDoc
 import com.dbpg.stcore.session.SessionEditor
 import com.dbpg.stcore.session.SessionHistory
 import com.dbpg.stcore.transformForDisplay
+import java.util.concurrent.Executors
 
 /**
  * 聊天页的"大脑"：会话数据 + 所有消息操作 + 生成编排。
@@ -67,24 +70,43 @@ class ChatController(
     private var genText: String = ""
     private var genIsNew: Boolean = false
 
+    /**
+     * 渲染专用后台线程。
+     *
+     * 单线程是刻意的：两次 render 并发跑没有意义，而且 [imageCache] 落盘
+     * 也在这个线程上，串行能保证同一张图不会被同时写两遍。
+     */
+    private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "dhp-chat-render") }
+    private val main = Handler(Looper.getMainLooper())
+
+    /** 渲染代次：只有最新一次的结果允许提交给界面，避免旧结果覆盖新结果。 */
+    private var renderSeq = 0
+
     // ------------------------------------------------------------ 打开 / 刷新
 
     /**
      * 打开一个会话。
      *
-     * @param snapshot 兜底用：本地还没有这份会话时，从网页快照构造一份再落盘。
-     *                 正常迁移过的会话不会走到这里。
+     * ★ 整段读盘 + 快照解析都在后台线程，回调再切回主线程 bind。
+     *   以前是"异步读盘、主线程解析 + 主线程渲染"，会话一长就把第一帧
+     *   按住，用户看到的就是黑屏卡死。现在这条链上没有任何一步压主线程。
+     *
+     * @param sessionId 会话 id；为空时才去快照里找（兼容老入口）
+     * @param snapshot  兜底用：本地还没有这份会话时，从网页快照构造一份再落盘
      */
     fun open(sessionId: String, snapshot: String? = null) {
         SessionRepo.init(appContext)
-        SessionRepo.load(sessionId) { loaded ->
+        io.execute {
+            val snap = snapshot?.takeIf { it.isNotBlank() }
+            val sid = sessionId.ifBlank { snap?.let { SessionRepo.sessionIdOf(it) }.orEmpty() }
+            val loaded = if (sid.isNotBlank()) SessionRepo.loadSync(sid) else null
             val d = loaded ?: run {
-                val fromSnap = snapshot?.let { SessionRepo.fromSnapshot(it) }
+                val fromSnap = snap?.let { SessionRepo.fromSnapshot(it) }
                 val made = fromSnap ?: SessionRepo.create("新冒险")
-                SessionRepo.save(made)
+                SessionRepo.saveSync(made)
                 made
             }
-            bind(d)
+            main.post { bind(d) }
         }
     }
 
@@ -140,13 +162,49 @@ class ChatController(
 
     // ------------------------------------------------------------ 渲染
 
-    /** 把 SessionDoc 转成列表项。所有操作走完都调它一次。 */
+    /**
+     * 把 SessionDoc 转成列表项。所有操作走完都调它一次。
+     *
+     * ★ 计算全部在 [io] 上做，主线程只负责最后 submitList。
+     *
+     *   这一步要跑正则（用户导入的美化规则单条就能有两万多字符）、
+     *   做宏替换、解图片路径。放在主线程的话，一个长会话打开时
+     *   第一帧都画不出来 —— 表现就是黑屏卡死，而不是"慢一点"。
+     *
+     *   用 [renderSeq] 防乱序：流式生成时 render 会被高频调用，
+     *   后台是串行的，但排队的结果可能已经不是最新的，旧结果直接丢弃。
+     */
     private fun render(scrollToBottom: Boolean) {
         val d = doc ?: return
-        sink.onItems(buildItems(d), scrollToBottom)
+        val seq = ++renderSeq
+        val displaySnap = display
+        val appearanceSnap = appearance
+        val genIdSnap = genId
+        val genActionSnap = genActionId
+        val genTextSnap = genText
+
+        io.execute {
+            val items = runCatching {
+                buildItems(d, displaySnap, appearanceSnap, genIdSnap, genActionSnap, genTextSnap)
+            }.getOrElse { e ->
+                android.util.Log.w("DHP", "渲染会话失败", e)
+                emptyList()
+            }
+            main.post {
+                if (seq != renderSeq) return@post
+                sink.onItems(items, scrollToBottom)
+            }
+        }
     }
 
-    private fun buildItems(d: SessionDoc): List<ChatItem> {
+    private fun buildItems(
+        d: SessionDoc,
+        display: DisplayConfig,
+        appearance: AppearanceConfig,
+        genId: String?,
+        genActionId: String,
+        genText: String,
+    ): List<ChatItem> {
         val out = ArrayList<ChatItem>(d.actions.size * 2 + 1)
 
         // 空会话：把角色卡的开场白当一条只读消息显示，避免"一片空白"
@@ -181,7 +239,8 @@ class ChatController(
                 text = aiText,
                 images = a.images,
                 depth = d.actions.size - 1 - i,
-                streaming = false,
+                display = display,
+                appearance = appearance,
             )
             out.add(
                 ChatItem(
@@ -204,7 +263,8 @@ class ChatController(
         text: String,
         images: List<ActionImage>,
         depth: Int,
-        streaming: Boolean,
+        display: DisplayConfig,
+        appearance: AppearanceConfig,
     ): Pair<String, List<String>> {
         if (text.isBlank()) return "" to emptyList()
 

@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  设置首页（原生）。
+
+  交互对齐网页版：设置是一个入口列表，点进去才是各子页。
+  API 接口配置放在第一位 —— 聊天能不能用，最先取决于它。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0F1115"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="32dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="6dp">
+
+            <TextView
+                android:id="@+id/shome_back"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:padding="10dp"
+                android:text="返回"
+                android:textColor="#8FA6C8"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="设置"
+                android:textColor="#E6EAF2"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:padding="10dp"
+                android:text=" "
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/shome_api"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="8dp"
+            android:background="#161A22"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:text="接口配置"
+            android:textColor="#E6EAF2"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/shome_api_hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="10dp"
+            android:background="#161A22"
+            android:text="API 地址 / 密钥 / 拉取模型"
+            android:textColor="#6C7A90"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/shome_appearance"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="10dp"
+            android:background="#161A22"
+            android:padding="16dp"
+            android:text="外观设置"
+            android:textColor="#E6EAF2"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/shome_engine"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="10dp"
+            android:background="#161A22"
+            android:padding="16dp"
+            android:text="引擎设置"
+            android:textColor="#E6EAF2"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/shome_gallery"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="10dp"
+            android:background="#161A22"
+            android:padding="16dp"
+            android:text="图片库"
+            android:textColor="#E6EAF2"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/shome_migrate"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="10dp"
+            android:background="#161A22"
+            android:padding="16dp"
+            android:text="数据迁移（网页 → 原生）"
+            android:textColor="#8FA6C8"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:gravity="center"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:text="预设 / 世界书 / 角色卡 / 变量 / 正则保持 ST 完全兼容，\n由隐藏的引擎层处理，这里只管看得见的部分。"
+            android:textColor="#4E5A6B"
+            android:textSize="11sp" />
+    </LinearLayout>
+</ScrollView>
