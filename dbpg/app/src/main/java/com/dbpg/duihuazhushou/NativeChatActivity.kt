@@ -17,6 +17,7 @@ import com.dbpg.duihuazhushou.chat.ChatAdapter
 import com.dbpg.duihuazhushou.chat.ChatController
 import com.dbpg.duihuazhushou.chat.ChatItem
 import com.dbpg.duihuazhushou.chat.ChatLogLoader
+import com.dbpg.duihuazhushou.chat.ChatBackground
 import com.dbpg.duihuazhushou.chat.ImageFileCache
 import com.dbpg.duihuazhushou.imagegen.ImageGenService
 import com.dbpg.duihuazhushou.settings.EngineBridge
@@ -42,6 +43,8 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         const val EXTRA_SNAPSHOT = "snapshot"
 
         private const val REQ_JSONL = 1001
+        /** 换本会话背景 */
+        private const val REQ_BG = 2001
 
         private const val M_EDIT = 1
         private const val M_REGEN = 2
@@ -86,14 +89,14 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         list = findViewById(R.id.chat_list)
         input = findViewById(R.id.chat_input)
         titleView = findViewById(R.id.chat_title)
+        // 点标题改名：长按列表也能改，但聊天时最顺手的入口是在标题上
+        titleView.setOnClickListener { promptRename() }
         quickImgBtn = findViewById(R.id.chat_quickimg)
         quickImgBtn.setOnClickListener { quickImage() }
         sendBtn = findViewById(R.id.chat_send)
         stopBtn = findViewById(R.id.chat_stop)
         val close = findViewById<TextView>(R.id.chat_close)
-        val importBtn = findViewById<TextView>(R.id.chat_import)
-        val genBtn = findViewById<TextView>(R.id.chat_gen)
-        val engineBtn = findViewById<TextView>(R.id.chat_engine)
+        val more = findViewById<TextView>(R.id.chat_more)
 
         appearance = Appearance.load(this)
         adapter = ChatAdapter(appearance, resources.displayMetrics.widthPixels, adapterListener)
@@ -118,13 +121,9 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         controller.open(sessionId, snapshot)
 
         close.setOnClickListener { finish() }
+        more.setOnClickListener { showMoreMenu() }
         sendBtn.setOnClickListener { submitInput() }
         stopBtn.setOnClickListener { controller.stop() }
-        importBtn.setOnClickListener { pickJsonl() }
-        genBtn.setOnClickListener { startActivity(Intent(this, NativeImageGenActivity::class.java)) }
-        engineBtn.setOnClickListener {
-            startActivity(Intent(this, com.dbpg.duihuazhushou.engine.EngineSettingsActivity::class.java))
-        }
     }
 
     override fun onResume() {
@@ -136,6 +135,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             adapter.updateConfig(latest)
         }
         controller.applyAppearance(latest)
+        applyBackground()
         // 网页设置里可能换了预设 / 正则 / 生图接口，回来跟上
         controller.refreshConfig()
     }
@@ -160,6 +160,10 @@ class NativeChatActivity : Activity(), ChatController.Sink {
 
     override fun onTitle(title: String) {
         if (!viewingLog) titleView.text = title
+        // 会话绑定完成的信号。背景要在拿到 sessionId 之后再贴一次：
+        // onResume 时 controller.open 还异步跑着，那时 doc 为空，
+        // 只能贴全局背景，会话自己的那张会被漏掉。
+        applyBackground()
     }
 
     override fun onGenerating(active: Boolean) {
@@ -267,7 +271,12 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     @Deprecated("Activity#onActivityResult 仍可用；避免为单一入口再引入 ActivityResult 依赖")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQ_JSONL || resultCode != RESULT_OK) return
+        if (resultCode != RESULT_OK) return
+        if (requestCode == REQ_BG) {
+            handleBackgroundResult(data)
+            return
+        }
+        if (requestCode != REQ_JSONL) return
         val uri = data?.data ?: return
         val items = ChatLogLoader.load(this, uri)
         if (items.isEmpty()) {
@@ -279,6 +288,123 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         adapter.submitList(items) { list.scrollToPosition(items.size - 1) }
         Toast.makeText(this, "已加载 ${items.size} 条", Toast.LENGTH_SHORT).show()
     }
+
+    // ------------------------------------------------------------ 顶栏菜单 / 背景
+
+    /**
+     * ⋯ 菜单。
+     *
+     * 顶栏只留「返回 / 标题 / ⋯」：原来五个按钮一字排开，小屏换行、
+     * 标题也被挤得看不清。功能没少，只是收进这里。
+     */
+    private fun showMoreMenu() {
+        val sid = controller?.doc?.id.orEmpty()
+        val hasSessionBg = ChatBackground.hasSession(this, sid)
+        val hasGlobalBg = ChatBackground.hasGlobal(this)
+        val items = mutableListOf(
+            "重命名会话",
+            "换本会话背景",
+        )
+        if (hasSessionBg) items.add("清除本会话背景")
+        if (hasGlobalBg) items.add("使用全局背景")
+        items.add("资产（预设 / 世界书 / 正则）")
+        items.add("导入聊天记录")
+        items.add("生图")
+
+        AlertDialog.Builder(this)
+            .setTitle("操作")
+            .setItems(items.toTypedArray()) { _, which ->
+                when (items[which]) {
+                    "重命名会话" -> promptRename()
+                    "换本会话背景" -> pickBackground()
+                    "清除本会话背景" -> {
+                        ChatBackground.clear(this, sid)
+                        applyBackground()
+                    }
+                    "使用全局背景" -> {
+                        ChatBackground.clear(this, sid)
+                        applyBackground()
+                    }
+                    "资产（预设 / 世界书 / 正则）" ->
+                        startActivity(Intent(this, com.dbpg.duihuazhushou.assets.AssetsHomeActivity::class.java))
+                    "导入聊天记录" -> pickJsonl()
+                    "生图" -> startActivity(Intent(this, NativeImageGenActivity::class.java))
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * 应用聊天背景：会话图优先，没有就用全局图；都没有回落纯色。
+     * 遮罩浓度来自外观设置（bgDim），保证深色照片上正文仍可读。
+     */
+    private fun applyBackground() {
+        val sid = controller?.doc?.id.orEmpty()
+        val bitmap = ChatBackground.resolve(this, sid)
+        ChatBackground.applyTo(findViewById(R.id.chat_root), bitmap, appearance.bgDim)
+    }
+
+    private fun pickBackground() {
+        try {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "image/*"
+            }
+            startActivityForResult(intent, REQ_BG)
+        } catch (t: Throwable) {
+            Toast.makeText(this, "打不开图片选择器：${t.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 选图回来：存成本会话背景并立即应用（结果分发在 onActivityResult 里）。 */
+    private fun handleBackgroundResult(data: Intent?) {
+        val uri = data?.data ?: return
+        runCatching {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+            val sid = controller?.doc?.id.orEmpty()
+            if (sid.isBlank()) {
+                Toast.makeText(this, "会话还没加载好，稍后再试", Toast.LENGTH_SHORT).show()
+                return
+            }
+            if (ChatBackground.save(this, sid, bmp)) {
+                applyBackground()
+                Toast.makeText(this, "背景已更换", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "保存失败（图片过大？）", Toast.LENGTH_SHORT).show()
+            }
+        }.onFailure {
+            Toast.makeText(this, "读取图片失败：${it.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // ------------------------------------------------------------ 改名
+
+    private fun promptRename() {
+        val cur = controller?.doc?.title.orEmpty()
+        val input = android.widget.EditText(this).apply {
+            setText(cur)
+            setHint("会话名")
+            setTextSize(15f)
+            setTextColor(0xFF1A2230.toInt())
+            setBackgroundResource(R.drawable.bg_input)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setSelection(text?.length ?: 0)
+        }
+        val wrap = android.widget.LinearLayout(this).apply {
+            setPadding(dp(20), dp(10), dp(20), 0)
+            addView(input)
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("重命名会话")
+            .setView(wrap)
+            .setPositiveButton("保存") { _, _ -> controller?.rename(input.text?.toString().orEmpty()) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun dp(v: Int): Int = Math.round(v * resources.displayMetrics.density)
 
     // ------------------------------------------------------------ 快捷生图
 

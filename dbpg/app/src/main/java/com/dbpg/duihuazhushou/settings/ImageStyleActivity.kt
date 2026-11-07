@@ -19,6 +19,7 @@ import android.widget.Toast
 import com.dbpg.duihuazhushou.Insets
 import com.dbpg.duihuazhushou.NativeBridge
 import com.dbpg.duihuazhushou.R
+import com.dbpg.duihuazhushou.imagegen.StyleThumbStore
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -66,14 +67,9 @@ class ImageStyleActivity : Activity() {
                     val dataUrl = obj.optString("thumb")
                     val pair = thumbViews[uid] ?: return@ApiResultListener
                     if (dataUrl.isNotBlank() && dataUrl.contains("base64,")) {
-                        runCatching {
-                            val bytes = Base64.decode(dataUrl.substringAfter("base64,"), Base64.DEFAULT)
-                            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                            if (bmp != null) {
-                                pair.first.setImageBitmap(bmp)
-                                pair.second.visibility = TextView.GONE
-                            }
-                        }
+                        // 解码 → 落本地 → 显示。落盘是关键：下次进页面直接读文件，
+                        // 不再依赖这条命令（旧实现每次都问一遍 web，新图还读不到）。
+                        decodeInline(uid, dataUrl, pair.first, pair.second)
                     }
                     return@ApiResultListener
                 }
@@ -116,6 +112,7 @@ class ImageStyleActivity : Activity() {
         findViewById<TextView>(R.id.style_thumb_pick).setOnClickListener { pickThumb() }
         findViewById<TextView>(R.id.style_thumb_clear).setOnClickListener {
             pendingThumb = ""
+            if (currentUid.isNotBlank()) StyleThumbStore.clear(this, currentUid)
             thumbView.setImageBitmap(null)
             toast("已清除，点「保存到当前风格」生效")
         }
@@ -225,9 +222,19 @@ class ImageStyleActivity : Activity() {
             thumbBox.addView(initial)
             cell.addView(thumbBox)
 
-            if (s.optBoolean("hasThumb")) {
+            // 参考图三级取法（快 → 慢）：
+            //   1. 本地文件缓存（原生选图时落的盘）—— 唯一常用的路径；
+            //   2. getImageStyle 里直接带回来的 dataURL（新图，商店里存的就是 dataURL）；
+            //   3. 旧图（blob: 引用）才发命令，由 web 解析后回传，收到即落本地。
+            val local = StyleThumbStore.load(this, uid)
+            val inline = s.optString("thumb")
+            if (local != null) {
+                iv.setImageBitmap(local)
+                initial.visibility = TextView.GONE
+            } else if (inline.startsWith("data:")) {
+                decodeInline(uid, inline, iv, initial)
+            } else if (s.optBoolean("hasThumb")) {
                 thumbViews[uid] = iv to initial
-                // thumb 可能是 blob: 引用，交给 web 的 resolveCached 解析成 dataURL
                 EngineBridge.command(JSONObject().put("cmd", "getStyleThumb").put("uid", uid))
             }
 
@@ -316,11 +323,13 @@ class ImageStyleActivity : Activity() {
             val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: run {
                 toast("这张图解不开"); return
             }
-            val scaled = scaleDown(bmp, 512)
+            // 1) 先落本地：显示立刻生效，且不依赖桥（新图读不到就是这里缺的）
+            val scaled = StyleThumbStore.saveScaled(this, currentUid, bmp) ?: scaleDown(bmp, 384)
+            // 2) 再压一份小图给引擎（网页端要能看到同一张参考图；384/q80 约 20–40KB）
             val bos = java.io.ByteArrayOutputStream()
-            scaled.compress(Bitmap.CompressFormat.JPEG, 82, bos)
-            val dataUrl = "data:image/jpeg;base64," + Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
-            pendingThumb = dataUrl
+            scaled.compress(Bitmap.CompressFormat.JPEG, 80, bos)
+            pendingThumb = "data:image/jpeg;base64," +
+                Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
             thumbView.setImageBitmap(scaled)
             toast("已选择，点「保存到当前风格」生效")
         } catch (t: Throwable) {
@@ -335,7 +344,27 @@ class ImageStyleActivity : Activity() {
         return Bitmap.createScaledBitmap(src, (src.width * ratio).toInt(), (src.height * ratio).toInt(), true)
     }
 
+    /** dataURL → Bitmap：显示 + 写入本地缓存（一次解码，两处受益）。 */
+    private fun decodeInline(uid: String, dataUrl: String, iv: ImageView, placeholder: TextView) {
+        runCatching {
+            val bytes = Base64.decode(dataUrl.substringAfter("base64,"), Base64.DEFAULT)
+            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+            // saveScaled 会返回缩放后的图，直接用它显示，省一次 createScaledBitmap
+            val scaled = StyleThumbStore.saveScaled(this, uid, bmp) ?: bmp
+            iv.setImageBitmap(scaled)
+            placeholder.visibility = TextView.GONE
+        }
+    }
+
     private fun showThumb(dataUrl: String) {
+        // 先看本地缓存（用户刚选的图、或已迁移过的旧图）
+        if (currentUid.isNotBlank()) {
+            val local = StyleThumbStore.load(this, currentUid)
+            if (local != null) {
+                thumbView.setImageBitmap(local)
+                return
+            }
+        }
         if (dataUrl.isBlank() || !dataUrl.contains("base64,")) {
             thumbView.setImageBitmap(null)
             return

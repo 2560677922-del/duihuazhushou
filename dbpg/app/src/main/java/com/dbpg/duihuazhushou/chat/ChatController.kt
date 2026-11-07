@@ -474,6 +474,17 @@ class ChatController(
         genIsNew = false
     }
 
+    // ------------------------------------------------------------ 会话属性
+
+    /** 改标题：落盘 + 通知界面（聊天页顶栏即时更新）。 */
+    fun rename(newTitle: String) {
+        val d = doc ?: return
+        val next = SessionEditor.rename(d, newTitle)
+        doc = next
+        SessionRepo.save(next)
+        sink.onTitle(next.title.ifBlank { "冒险" })
+    }
+
     // ------------------------------------------------------------ 快捷生图支撑
 
     /** 最近 N 条对话的纯文本上下文（用户 + AI 各算一条），给"生成画面标签"用。 */

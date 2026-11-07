@@ -21,6 +21,18 @@ object SessionEditor {
     /** 同一条消息最多保留几个历史版本（与 web 的 MAX_VARIANTS 一致）。 */
     const val MAX_VARIANTS = 20
 
+    // ------------------------------------------------------------ 会话属性
+
+    /**
+     * 改会话标题。
+     *
+     * 只是 copy 一次，但仍放在这里：以后加「置顶 / 归档 / 分组」也是同一类
+     * 纯数据变更，集中在一处才好为它们写 JVM 测试。空标题回落到「未命名冒险」，
+     * 避免列表里出现一条点不到的空白行。
+     */
+    fun rename(doc: SessionDoc, title: String, now: Long = System.currentTimeMillis()): SessionDoc =
+        doc.copy(title = title.trim().ifBlank { "未命名冒险" }, updatedAt = now)
+
     // ------------------------------------------------------------ 编辑 / 版本
 
     /**

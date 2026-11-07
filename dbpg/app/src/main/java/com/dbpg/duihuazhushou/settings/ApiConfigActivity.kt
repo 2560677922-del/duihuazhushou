@@ -190,6 +190,9 @@ class ApiConfigActivity : Activity() {
                 setPadding(dp(14), dp(12), dp(14), dp(12))
                 if (i > 0) (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(8)
                 setOnClickListener { if (expanded.contains(key)) expanded.remove(key) else expanded.add(key); loadConfig() }
+                // 长按改名字：运营商名存在 providerNotes（按 baseUrl 分组），
+                // 与「模型名」是两回事，改模型不会影响它。
+                setOnLongClickListener { promptRenameProvider(key, note); true }
             }
             val title = TextView(this).apply {
                 text = buildString {
@@ -271,6 +274,36 @@ class ApiConfigActivity : Activity() {
         }
     }
 
+    /** 长按运营商卡片：改显示名。 */
+    private fun promptRenameProvider(key: String, current: String) {
+        val input = EditText(this).apply {
+            setText(current)
+            hint = "如「玄猫中转」"
+            setTextSize(14f)
+            setTextColor(0xFF1A2230.toInt())
+            setBackgroundResource(R.drawable.bg_input)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setSelection(text?.length ?: 0)
+        }
+        val wrap = LinearLayout(this).apply {
+            setPadding(dp(20), dp(10), dp(20), 0)
+            addView(input)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("重命名运营商")
+            .setView(wrap)
+            .setPositiveButton("保存") { _, _ ->
+                val name = input.text?.toString()?.trim().orEmpty()
+                if (name.isEmpty()) {
+                    toast("名字不能为空")
+                    return@setPositiveButton
+                }
+                command("llmRenameProvider", JSONObject().put("key", key).put("name", name))
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
     /** 新建 LLM 运营商 = 名称 + 地址 + 密钥；创建后自动切为当前。 */
     private fun promptNewProvider() {
         val box = LinearLayout(this).apply {
@@ -346,6 +379,8 @@ class ApiConfigActivity : Activity() {
         }
         return box
     }
+
+    private fun toast(msg: String) = android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
 
     private fun dp(v: Int): Int = Math.round(v * resources.displayMetrics.density)
 
@@ -454,6 +489,9 @@ class ApiConfigActivity : Activity() {
                     } else {
                         status.text = "删除失败：${obj.optString("error")}"
                     }
+                }
+                "llmRenameProvider" -> {
+                    if (ok) loadConfig() else toast("改名失败：${obj.optString("error")}")
                 }
                 "llmAddProvider" -> {
                     if (ok) {

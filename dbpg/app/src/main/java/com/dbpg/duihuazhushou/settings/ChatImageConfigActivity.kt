@@ -120,7 +120,12 @@ class ChatImageConfigActivity : Activity() {
 
             val arr = obj.optJSONArray("providers") ?: JSONArray()
             providers = (0 until arr.length()).map { arr.getJSONObject(it) }
-            apiSelect.text = "运营商：" + cur.optString("model").ifBlank { "未选择" }
+            apiSelect.text = buildString {
+                append("运营商：")
+                append(cur.optString("apiName").ifBlank { "未选" })
+                val m = cur.optString("model")
+                if (m.isNotBlank()) append(" · ").append(m)
+            }
             apiSelect.setOnClickListener { pickProviderThenModel() }
 
             val la = obj.optJSONArray("llmConfigs") ?: JSONArray()

@@ -38,6 +38,7 @@ dbpg/local.properties
 
 # 测试截图（临时产物）
 shots/
+.shots/
 
 # 一次性 GitHub 操作脚本（含 token，绝不能提交）
 scripts/_gh*.mjs

@@ -145,6 +145,8 @@ class ImageGenConfigActivity : Activity() {
                     if (open) openProviders.remove(key) else openProviders.add(key)
                     load()
                 }
+                // 长按改运营商名（整组条目一起改，换模型时名字不会跳回去）
+                setOnLongClickListener { promptRenameProvider(key, name); true }
             }
             val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
             col.addView(TextView(this).apply {
@@ -226,6 +228,36 @@ class ImageGenConfigActivity : Activity() {
                 apisBox.addView(row)
             }
         }
+    }
+
+    /** 长按运营商卡片：改显示名。 */
+    private fun promptRenameProvider(key: String, current: String) {
+        val input = EditText(this).apply {
+            setText(current)
+            hint = "如「玄猫中转」"
+            setTextSize(14f)
+            setTextColor(0xFF1A2230.toInt())
+            background = getDrawable(R.drawable.bg_input)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setSelection(text?.length ?: 0)
+        }
+        val wrap = LinearLayout(this).apply {
+            setPadding(dp(20), dp(10), dp(20), 0)
+            addView(input)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("重命名运营商")
+            .setView(wrap)
+            .setPositiveButton("保存") { _, _ ->
+                val name = input.text?.toString()?.trim().orEmpty()
+                if (name.isEmpty()) {
+                    toast("名字不能为空")
+                    return@setPositiveButton
+                }
+                EngineBridge.command(JSONObject().put("cmd", "imgRenameProvider").put("key", key).put("name", name))
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     /** 新建运营商：名称（可空）+ 地址 + 密钥。 */
@@ -362,6 +394,14 @@ class ImageGenConfigActivity : Activity() {
                         load()
                     } else {
                         status.text = "添加失败：${obj.optString("error")}"
+                    }
+                }
+                "imgRenameProvider" -> {
+                    if (ok) {
+                        toast("已改名")
+                        load()
+                    } else {
+                        status.text = "改名失败：${obj.optString("error")}"
                     }
                 }
                 "imgAddProvider" -> {

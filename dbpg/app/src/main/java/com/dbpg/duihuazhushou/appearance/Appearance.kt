@@ -27,6 +27,15 @@ data class AppearanceConfig(
      * 默认关：模型输出不可信；需要社区美化卡（状态栏/按钮）时可自己打开。
      */
     val allowScript: Boolean = false,
+    /**
+     * 气泡款式（见 [BubbleStyle]）。
+     *
+     * 存字符串而不是枚举：以后加款式只改 [BubbleStyle] 一处，
+     * 老版本读到不认识的值会自动回落默认款，不会崩。
+     */
+    val bubbleStyle: String = BubbleStyle.ROUND.id,
+    /** 聊天背景遮罩浓度 0–90：越高字越清楚、图越淡。 */
+    val bgDim: Int = 55,
 )
 
 object Appearance {
@@ -38,6 +47,8 @@ object Appearance {
     private const val K_HIDE_REASONING = "hide_reasoning"
     private const val K_HTML_RENDER = "html_render"
     private const val K_ALLOW_SCRIPT = "allow_script"
+    private const val K_BUBBLE_STYLE = "bubble_style"
+    private const val K_BG_DIM = "bg_dim"
 
     fun load(ctx: Context): AppearanceConfig {
         val p = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
@@ -48,6 +59,8 @@ object Appearance {
             hideReasoning = p.getBoolean(K_HIDE_REASONING, true),
             htmlRender = p.getBoolean(K_HTML_RENDER, true),
             allowScript = p.getBoolean(K_ALLOW_SCRIPT, false),
+            bubbleStyle = BubbleStyle.byId(p.getString(K_BUBBLE_STYLE, null)).id,
+            bgDim = p.getInt(K_BG_DIM, 55).coerceIn(0, 90),
         )
     }
 
@@ -59,6 +72,43 @@ object Appearance {
             .putBoolean(K_HIDE_REASONING, cfg.hideReasoning)
             .putBoolean(K_HTML_RENDER, cfg.htmlRender)
             .putBoolean(K_ALLOW_SCRIPT, cfg.allowScript)
+            .putString(K_BUBBLE_STYLE, cfg.bubbleStyle)
+            .putInt(K_BG_DIM, cfg.bgDim)
             .apply()
+    }
+}
+
+/**
+ * 气泡款式预设。
+ *
+ * 只描述"长什么样"（圆角、描边、配色、是否投影），渲染逻辑在
+ * `chat/ChatAdapter`。加一套新款 = 在 [ALL] 里加一条 + 渲染里加个分支，
+ * 不改数据层、不改设置页结构。
+ */
+data class BubbleStyle(
+    val id: String,
+    val label: String,
+    /** 圆角（dp）。 */
+    val cornerDp: Float,
+    /** 是否有 1dp 描边。 */
+    val stroke: Boolean,
+    /** 是否投影（轻微 elevation）。 */
+    val elevation: Boolean,
+    /** 用户气泡底色（ARGB）。 */
+    val userColor: Int,
+    /** AI 气泡底色。 */
+    val aiColor: Int,
+) {
+    companion object {
+        val ROUND = BubbleStyle("round", "圆润", 20f, true, true, 0xFFDCE9FF.toInt(), 0xFFFFFFFF.toInt())
+        val SOFT = BubbleStyle("soft", "柔和", 14f, false, false, 0xFFE8EDFF.toInt(), 0xFFF7F8FC.toInt())
+        val SQUARE = BubbleStyle("square", "方角", 8f, true, false, 0xFFDCE9FF.toInt(), 0xFFFFFFFF.toInt())
+        val MINIMAL = BubbleStyle("minimal", "极简", 18f, false, false, 0xFFEFF3F9.toInt(), 0xFFFBFCFE.toInt())
+
+        val ALL = listOf(ROUND, SOFT, SQUARE, MINIMAL)
+
+        /** 按 id 取；不认识（老数据/手改）一律回落 ROUND。 */
+        fun byId(id: String?): BubbleStyle =
+            ALL.firstOrNull { it.id == id } ?: ROUND
     }
 }

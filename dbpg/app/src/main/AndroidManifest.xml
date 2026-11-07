@@ -90,13 +90,7 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.DHP.Content" />
 
-        <!-- 引擎设置：只切「启用哪个」预设/角色/世界书，内容仍在 ST 兼容层 -->
-        <activity
-            android:name=".engine.EngineSettingsActivity"
-            android:exported="false"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
-            android:theme="@style/Theme.DHP.Content" />
-
+        <!-- 图片全屏查看：生成图 / 聊天图共用 -->
         <activity
             android:name=".gallery.ImageViewerActivity"
             android:exported="false"

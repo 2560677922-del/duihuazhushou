@@ -1,13 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 会话列表项：标题 + 消息数/时间 + 当前标记 -->
+<!--
+  会话列表项：白卡片 + 标题 + 副标题 + 箭头。
+  用卡片而不是通栏分隔线：配背景色时层级更清楚，
+  也让「长按改名」有一个明确的命中区域。
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:layout_marginStart="12dp"
+    android:layout_marginEnd="12dp"
+    android:layout_marginTop="8dp"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:background="?android:attr/selectableItemBackground"
-    android:paddingStart="18dp"
-    android:paddingEnd="16dp"
+    android:background="@drawable/bg_card"
+    android:foreground="?android:attr/selectableItemBackground"
+    android:elevation="1dp"
+    android:paddingStart="16dp"
+    android:paddingEnd="12dp"
     android:paddingTop="14dp"
     android:paddingBottom="14dp">
 
@@ -24,16 +33,17 @@
             android:ellipsize="end"
             android:maxLines="1"
             android:textColor="#1A2230"
-            android:textSize="15sp" />
+            android:textSize="15.5sp"
+            android:textStyle="bold" />
 
         <TextView
             android:id="@+id/session_subtitle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="3dp"
+            android:layout_marginTop="4dp"
             android:ellipsize="end"
             android:maxLines="1"
-            android:textColor="#66707F"
+            android:textColor="#69748A"
             android:textSize="12sp" />
     </LinearLayout>
 
@@ -41,8 +51,8 @@
         android:id="@+id/session_current"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginStart="10dp"
-        android:background="#1E3A5F"
+        android:layout_marginStart="8dp"
+        android:background="@drawable/bg_btn_soft"
         android:paddingStart="8dp"
         android:paddingEnd="8dp"
         android:paddingTop="3dp"
@@ -51,4 +61,12 @@
         android:textColor="#2F66D8"
         android:textSize="11sp"
         android:visibility="gone" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:paddingStart="6dp"
+        android:text="›"
+        android:textColor="#B6BECC"
+        android:textSize="18sp" />
 </LinearLayout>

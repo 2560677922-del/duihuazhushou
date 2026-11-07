@@ -249,6 +249,140 @@
                 android:layout_height="wrap_content" />
         </LinearLayout>
 
+        <!-- 气泡款式：点一下弹选择，改完立刻生效 -->
+        <LinearLayout
+            android:id="@+id/set_bubble_style_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="18dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="气泡款式"
+                    android:textColor="#1A2230"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="圆润 / 柔和 / 方角 / 极简，只影响聊天气泡外观"
+                    android:textColor="#66707F"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/set_bubble_style"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_btn_soft"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="7dp"
+                android:paddingBottom="7dp"
+                android:text="圆润"
+                android:textColor="#2F66D8"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- 全局聊天背景：所有会话共用；单会话可在聊天页 ⋯ 里单独换 -->
+        <LinearLayout
+            android:id="@+id/set_bg_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="18dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="聊天背景（全局）"
+                    android:textColor="#1A2230"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="每个会话还能单独换一张（聊天页右上 ⋯）"
+                    android:textColor="#66707F"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/set_bg_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_btn_soft"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="7dp"
+                android:paddingBottom="7dp"
+                android:text="选择图片"
+                android:textColor="#2F66D8"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- 背景遮罩：越高字越清楚、图越淡 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="14dp"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="背景遮罩浓度"
+                    android:textColor="#3A4353"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/set_bg_dim_value"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="55%"
+                    android:textColor="#66707F"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/set_bg_dim"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:max="90" />
+        </LinearLayout>
+
         <TextView
             android:id="@+id/set_reset"
             android:layout_width="match_parent"

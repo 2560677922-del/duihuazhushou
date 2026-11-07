@@ -705,6 +705,10 @@ async function apiCommand(raw: string): Promise<void> {
           baseUrl: String(req.baseUrl || ''),
           apiKey: String(req.apiKey || ''),
         });
+        // 运营商显示名存在 providerNotes（按 baseUrl 分组），不是 model 的 _name。
+        // 上一版漏了这一步 —— 用户填了名字却看不到，以为「没法自己加名字」。
+        const prov = api.providers.find((pp) => pp.models.some((m) => m._uid === cur._uid));
+        if (prov && req.name) await api.setProviderNote(prov.key, String(req.name));
         replyApiResult({ kind: cmd, ok: true, uid: cur._uid });
         return;
       }
@@ -738,6 +742,37 @@ async function apiCommand(raw: string): Promise<void> {
         const dataUrl = raw ? (await resolveCached(raw)) || '' : '';
         replyApiResult({ kind: cmd, ok: true, uid: req.uid, thumb: dataUrl || '' });
         return;
+      }
+
+      // ─────────── 运营商重命名 ───────────
+
+      /** 改 LLM 运营商名字（providerNotes，按 baseUrl 分组）。 */
+      case 'llmRenameProvider': {
+        const api = useApiConfigStore();
+        await api.load();
+        const key = String(req.key || '');
+        const name = String(req.name || '').trim();
+        if (!key) throw new Error('缺少运营商标识');
+        await api.setProviderNote(key, name);
+        break;
+      }
+
+      /**
+       * 改生图运营商名字。
+       * 生图的显示名就是组内条目的 name（没有单独的 notes 表），
+       * 所以整组一起改，否则换模型时名字又跳回旧的。
+       */
+      case 'imgRenameProvider': {
+        const img = useImageStore();
+        const key = String(req.key || '');
+        const name = String(req.name || '').trim();
+        if (!name) throw new Error('名字不能为空');
+        const list = (img.apiConfigs || []).filter(
+          (a) => ((a.baseUrl || '').trim().replace(/\/+$/, '') || `__own__:${a._uid}`) === key,
+        );
+        if (!list.length) throw new Error('找不到这个运营商');
+        for (const a of list) await img.updateApi(a._uid, { name });
+        break;
       }
 
       // ─────────── 生图风格（多套 + 参考图） ───────────
@@ -1090,6 +1125,13 @@ function imageApiSummary(): string {
     })(),
     current: {
       uid: img.currentApiId || '',
+      // 当前模型所属运营商名（界面显示「运营商 · 模型」用，别再只显示模型）
+      apiName:
+        (img.apiConfigs || []).find(
+          (a) =>
+            ((a.baseUrl || '').trim().replace(/\/+$/, '') || `__own__:${a._uid}`) ===
+            ((cur.baseUrl || '').trim().replace(/\/+$/, '') || `__own__:${img.currentApiId}`),
+        )?.name || hostOf(cur.baseUrl) || '',
       baseUrl: cur.baseUrl || '',
       apiKey: cur.apiKey || '',
       model: cur.model || cur.novelaiModel || '',
@@ -1209,12 +1251,18 @@ function imageStyleSummary(): string {
   const styleId = img.currentStyleId;
   const style: any = (img.styleConfigs || []).find((s) => s._uid === styleId) || {};
   return JSON.stringify({
-    styles: (img.styleConfigs || []).map((s) => ({
-      uid: s._uid,
-      name: s.name || '未命名风格',
-      current: s._uid === styleId,
-      hasThumb: !!s.thumb,
-    })),
+    styles: (img.styleConfigs || []).map((s) => {
+      const raw = String(s.thumb || '');
+      return {
+        uid: s._uid,
+        name: s.name || '未命名风格',
+        current: s._uid === styleId,
+        hasThumb: !!raw,
+        // 只有 dataURL 能同步直出；旧数据可能是 blob: 引用，
+        // 交给 getStyleThumb 命令异步解析（原生读到后会落本地文件缓存）。
+        thumb: raw.startsWith('data:') ? raw : '',
+      };
+    }),
     styleUid: style._uid || '',
     styleName: style.name || '默认风格',
     artistTags: style.artistTags || '',

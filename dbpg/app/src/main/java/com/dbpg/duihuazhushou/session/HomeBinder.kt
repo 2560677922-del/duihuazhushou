@@ -1,16 +1,20 @@
 package com.dbpg.duihuazhushou.session
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.dbpg.duihuazhushou.NativeChatActivity
 import com.dbpg.duihuazhushou.R
 import com.dbpg.duihuazhushou.data.MigrationActivity
+import com.dbpg.stcore.session.SessionEditor
 
 /**
  * 「冒险」tab 的落地内容（会话列表）。
@@ -45,13 +49,16 @@ object HomeBinder {
 
         val list = view.findViewById<RecyclerView>(R.id.home_session_list)
         val empty = view.findViewById<TextView>(R.id.home_empty)
-        val adapter = SessionAdapter { item ->
-            openChat(activity, item.id)
-        }
+        // reload 在下面才赋值；长按回调通过闭包晚绑定，所以先声明再赋。
+        lateinit var reload: Refresher
+        val adapter = SessionAdapter(
+            onClick = { item -> openChat(activity, item.id) },
+            onLongClick = { item -> promptRename(activity, item) { reload.refresh() } },
+        )
         list.layoutManager = LinearLayoutManager(activity)
         list.adapter = adapter
 
-        val reload = Refresher {
+        reload = Refresher {
             SessionRepo.list { entries ->
                 if (activity.isFinishing || activity.isDestroyed) return@list
                 val items = entries.map {
@@ -84,6 +91,42 @@ object HomeBinder {
 
         reload.refresh()
         return reload
+    }
+
+    /**
+     * 长按会话 → 改名字。
+     *
+     * 先 load 再 save，而不是直接改索引：索引是派生数据（由会话文件重建），
+     * 只改索引会在下次重建时被打回原形。
+     */
+    private fun promptRename(activity: Activity, item: SessionSummary, onDone: () -> Unit) {
+        val input = EditText(activity).apply {
+            setText(item.title)
+            setHint("会话名")
+            setTextSize(15f)
+            setTextColor(0xFF1A2230.toInt())
+            setBackgroundResource(R.drawable.bg_input)
+            setPadding(36, 26, 36, 26)
+            setSelection(text?.length ?: 0)
+        }
+        val wrap = LinearLayout(activity).apply {
+            setPadding(48, 12, 48, 0)
+            addView(input)
+        }
+        AlertDialog.Builder(activity)
+            .setTitle("重命名会话")
+            .setView(wrap)
+            .setPositiveButton("保存") { _, _ ->
+                val name = input.text?.toString().orEmpty()
+                SessionRepo.load(item.id) { doc ->
+                    if (doc == null) return@load
+                    SessionRepo.save(SessionEditor.rename(doc, name)) { ok ->
+                        if (ok) onDone()
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     private fun openChat(activity: Activity, sessionId: String) {

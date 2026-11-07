@@ -3,11 +3,14 @@ package com.dbpg.duihuazhushou.appearance
 import com.dbpg.duihuazhushou.Insets
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.Intent
 import android.os.Bundle
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import com.dbpg.duihuazhushou.R
+import com.dbpg.duihuazhushou.chat.ChatBackground
 
 /**
  * 原生外观设置页。
@@ -16,6 +19,10 @@ import com.dbpg.duihuazhushou.R
  * 少一步确认就少一次"我明明改了怎么没变"的困惑。
  */
 class SettingsActivity : Activity() {
+
+    companion object {
+        private const val REQ_BG_GLOBAL = 2101
+    }
 
     private lateinit var cfg: AppearanceConfig
     private lateinit var preview: TextView
@@ -28,6 +35,10 @@ class SettingsActivity : Activity() {
     private lateinit var hideSwitch: Switch
     private lateinit var htmlSwitch: Switch
     private lateinit var scriptSwitch: Switch
+    private lateinit var bubbleBtn: TextView
+    private lateinit var bgValue: TextView
+    private lateinit var dimBar: SeekBar
+    private lateinit var dimValue: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,6 +56,15 @@ class SettingsActivity : Activity() {
         hideSwitch = findViewById(R.id.set_hide_reasoning)
         htmlSwitch = findViewById(R.id.set_html_render)
         scriptSwitch = findViewById(R.id.set_allow_script)
+        bubbleBtn = findViewById(R.id.set_bubble_style)
+        bgValue = findViewById(R.id.set_bg_value)
+        dimBar = findViewById(R.id.set_bg_dim)
+        dimValue = findViewById(R.id.set_bg_dim_value)
+
+        bubbleBtn.setOnClickListener { pickBubbleStyle() }
+        bgValue.setOnClickListener { pickGlobalBackground() }
+        dimBar.max = 90
+        dimBar.progress = cfg.bgDim
 
         findViewById<TextView>(R.id.set_back).setOnClickListener { finish() }
         findViewById<TextView>(R.id.set_reset).setOnClickListener { reset() }
@@ -88,6 +108,9 @@ class SettingsActivity : Activity() {
             cfg = cfg.copy(htmlRender = checked)
             Appearance.save(this, cfg)
         }
+        dimBar.setOnSeekBarChangeListener(onChange { p ->
+            cfg = cfg.copy(bgDim = p)
+        })
         scriptSwitch.setOnCheckedChangeListener { _, checked ->
             cfg = cfg.copy(allowScript = checked)
             Appearance.save(this, cfg)
@@ -110,12 +133,78 @@ class SettingsActivity : Activity() {
         lineValue.text = String.format("%.2f 倍", cfg.lineSpacing)
         widthValue.text = "${cfg.bubbleWidthPercent}%"
 
+        bubbleBtn.text = BubbleStyle.byId(cfg.bubbleStyle).label
+        bgValue.text = if (ChatBackground.hasGlobal(this)) "已设置" else "选择图片"
+        dimValue.text = "${cfg.bgDim}%"
+
         preview.textSize = cfg.textSizeSp
         preview.setLineSpacing(0f, cfg.lineSpacing)
         // 预览块跟着宽度设置收缩，所见即所得
         val screen = resources.displayMetrics.widthPixels
         val margin = (32 * resources.displayMetrics.density).toInt()
         preview.maxWidth = ((screen - margin) * cfg.bubbleWidthPercent / 100).coerceAtLeast(screen / 3)
+    }
+
+    /** 气泡款式：单选对话框。改完立即保存，回聊天页就生效。 */
+    private fun pickBubbleStyle() {
+        val all = BubbleStyle.ALL
+        val labels = all.map { "${it.label}（圆角 ${it.cornerDp.toInt()}）" }.toTypedArray()
+        val current = all.indexOfFirst { it.id == cfg.bubbleStyle }.coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("气泡款式")
+            .setSingleChoiceItems(labels, current) { dialog, which ->
+                cfg = cfg.copy(bubbleStyle = all[which].id)
+                Appearance.save(this, cfg)
+                render()
+                dialog.dismiss()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * 全局聊天背景：选图 / 清除。
+     *
+     * 只做「全局」这一层；单会话背景在聊天页 ⋯ 里换 —— 两层各管一处，
+     * 用户不用在一堆设置里找"这条会话的背景到底存在哪"。
+     */
+    private fun pickGlobalBackground() {
+        val has = ChatBackground.hasGlobal(this)
+        val items = if (has) arrayOf("选择图片", "清除（改为纯色）") else arrayOf("选择图片")
+        AlertDialog.Builder(this)
+            .setTitle("聊天背景（全局）")
+            .setItems(items) { _, which ->
+                if (which == 0) {
+                    try {
+                        startActivityForResult(
+                            Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                                addCategory(Intent.CATEGORY_OPENABLE)
+                                type = "image/*"
+                            },
+                            REQ_BG_GLOBAL,
+                        )
+                    } catch (t: Throwable) {
+                        android.widget.Toast.makeText(this, "打不开图片选择器", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    ChatBackground.clear(this, null)
+                    render()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_BG_GLOBAL || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        runCatching {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+            if (ChatBackground.save(this, null, bmp)) render()
+        }
     }
 
     private fun reset() {
@@ -127,6 +216,7 @@ class SettingsActivity : Activity() {
         hideSwitch.isChecked = cfg.hideReasoning
         htmlSwitch.isChecked = cfg.htmlRender
         scriptSwitch.isChecked = cfg.allowScript
+        dimBar.progress = cfg.bgDim
         render()
     }
 }

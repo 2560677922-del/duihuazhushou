@@ -30,26 +30,37 @@
             android:layout_weight="1"
             android:text="冒险"
             android:textColor="#1A2230"
-            android:textSize="19sp"
-            android:textStyle="bold" />
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.02" />
 
         <TextView
             android:id="@+id/home_migrate"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:padding="8dp"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/bg_btn_soft"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:paddingTop="7dp"
+            android:paddingBottom="7dp"
             android:text="导入"
             android:textColor="#2F66D8"
-            android:textSize="14sp" />
+            android:textSize="13sp" />
 
         <TextView
             android:id="@+id/home_new"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:padding="8dp"
-            android:text="新建"
+            android:background="@drawable/bg_btn_accent"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="7dp"
+            android:paddingBottom="7dp"
+            android:text="＋ 新建"
             android:textColor="#2F66D8"
-            android:textSize="14sp" />
+            android:textSize="13sp"
+            android:textStyle="bold" />
     </LinearLayout>
 
     <FrameLayout
@@ -61,9 +72,7 @@
             android:id="@+id/home_session_list"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:paddingBottom="8dp"
+            android:paddingBottom="12dp"
             android:clipToPadding="false"
             android:scrollbars="vertical" />
 

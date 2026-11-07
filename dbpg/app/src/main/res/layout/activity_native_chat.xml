@@ -6,67 +6,60 @@
   消息列表用 RecyclerView：只复用可见项，长会话也顺滑、内存可控。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/chat_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="@color/app_bg">
 
-    <!-- 顶栏：标题 + 导入 JSONL + 返回 -->
+    <!--
+      顶栏：返回 + 标题（点一下改名）+ ⋯ 菜单。
+      原来把「引擎/生图/导入记录」全排在上面，五个按钮挤成一排、小屏还会换行；
+      收进 ⋯ 里更好点，也给标题留出改名的手势空间。
+    -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp"
-        android:paddingTop="10dp"
-        android:paddingBottom="10dp"
+        android:paddingStart="6dp"
+        android:paddingEnd="6dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:background="#FFFFFFFF"
         android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/chat_close"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="10dp"
+            android:text="‹"
+            android:textColor="#3A4353"
+            android:textSize="24sp" />
 
         <TextView
             android:id="@+id/chat_title"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="原生聊天"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="冒险"
             android:textColor="#1A2230"
             android:textSize="17sp"
             android:textStyle="bold" />
 
         <TextView
-            android:id="@+id/chat_engine"
+            android:id="@+id/chat_more"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:padding="8dp"
-            android:text="引擎"
-            android:textColor="#5A6B85"
-            android:textSize="14sp" />
-
-        <TextView
-            android:id="@+id/chat_gen"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:padding="8dp"
-            android:text="生图"
-            android:textColor="#5A6B85"
-            android:textSize="14sp" />
-
-        <TextView
-            android:id="@+id/chat_import"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:padding="8dp"
-            android:text="导入记录"
-            android:textColor="#5A6B85"
-            android:textSize="14sp" />
-
-        <TextView
-            android:id="@+id/chat_close"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:padding="8dp"
-            android:text="返回"
-            android:textColor="#5A6B85"
-            android:textSize="14sp" />
+            android:padding="10dp"
+            android:text="⋯"
+            android:textColor="#3A4353"
+            android:textSize="20sp"
+            android:contentDescription="更多" />
     </LinearLayout>
 
     <!-- 消息列表：RecyclerView，气泡由 ChatAdapter 原生渲染，永不横向溢出 -->
@@ -88,6 +81,7 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:padding="8dp"
+        android:background="@drawable/bg_input_bar"
         android:gravity="center_vertical">
 
         <!-- 快捷生图：按「对话生图」配置出图，插到最新一条 AI 回复上 -->
@@ -108,8 +102,12 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:minHeight="44dp"
-            android:background="@android:color/transparent"
+            android:minHeight="42dp"
+            android:background="@drawable/bg_input"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
             android:textColor="#1A2230"
             android:textSize="15sp"
             android:hint="说点什么…"

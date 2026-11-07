@@ -14,6 +14,7 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.dbpg.duihuazhushou.R
 import com.dbpg.duihuazhushou.appearance.AppearanceConfig
+import com.dbpg.duihuazhushou.appearance.BubbleStyle
 import com.dbpg.duihuazhushou.richtext.RichTextRenderer
 import com.dbpg.stcore.richtext.RichTextParser
 
@@ -110,14 +111,11 @@ class ChatAdapter(
             else -> Gravity.START
         }
         holder.bubble.layoutParams = lp
-        holder.bubble.background = roundedBackground(
-            when {
-                isUser -> COLOR_USER
-                isSystem -> COLOR_SYS
-                else -> COLOR_AI
-            },
-            density,
-        )
+        // 气泡款式（圆润/柔和/方角/极简）：圆角、描边、配色、投影都跟着款式走。
+        // 每次 bind 重建 Drawable —— 共享实例会被 RecyclerView 复用染色（经典坑）。
+        val style = BubbleStyle.byId(config.bubbleStyle)
+        holder.bubble.background = bubbleBackground(style, isUser, isSystem, density)
+        holder.bubble.elevation = if (style.elevation && !isSystem) 1.2f * density else 0f
 
         // 2) 美化 HTML：交给内嵌 WebView 渲染；普通消息仍用 TextView
         val richHtml = item.html
@@ -277,12 +275,29 @@ class ChatAdapter(
         </style></head><body>$html</body></html>
     """.trimIndent()
 
-    private fun roundedBackground(color: Int, density: Float): GradientDrawable =
-        GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = 18 * density
-            setColor(color)
-            // AI 气泡是白底，需要一条浅描边把自己和页面背景分开
-            if (color == COLOR_AI) setStroke((1 * density).toInt(), 0xFFE4E9F2.toInt())
+    /**
+     * 按款式生成气泡背景。
+     *
+     * 系统消息（分隔提示）永远用小圆角灰底，不参与款式选择——
+     * 它不是"对话气泡"，跟着换色会显得很乱。
+     */
+    private fun bubbleBackground(
+        style: BubbleStyle,
+        isUser: Boolean,
+        isSystem: Boolean,
+        density: Float,
+    ): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = (if (isSystem) 10f else style.cornerDp) * density
+        setColor(
+            when {
+                isSystem -> COLOR_SYS
+                isUser -> style.userColor
+                else -> style.aiColor
+            },
+        )
+        if (style.stroke && !isSystem) {
+            setStroke((1 * density).toInt(), 0xFFE4E9F2.toInt())
         }
+    }
 }

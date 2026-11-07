@@ -286,7 +286,12 @@ class NativeImageGenActivity : Activity() {
             val arr = obj.optJSONArray("providers") ?: org.json.JSONArray()
             providerList = (0 until arr.length()).map { arr.getJSONObject(it) }
             val cur = obj.optJSONObject("current") ?: org.json.JSONObject()
-            apiSelect.text = "运营商：" + (cur.optString("model").ifBlank { "未选择" })
+            // 显示「运营商 · 模型」：只显示模型会让人误以为模型就是运营商
+            apiSelect.text = buildString {
+                append(cur.optString("apiName").ifBlank { "未选运营商" })
+                val m = cur.optString("model")
+                if (m.isNotBlank()) append(" · ").append(m)
+            }
             apiSelect.setOnClickListener { pickProviderThenModel() }
         }
         EngineBridge.fetch(this, "getImageStyle") { obj ->

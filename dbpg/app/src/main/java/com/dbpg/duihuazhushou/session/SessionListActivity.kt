@@ -34,12 +34,15 @@ class SessionListActivity : Activity() {
         SessionRepo.init(this)
 
         emptyView = findViewById(R.id.session_empty)
-        adapter = SessionAdapter { item ->
-            startActivity(
-                Intent(this, NativeChatActivity::class.java)
-                    .putExtra(NativeChatActivity.EXTRA_SESSION_ID, item.id),
-            )
-        }
+        // 命名参数：SessionAdapter 现在有两个回调，尾随 lambda 会绑到最后一个（长按）
+        adapter = SessionAdapter(
+            onClick = { item ->
+                startActivity(
+                    Intent(this, NativeChatActivity::class.java)
+                        .putExtra(NativeChatActivity.EXTRA_SESSION_ID, item.id),
+                )
+            },
+        )
 
         findViewById<TextView>(R.id.session_back).setOnClickListener { finish() }
         findViewById<TextView>(R.id.session_refresh).setOnClickListener { reload() }
