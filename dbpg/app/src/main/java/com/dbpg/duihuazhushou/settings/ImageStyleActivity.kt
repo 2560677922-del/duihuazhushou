@@ -46,8 +46,6 @@ class ImageStyleActivity : Activity() {
     private lateinit var thumbView: ImageView
     private lateinit var sizeChips: LinearLayout
     private lateinit var engineHint: TextView
-    private lateinit var refStrengthBar: SeekBar
-    private lateinit var refInfoBar: SeekBar
 
     /** 当前编辑的风格 uid（跟随 store 的 currentStyleId）。 */
     private var currentUid = ""
@@ -128,17 +126,12 @@ class ImageStyleActivity : Activity() {
         thumbView = findViewById(R.id.style_thumb)
         sizeChips = findViewById(R.id.style_size_chips)
         engineHint = findViewById(R.id.style_engine_hint)
-        refStrengthBar = findViewById(R.id.style_ref_strength)
-        refInfoBar = findViewById(R.id.style_ref_info)
 
         findViewById<TextView>(R.id.style_back).setOnClickListener { finish() }
         findViewById<TextView>(R.id.style_reload).setOnClickListener { load() }
         findViewById<TextView>(R.id.style_add).setOnClickListener { promptNewStyle() }
         findViewById<TextView>(R.id.style_tpl_save).setOnClickListener { promptSaveTemplate() }
         findViewById<TextView>(R.id.style_tpl_use).setOnClickListener { promptUseTemplate() }
-        // 参考强度 / 信息提取度：0~100 映射到 0.0~1.0，随「保存到当前风格」落盘
-        refStrengthBar.max = 100
-        refInfoBar.max = 100
         findViewById<TextView>(R.id.style_thumb_pick).setOnClickListener { pickThumb() }
         findViewById<TextView>(R.id.style_thumb_clear).setOnClickListener {
             pendingThumb = ""
@@ -180,8 +173,6 @@ class ImageStyleActivity : Activity() {
             curHeight = obj.optInt("height", 1216)
             width.setText(curWidth.toString())
             height.setText(curHeight.toString())
-            refStrengthBar.progress = (obj.optDouble("refStrength", 0.6) * 100).toInt().coerceIn(0, 100)
-            refInfoBar.progress = (obj.optDouble("refInfoExtracted", 0.7) * 100).toInt().coerceIn(0, 100)
             // 模板库快照：套用/删除弹窗直接用，不再多发一条命令
             tplList = obj.optJSONArray("promptTemplates")?.let { arr ->
                 (0 until arr.length()).mapNotNull { i ->
@@ -517,13 +508,9 @@ class ImageStyleActivity : Activity() {
             .put("qualityTags", quality.text?.toString() ?: "")
             .put("negativePrompt", negative.text?.toString() ?: "")
             .put("promptTemplate", template.text?.toString() ?: "")
-            // 参考图随风格存两份：thumb 仅展示，refImage 随请求发给生图模型（NAI 参考图）
-            .put("refStrength", refStrengthBar.progress / 100.0)
-            .put("refInfoExtracted", refInfoBar.progress / 100.0)
-        pendingThumb?.let {
-            style.put("thumb", it)
-            style.put("refImage", it)
-        }
+        // thumb 只作展示（给用户看风格感觉）；发给模型的「出图参考图」
+        // 在生图入口处单独设置（genRefs），不跟风格走。
+        pendingThumb?.let { style.put("thumb", it) }
         EngineBridge.command(
             JSONObject().put("cmd", "imgSaveStyle").put("uid", currentUid).put("style", style),
         )

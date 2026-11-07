@@ -253,6 +253,127 @@
                 android:orientation="vertical" />
 
             <!--
+              出图参考图：发给生图模型的那张（NAI 参考图 / Vibe Transfer），
+              用来锁人物形象。与风格页的"风格参考图"（只给人看）是两回事，
+              所以单独放这里，出图前随手换、随手调参。
+            -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_input"
+                android:orientation="vertical"
+                android:padding="10dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="出图参考图（发给模型 · 锁人物形象）"
+                        android:textColor="#3A4353"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/gen_ref_pick"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_btn_soft"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:paddingTop="6dp"
+                        android:paddingBottom="6dp"
+                        android:text="换图"
+                        android:textColor="#2F66D8"
+                        android:textSize="12sp" />
+
+                    <TextView
+                        android:id="@+id/gen_ref_clear"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:background="@drawable/bg_btn_soft"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:paddingTop="6dp"
+                        android:paddingBottom="6dp"
+                        android:text="清除"
+                        android:textColor="#8A94A6"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/gen_ref_hint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="未设置 · 设置后生图会带上这张参考"
+                    android:textColor="#8A94A6"
+                    android:textSize="12sp" />
+
+                <ImageView
+                    android:id="@+id/gen_ref_thumb"
+                    android:layout_width="match_parent"
+                    android:layout_height="96dp"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/bg_btn_soft"
+                    android:scaleType="centerCrop"
+                    android:visibility="gone"
+                    android:contentDescription="出图参考图" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/gen_ref_strength_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="参考强度 0.60"
+                        android:textColor="#3A4353"
+                        android:textSize="12sp" />
+
+                    <SeekBar
+                        android:id="@+id/gen_ref_strength"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:max="100" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/gen_ref_info_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="信息提取 0.70"
+                        android:textColor="#3A4353"
+                        android:textSize="12sp" />
+
+                    <SeekBar
+                        android:id="@+id/gen_ref_info"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:max="100" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!--
               生成与结果放在标签列表「之前」。标签库能展开/加载更多之后，
               列表可能很长；放末尾会把按钮和出图结果顶到屏幕外，用户点了生成
               却看不到图。现在结果区固定在上半段，标签怎么展开都不影响。

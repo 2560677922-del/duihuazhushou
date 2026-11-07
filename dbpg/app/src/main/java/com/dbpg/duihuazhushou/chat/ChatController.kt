@@ -649,18 +649,20 @@ class ChatController(
             return
         }
 
-        // 本对话的 DNA（人物外观锚定）＋ 风格参考图：都只在生图时生效
+        // 本对话的 DNA（人物外观锚定）＋ 出图参考图：都只在生图时生效。
+        // 出图参考图取 genRefs.chat（聊天 ⋯ 菜单里设的那张），不是风格页的展示图。
         val binding = com.dbpg.duihuazhushou.session.SessionBindingStore.load(appContext, doc?.id.orEmpty())
         val envWithDna = env.copy(dnaTags = ConnectionStore.dnaTags(binding.dnaIds))
-        val style = ConnectionStore.snapshot("getImageStyle")
+        val genRef = ConnectionStore.snapshot("getImageStyle")
+            ?.optJSONObject("genRefs")?.optJSONObject("chat") ?: JSONObject()
 
         AutoImageService.run(
             context = appContext,
             text = text,
             env = envWithDna,
-            refImage = style?.optString("refImage")?.takeIf { it.isNotBlank() },
-            refStrength = style?.optDouble("refStrength", 0.6) ?: 0.6,
-            refInfoExtracted = style?.optDouble("refInfoExtracted", 0.7) ?: 0.7,
+            refImage = genRef.optString("image").takeIf { it.isNotBlank() },
+            refStrength = genRef.optDouble("strength", 0.6),
+            refInfoExtracted = genRef.optDouble("info", 0.7),
             onImage = { att ->
                 // 会话可能已经切走/这条被删了：找不到就不写，避免往别的会话里塞图
                 val d = doc ?: return@run

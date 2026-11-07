@@ -4,15 +4,21 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.net.Uri
 import android.os.Bundle
+import android.util.Base64
 import android.view.LayoutInflater
 import android.view.View
 import android.view.Window
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupMenu
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -58,6 +64,8 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         private const val REQ_BG = 2001
         /** 全屏看图（删图后要把结果带回，摘掉消息里的引用） */
         private const val REQ_VIEW_IMG = 3001
+        /** ⋯ 菜单「出图参考图」选图 */
+        private const val REQ_GEN_REF = 3102
 
         private const val M_EDIT = 1
         private const val M_REGEN = 2
@@ -84,9 +92,16 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     private var quickStyleArtist = ""
     private var quickStyleQuality = ""
     private var quickStyleNegative = ""
-    private var quickStyleRef = ""
-    private var quickStyleRefStrength = 0.6
-    private var quickStyleRefInfo = 0.7
+    /**
+     * 出图参考图（发给生图模型、锁人物形象的那张）：存 image.genRefs.chat，
+     * 聊天 ⋯ 菜单里随时换。风格页的参考图只是给用户看的风格示意，不进这里。
+     */
+    private var quickGenRefImage = ""
+    private var quickGenRefStrength = 0.6
+    private var quickGenRefInfo = 0.7
+    /** ⋯ 菜单「出图参考图」弹窗里的预览控件（选完图要就地刷新）。 */
+    private var genRefDialogThumb: ImageView? = null
+    private var genRefDialogHint: TextView? = null
     private var quickDnaTags = ""
     private var quickSize = ""
     private var quickApiUrl = ""
@@ -376,6 +391,10 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             if (deleted.isNotBlank()) controller.removeImageByPath(deleted)
             return
         }
+        if (requestCode == REQ_GEN_REF) {
+            handleGenRefPick(data)
+            return
+        }
         if (requestCode != REQ_JSONL) return
         val uri = data?.data ?: return
         val items = ChatLogLoader.load(this, uri)
@@ -420,6 +439,9 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             MenuEntry("🔍", "搜索消息", "搜关键词定位剧情，方便改写") { showSearch() },
             MenuEntry("📚", "本对话资产", "世界书 / 预设 / 正则 / DNA，按对话单独配置") {
                 com.dbpg.duihuazhushou.chat.ChatAssetsDialog.show(this, controller?.doc?.id.orEmpty())
+            },
+            MenuEntry("🎨", "出图参考图", "发给生图模型锁人物形象，随时换（跟风格参考图是两回事）") {
+                showGenRefDialog()
             },
             MenuEntry("🖼️", "换本会话背景", "只对当前会话生效，不影响其它会话") { pickBackground() },
         )
@@ -541,6 +563,197 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     }
 
     // ------------------------------------------------------------ 改名
+
+    // ------------------------------------------------------------ 出图参考图（发给模型的那张）
+
+    /**
+     * 出图参考图设置弹窗（chat 场景槽位）。
+     *
+     * 与风格页的「风格参考图」分工：那张只给用户看风格感觉；
+     * 这张是真的发给生图模型（NAI 参考图 / Vibe Transfer）锁人物形象的，
+     * 所以做成随时可换：⋯ 菜单点开 → 换图 / 清除 / 调强度与信息提取度。
+     */
+    private fun showGenRefDialog() {
+        // 本地快照读当前槽位，不等引擎
+        val st = com.dbpg.duihuazhushou.settings.ConnectionStore.snapshot("getImageStyle")
+        val ref = st?.optJSONObject("genRefs")?.optJSONObject("chat") ?: JSONObject()
+        quickGenRefImage = ref.optString("image")
+        quickGenRefStrength = ref.optDouble("strength", 0.6)
+        quickGenRefInfo = ref.optDouble("info", 0.7)
+
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+
+        val hint = TextView(this).apply {
+            textSize = 12f
+            setTextColor(0xFF8A94A6.toInt())
+        }
+        val thumb = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(140),
+            ).also { it.topMargin = dp(8) }
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            setBackgroundColor(0xFFEEF1F6.toInt())
+        }
+        genRefDialogThumb = thumb
+        genRefDialogHint = hint
+
+        fun render() {
+            if (quickGenRefImage.isBlank()) {
+                thumb.visibility = View.GONE
+                hint.text = "未设置 · 设置后对话生图 / 自动配图都会带上这张参考"
+            } else {
+                thumb.visibility = View.VISIBLE
+                hint.text = "已设置 · 生图时发给模型维持形象（NAI 参考图）"
+                runCatching {
+                    val b = Base64.decode(quickGenRefImage.substringAfter("base64,"), Base64.DEFAULT)
+                    thumb.setImageBitmap(BitmapFactory.decodeByteArray(b, 0, b.size))
+                }.onFailure { thumb.setImageBitmap(null) }
+            }
+        }
+
+        val btnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).also { it.topMargin = dp(8) }
+        }
+        fun softBtn(text: String, color: Int, onClick: () -> Unit): TextView =
+            TextView(this).apply {
+                this.text = text
+                setTextColor(color)
+                textSize = 13f
+                gravity = android.view.Gravity.CENTER
+                setBackgroundColor(0xFFEEF1F6.toInt())
+                setPadding(dp(16), dp(10), dp(16), dp(10))
+                setOnClickListener { onClick() }
+            }
+        btnRow.addView(
+            softBtn("换图", 0xFF2F66D8.toInt()) {
+                try {
+                    startActivityForResult(
+                        Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "image/*"
+                        },
+                        REQ_GEN_REF,
+                    )
+                } catch (t: Throwable) {
+                    toast("打不开图片选择器")
+                }
+            },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).also {
+                it.marginEnd = dp(6)
+            },
+        )
+        btnRow.addView(
+            softBtn("清除", 0xFF8A94A6.toInt()) {
+                quickGenRefImage = ""
+                pushGenRef(image = "")
+                render()
+                toast("已清除出图参考图")
+            },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).also {
+                it.marginStart = dp(6)
+            },
+        )
+
+        fun sliderRow(label: String, init: Double, onChange: (Double) -> Unit): LinearLayout {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).also { it.topMargin = dp(6) }
+            }
+            val tv = TextView(this).apply {
+                text = "$label %.2f".format(init)
+                textSize = 12f
+                setTextColor(0xFF3A4353.toInt())
+            }
+            val bar = SeekBar(this).apply {
+                max = 100
+                progress = (init * 100).toInt().coerceIn(0, 100)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                        tv.text = "$label %.2f".format(p / 100.0)
+                    }
+                    override fun onStartTrackingTouch(sb: SeekBar?) {}
+                    override fun onStopTrackingTouch(sb: SeekBar?) {
+                        onChange((sb?.progress ?: 0) / 100.0)
+                    }
+                })
+            }
+            row.addView(tv, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 0f).also {
+                it.width = dp(110)
+            })
+            row.addView(bar, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            return row
+        }
+
+        box.addView(hint)
+        box.addView(thumb)
+        box.addView(btnRow)
+        box.addView(sliderRow("参考强度", quickGenRefStrength) {
+            quickGenRefStrength = it
+            pushGenRef()
+        })
+        box.addView(sliderRow("信息提取", quickGenRefInfo) {
+            quickGenRefInfo = it
+            pushGenRef()
+        })
+        render()
+
+        AlertDialog.Builder(this)
+            .setTitle("出图参考图（发给模型）")
+            .setView(box)
+            .setPositiveButton("好了", null)
+            .show()
+    }
+
+    /** 选图回来：压缩落库 + 就地刷新弹窗预览。 */
+    private fun handleGenRefPick(data: Intent?) {
+        val uri: Uri = data?.data ?: return
+        try {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return
+            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: run {
+                toast("这张图解不开"); return
+            }
+            val m = maxOf(bmp.width, bmp.height)
+            val scaled = if (m <= 512) bmp else {
+                val r = 512f / m
+                Bitmap.createScaledBitmap(bmp, (bmp.width * r).toInt(), (bmp.height * r).toInt(), true)
+            }
+            val bos = java.io.ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, 80, bos)
+            quickGenRefImage = "data:image/jpeg;base64," +
+                Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
+            pushGenRef(image = quickGenRefImage)
+            // 弹窗还开着就地刷新
+            genRefDialogThumb?.let { iv ->
+                iv.visibility = View.VISIBLE
+                iv.setImageBitmap(scaled)
+            }
+            genRefDialogHint?.text = "已设置 · 生图时发给模型维持形象（NAI 参考图）"
+            toast("出图参考图已设置，下次生图即生效")
+        } catch (t: Throwable) {
+            toast("读取图片失败：${t.message}")
+        }
+    }
+
+    /** 写 chat 槽位（本地命令立即落盘）。image 传 "" 清图；不传只改参数。 */
+    private fun pushGenRef(image: String? = null) {
+        val o = JSONObject().put("cmd", "genRefSet").put("scene", "chat")
+        image?.let { o.put("image", it) }
+        o.put("strength", quickGenRefStrength)
+        o.put("info", quickGenRefInfo)
+        com.dbpg.duihuazhushou.settings.EngineBridge.command(o)
+    }
 
     private fun promptRename() {
         val cur = controller?.doc?.title.orEmpty()
@@ -824,9 +1037,11 @@ class NativeChatActivity : Activity(), ChatController.Sink {
                 quickStyleArtist = st.optString("artistTags")
                 quickStyleQuality = st.optString("qualityTags")
                 quickStyleNegative = st.optString("negativePrompt")
-                quickStyleRef = st.optString("refImage")
-                quickStyleRefStrength = st.optDouble("refStrength", 0.6)
-                quickStyleRefInfo = st.optDouble("refInfoExtracted", 0.7)
+                // 出图参考图走 chat 场景槽位（⋯ 菜单里设的那张），不跟风格
+                val ref = st.optJSONObject("genRefs")?.optJSONObject("chat") ?: JSONObject()
+                quickGenRefImage = ref.optString("image")
+                quickGenRefStrength = ref.optDouble("strength", 0.6)
+                quickGenRefInfo = ref.optDouble("info", 0.7)
                 quickSteps = st.optInt("steps", 28)
                 quickCfg = st.optDouble("cfgScale", 6.0)
                 quickSampler = st.optString("sampler")
@@ -914,9 +1129,9 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             steps = quickSteps,
             sampler = quickSampler,
             noiseSchedule = quickNoise,
-            refImageBase64 = quickStyleRef.ifBlank { null },
-            refStrength = quickStyleRefStrength,
-            refInfoExtracted = quickStyleRefInfo,
+            refImageBase64 = quickGenRefImage.ifBlank { null },
+            refStrength = quickGenRefStrength,
+            refInfoExtracted = quickGenRefInfo,
         )
         val urls = ImageEngineSupport.candidateUrls(quickEngine, quickApiUrl)
         val req = ImageGenService.Request(

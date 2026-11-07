@@ -66,6 +66,8 @@ object ConnectionStore {
         "llmRemoveProvider", "llmRemoveModels", "imgRemoveProvider", "imgRemoveApis",
         // 2026-11-08 新增：LLM 转标签模板库（命名保存，跨风格套用）+ 角色 DNA 库
         "tplSave", "tplRemove", "dnaSave", "dnaRemove",
+        // 2026-11-08 新增：出图参考图（发给生图模型的那张，按场景存，实时可换）
+        "genRefSet",
     )
 
     private val lock = Any()
@@ -140,17 +142,19 @@ object ConnectionStore {
         return true
     }
 
-    /** 引擎注入用的只读镜像。风格缩略图/参考图体积很大，且引擎只做展示，故剥掉。 */
+    /** 引擎注入用的只读镜像。风格缩略图/出图参考图体积很大，且引擎只做展示，故剥掉。 */
     fun exportForEngine(): JSONObject = synchronized(lock) {
         initFromApp()
         val copy = JSONObject(doc.toString())
-        val styles = arr(copy.optJSONObject("image"), "styleConfigs")
+        val img = copy.optJSONObject("image")
+        val styles = arr(img, "styleConfigs")
         for (i in 0 until styles.length()) {
             styles.optJSONObject(i)?.apply {
                 remove("thumb")
-                remove("refImage")
+                remove("refImage") // 老数据遗留；风格参考图只作展示，镜像用不上
             }
         }
+        img?.remove("genRefs") // 出图参考图是大图，生成走原生，镜像不需要
         return copy
     }
 
@@ -447,10 +451,9 @@ object ConnectionStore {
             .put("negativePrompt", style?.optString("negativePrompt") ?: "")
             .put("promptTemplate", style?.optString("promptTemplate") ?: "")
             .put("thumb", style?.optString("thumb") ?: "")
-            // 参考图（NAI Vibe Transfer）：随风格存，生图时发给模型
-            .put("refImage", style?.optString("refImage") ?: "")
-            .put("refStrength", style?.optDouble("refStrength", 0.6) ?: 0.6)
-            .put("refInfoExtracted", style?.optDouble("refInfoExtracted", 0.7) ?: 0.7)
+            // 出图参考图（NAI 参考图 / Vibe Transfer）：发给生图模型的那张。
+            // 按场景存（chat/tag），随时可换；风格里的 thumb 只是给用户看的风格示意。
+            .put("genRefs", image.optJSONObject("genRefs") ?: JSONObject())
             // LLM 转标签模板库：命名保存，跨风格套用
             .put("promptTemplates", arr(image, "promptTemplates"))
             // 角色 DNA 库：英文外观锚定，生图时给 LLM 当人物参考
@@ -737,12 +740,11 @@ object ConnectionStore {
                 val uid = a.optString("uid").ifBlank { image.optString("currentStyleId") }
                 val s = findByUid(styles, uid) ?: return reply
                 val p = a.optJSONObject("style") ?: JSONObject()
-                listOf("artistTags", "qualityTags", "negativePrompt", "promptTemplate", "thumb", "refImage").forEach { k ->
+                // 风格只管提示词 + 展示用参考图（thumb 只给人看，不发模型）。
+                // 发给模型的「出图参考图」在 genRefs 里，按场景存，不跟风格走。
+                listOf("artistTags", "qualityTags", "negativePrompt", "promptTemplate", "thumb").forEach { k ->
                     if (p.has(k)) s.put(k, p.optString(k))
                 }
-                // 数值字段单独写：optString 会把 0.6 变成字符串
-                if (p.has("refStrength")) s.put("refStrength", p.optDouble("refStrength", 0.6))
-                if (p.has("refInfoExtracted")) s.put("refInfoExtracted", p.optDouble("refInfoExtracted", 0.7))
             }
             "imgSaveAuto" -> {
                 val p = a.optJSONObject("auto") ?: JSONObject()
@@ -822,6 +824,17 @@ object ConnectionStore {
             "dnaRemove" -> {
                 removeByUid(arr(image, "dnaList"), a.optString("uid"))
                 reply.put("removed", true)
+            }
+            "genRefSet" -> {
+                // 出图参考图槽位：scene=chat/tag，image 传 "" 表示清图；
+                // strength/info 不传则保持不变。每次改完立即落盘，生图即时生效。
+                val scene = a.optString("scene").ifBlank { "chat" }
+                val root = image.optJSONObject("genRefs") ?: JSONObject().also { image.put("genRefs", it) }
+                val slot = root.optJSONObject(scene) ?: JSONObject().also { root.put(scene, it) }
+                if (a.has("image")) slot.put("image", a.optString("image"))
+                if (a.has("strength")) slot.put("strength", a.optDouble("strength", 0.6))
+                if (a.has("info")) slot.put("info", a.optDouble("info", 0.7))
+                reply.put("ok", true)
             }
         }
         normalize()

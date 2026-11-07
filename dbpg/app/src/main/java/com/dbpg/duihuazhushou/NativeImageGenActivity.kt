@@ -3,10 +3,15 @@ package com.dbpg.duihuazhushou
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Bundle
+import android.util.Base64
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import com.dbpg.duihuazhushou.chat.ImageLoader
@@ -82,10 +87,20 @@ class NativeImageGenActivity : Activity() {
     private var styleQuality = ""
     private var styleNegative = ""
     private var styleUid = ""
-    /** 参考图（NAI 参考图 / Vibe Transfer）：随风格存，生图时发给模型。 */
-    private var styleRef = ""
-    private var styleRefStrength = 0.6
-    private var styleRefInfo = 0.7
+    /**
+     * 出图参考图（NAI 参考图 / Vibe Transfer）：**发给生图模型**的那张，
+     * 用来锁人物形象，随时可换。与风格页的 thumb（只给人看的风格示意）
+     * 是两回事，所以存在 image.genRefs.tag，不跟风格走。
+     */
+    private var genRefImage = ""
+    private var genRefStrength = 0.6
+    private var genRefInfo = 0.7
+    private lateinit var genRefThumb: ImageView
+    private lateinit var genRefHint: TextView
+    private lateinit var genRefStrengthBar: SeekBar
+    private lateinit var genRefInfoBar: SeekBar
+    private lateinit var genRefStrengthLabel: TextView
+    private lateinit var genRefInfoLabel: TextView
 
     /** 选择器数据。 */
     private var providerList: List<JSONObject> = emptyList()
@@ -125,6 +140,36 @@ class NativeImageGenActivity : Activity() {
             startActivity(Intent(this, com.dbpg.duihuazhushou.gallery.GalleryActivity::class.java))
         }
         runBtn.setOnClickListener { run() }
+
+        // 出图参考图卡：换图 / 清除 / 强度 / 信息提取，改完立即落盘（genRefSet）
+        genRefThumb = findViewById(R.id.gen_ref_thumb)
+        genRefHint = findViewById(R.id.gen_ref_hint)
+        genRefStrengthBar = findViewById(R.id.gen_ref_strength)
+        genRefInfoBar = findViewById(R.id.gen_ref_info)
+        genRefStrengthLabel = findViewById(R.id.gen_ref_strength_label)
+        genRefInfoLabel = findViewById(R.id.gen_ref_info_label)
+        findViewById<TextView>(R.id.gen_ref_pick).setOnClickListener { pickGenRef() }
+        findViewById<TextView>(R.id.gen_ref_clear).setOnClickListener {
+            genRefImage = ""
+            pushGenRef(image = "")
+            renderGenRef()
+            toast("已清除出图参考图")
+        }
+        genRefStrengthBar.max = 100
+        genRefInfoBar.max = 100
+        val seekListener = object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                renderGenRefLabels()
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {
+                genRefStrength = genRefStrengthBar.progress / 100.0
+                genRefInfo = genRefInfoBar.progress / 100.0
+                pushGenRef()
+            }
+        }
+        genRefStrengthBar.setOnSeekBarChangeListener(seekListener)
+        genRefInfoBar.setOnSeekBarChangeListener(seekListener)
 
         // 快捷标签：纯原生读 APK 内置标签库，不走桥
         val tagSearch = findViewById<EditText>(R.id.gen_tag_search)
@@ -319,9 +364,9 @@ class NativeImageGenActivity : Activity() {
             sampler = curSampler,
             noiseSchedule = "karras",
             qualityToggle = true,
-            refImageBase64 = styleRef.ifBlank { null },
-            refStrength = styleRefStrength,
-            refInfoExtracted = styleRefInfo,
+            refImageBase64 = genRefImage.ifBlank { null },
+            refStrength = genRefStrength,
+            refInfoExtracted = genRefInfo,
         )
         val urls = ImageEngineSupport.candidateUrls(curEngine, baseUrl)
         val req = ImageGenService.Request(
@@ -428,6 +473,86 @@ class NativeImageGenActivity : Activity() {
     }
 
     /** 读本场景配置 + 风格 + 采样参数，填充所有选择器。全部走本地 ConnectionStore。 */
+    // ------------------------------------------------------------ 出图参考图
+
+    /** 打开系统选图；选中后压缩成 dataURL 存进 genRefs.tag 并立即生效。 */
+    private fun pickGenRef() {
+        try {
+            startActivityForResult(
+                Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "image/*"
+                },
+                REQ_GEN_REF,
+            )
+        } catch (t: Throwable) {
+            toast("打不开图片选择器：${t.message}")
+        }
+    }
+
+    @Deprecated("Activity#onActivityResult 仍可用；避免为单一入口再引入 ActivityResult 依赖")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_GEN_REF || resultCode != RESULT_OK) return
+        val uri: Uri = data?.data ?: return
+        try {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return
+            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: run {
+                toast("这张图解不开"); return
+            }
+            // 压到 512 长边 JPEG q80（约 20–40KB）：够 NAI 参考用，也不撑爆配置文件
+            val scaled = scaleDown(bmp, 512)
+            val bos = java.io.ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, 80, bos)
+            genRefImage = "data:image/jpeg;base64," +
+                Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
+            pushGenRef(image = genRefImage)
+            renderGenRef()
+            toast("出图参考图已设置，下次生图即生效")
+        } catch (t: Throwable) {
+            toast("读取图片失败：${t.message}")
+        }
+    }
+
+    private fun scaleDown(src: Bitmap, max: Int): Bitmap {
+        val m = maxOf(src.width, src.height)
+        if (m <= max) return src
+        val ratio = max.toFloat() / m
+        return Bitmap.createScaledBitmap(src, (src.width * ratio).toInt(), (src.height * ratio).toInt(), true)
+    }
+
+    /**
+     * 写配置（本地命令，立即落盘）。image 传 "" 表示清图；
+     * 不传 image 则只更新强度/信息提取度。
+     */
+    private fun pushGenRef(image: String? = null) {
+        val o = JSONObject().put("cmd", "genRefSet").put("scene", "tag")
+        image?.let { o.put("image", it) }
+        o.put("strength", genRefStrengthBar.progress / 100.0)
+        o.put("info", genRefInfoBar.progress / 100.0)
+        EngineBridge.command(o)
+    }
+
+    private fun renderGenRefLabels() {
+        genRefStrengthLabel.text = "参考强度 %.2f".format(genRefStrengthBar.progress / 100.0)
+        genRefInfoLabel.text = "信息提取 %.2f".format(genRefInfoBar.progress / 100.0)
+    }
+
+    private fun renderGenRef() {
+        renderGenRefLabels()
+        if (genRefImage.isBlank()) {
+            genRefThumb.visibility = android.view.View.GONE
+            genRefHint.text = "未设置 · 设置后生图会带上这张参考"
+            return
+        }
+        genRefThumb.visibility = android.view.View.VISIBLE
+        genRefHint.text = "已设置 · 生图时发给模型维持形象（NAI 参考图）"
+        runCatching {
+            val b = Base64.decode(genRefImage.substringAfter("base64,"), Base64.DEFAULT)
+            genRefThumb.setImageBitmap(BitmapFactory.decodeByteArray(b, 0, b.size))
+        }.onFailure { genRefThumb.setImageBitmap(null) }
+    }
+
     private fun loadSelectors() {
         EngineBridge.fetch(this, "getImageConfig") { obj ->
             if (obj == null) return@fetch
@@ -457,9 +582,14 @@ class NativeImageGenActivity : Activity() {
             styleArtist = obj.optString("artistTags")
             styleQuality = obj.optString("qualityTags")
             styleNegative = obj.optString("negativePrompt")
-            styleRef = obj.optString("refImage")
-            styleRefStrength = obj.optDouble("refStrength", 0.6)
-            styleRefInfo = obj.optDouble("refInfoExtracted", 0.7)
+            // 出图参考图按场景取（tag），风格里的 thumb 只是展示用，不进这里
+            val ref = obj.optJSONObject("genRefs")?.optJSONObject("tag") ?: JSONObject()
+            genRefImage = ref.optString("image")
+            genRefStrength = ref.optDouble("strength", 0.6)
+            genRefInfo = ref.optDouble("info", 0.7)
+            genRefStrengthBar.progress = (genRefStrength * 100).toInt().coerceIn(0, 100)
+            genRefInfoBar.progress = (genRefInfo * 100).toInt().coerceIn(0, 100)
+            renderGenRef()
             stepsInput.setText(obj.optInt("steps", 28).toString())
             cfgInput.setText(obj.optDouble("cfgScale", 6.0).toString())
             curSampler = obj.optString("sampler").ifBlank { "k_euler_ancestral" }
@@ -624,5 +754,10 @@ class NativeImageGenActivity : Activity() {
         super.onDestroy()
         service?.shutdown()
         service = null
+    }
+
+    private companion object {
+        /** onActivityResult：选出图参考图。 */
+        const val REQ_GEN_REF = 3101
     }
 }

@@ -307,7 +307,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="14dp"
-                android:text="参考图（参与出图 · NAI 参考图）"
+                android:text="风格参考图（只作展示，不参与出图）"
                 android:textColor="#5A6B85"
                 android:textSize="12sp" />
 
@@ -351,53 +351,6 @@
                     android:text="清除参考图"
                     android:textColor="#8A94A6"
                     android:textSize="12sp" />
-            </LinearLayout>
-
-            <!-- 参考强度 / 信息提取度（NAI Vibe Transfer 的两个旋钮） -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="参考强度（0.6）"
-                    android:textColor="#3A4353"
-                    android:textSize="12sp" />
-
-                <SeekBar
-                    android:id="@+id/style_ref_strength"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:max="100" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="信息提取度（0.7）"
-                    android:textColor="#3A4353"
-                    android:textSize="12sp" />
-
-                <SeekBar
-                    android:id="@+id/style_ref_info"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:max="100" />
             </LinearLayout>
 
             <TextView
