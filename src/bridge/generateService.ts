@@ -35,7 +35,6 @@ import { useApiConfigStore } from '../stores/apiConfig';
 import { useVariablesStore } from '../stores/variables';
 import { useStorageSettingsStore } from '../stores/storageSettings';
 import { useImageStore } from '../stores/image';
-import { useTagLibraryStore } from '../stores/tagLibrary';
 import { resolveCached } from '../lib/lazyImage';
 import { fetchModels } from '../engine/imageGen';
 
@@ -1230,32 +1229,6 @@ function imageStyleSummary(): string {
     width: cur.width || 832,
     height: cur.height || 1216,
   });
-}
-
-/** 标签库搜索（原生标签生图的快捷标签）。 */
-function tagSearch(rawQuery: string): string {
-  try {
-    const store = useTagLibraryStore();
-    const q = (rawQuery || '').trim().toLowerCase();
-    const list = (store.tags || []) as any[];
-    // 标签库是懒加载的（bundled JSON），第一次调用先触发加载，
-    // 原生下一次输入/刷新时就能搜到
-    if (!list.length) void store.load();
-    const pool = q
-      ? list.filter((t) => String(t.tag || '').toLowerCase().includes(q) || String(t.cn || '').toLowerCase().includes(q))
-      : list;
-    return JSON.stringify({
-      total: list.length,
-      tags: pool.slice(0, 40).map((t) => ({
-        tag: String(t.tag || ''),
-        cn: String(t.cn || ''),
-        count: t.count ?? 0,
-        group: String(t.group || ''),
-      })),
-    });
-  } catch {
-    return JSON.stringify({ total: 0, tags: [] });
-  }
 }
 
 /** 装到 window 上，供原生 evaluateJavascript 调用。 */
