@@ -157,6 +157,17 @@ class ApiConfigActivity : Activity() {
 
     private fun renderProviders(arr: JSONArray) {
         providersBox.removeAllViews()
+
+        // 新建运营商：用户反馈「只能切换以前添加过的」，原生必须能自己加
+        providersBox.addView(TextView(this).apply {
+            text = "＋ 新建运营商"
+            setTextColor(0xFF2F66D8.toInt())
+            textSize = 13f
+            gravity = Gravity.CENTER
+            background = getDrawable(R.drawable.bg_btn_soft)
+            setPadding(0, dp(10), 0, dp(10))
+            setOnClickListener { promptNewProvider() }
+        })
         if (arr.length() == 0) {
             providersBox.addView(simpleCard("还没有运营商", "填好地址和密钥，拉取模型后自动建立"))
             return
@@ -258,6 +269,56 @@ class ApiConfigActivity : Activity() {
                 }
             }
         }
+    }
+
+    /** 新建 LLM 运营商 = 名称 + 地址 + 密钥；创建后自动切为当前。 */
+    private fun promptNewProvider() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        fun addLabel(t: String) = box.addView(TextView(this).apply {
+            text = t
+            setTextColor(0xFF5A6B85.toInt())
+            textSize = 12f
+            setPadding(0, dp(10), 0, dp(2))
+        })
+        fun addInput(hint: String, uri: Boolean = false): EditText = EditText(this).apply {
+            this.hint = hint
+            setTextSize(13f)
+            setTextColor(0xFF1A2230.toInt())
+            background = getDrawable(R.drawable.bg_input)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            inputType = if (uri) android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+            else android.text.InputType.TYPE_CLASS_TEXT
+        }.also { box.addView(it) }
+
+        addLabel("名称（可留空，用域名）")
+        val name = addInput("如「玄猫中转」")
+        addLabel("请求地址（Base URL）")
+        val url = addInput("https://api.example.com/v1", uri = true)
+        addLabel("API 密钥")
+        val key = addInput("sk-…")
+
+        AlertDialog.Builder(this)
+            .setTitle("新建运营商")
+            .setView(box)
+            .setPositiveButton("创建") { _, _ ->
+                val u = url.text?.toString()?.trim().orEmpty()
+                if (u.isEmpty()) {
+                    status.text = "地址不能为空"
+                    return@setPositiveButton
+                }
+                command(
+                    "llmAddProvider",
+                    JSONObject()
+                        .put("name", name.text?.toString()?.trim() ?: "")
+                        .put("baseUrl", u)
+                        .put("apiKey", key.text?.toString()?.trim() ?: ""),
+                )
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     private fun i2(v: Int): Int = v
@@ -392,6 +453,14 @@ class ApiConfigActivity : Activity() {
                         loadConfig()
                     } else {
                         status.text = "删除失败：${obj.optString("error")}"
+                    }
+                }
+                "llmAddProvider" -> {
+                    if (ok) {
+                        status.text = "已创建运营商，接着拉取模型即可"
+                        loadConfig()
+                    } else {
+                        status.text = "创建失败：${obj.optString("error")}"
                     }
                 }
                 "saveConn" -> if (!ok) status.text = "保存失败：${obj.optString("error")}"

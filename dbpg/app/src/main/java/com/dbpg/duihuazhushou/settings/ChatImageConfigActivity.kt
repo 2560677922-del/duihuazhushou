@@ -42,7 +42,7 @@ class ChatImageConfigActivity : Activity() {
     private var styleUid = ""
     private var sampler = "k_euler_ancestral"
 
-    private var apis: List<JSONObject> = emptyList()
+    private var providers: List<JSONObject> = emptyList()
     private var styles: List<JSONObject> = emptyList()
     private var llms: List<JSONObject> = emptyList()
 
@@ -118,12 +118,10 @@ class ChatImageConfigActivity : Activity() {
             llmUid = cur.optString("llmConfigId")
             renderCtx()
 
-            val arr = obj.optJSONArray("apis") ?: JSONArray()
-            apis = (0 until arr.length()).map { arr.getJSONObject(it) }
-            val api = apis.find { it.optString("uid") == apiUid }
-            apiSelect.text = "运营商：" + (api?.optString("model")?.ifBlank { api.optString("name") }
-                ?: cur.optString("model").ifBlank { "未选择" })
-            apiSelect.setOnClickListener { pickApi() }
+            val arr = obj.optJSONArray("providers") ?: JSONArray()
+            providers = (0 until arr.length()).map { arr.getJSONObject(it) }
+            apiSelect.text = "运营商：" + cur.optString("model").ifBlank { "未选择" }
+            apiSelect.setOnClickListener { pickProviderThenModel() }
 
             val la = obj.optJSONArray("llmConfigs") ?: JSONArray()
             llms = (0 until la.length()).map { la.getJSONObject(it) }
@@ -151,14 +149,31 @@ class ChatImageConfigActivity : Activity() {
 
     // ------------------------------------------------------------ 选择器
 
-    private fun pickApi() {
-        if (apis.isEmpty()) return toast("还没有生图接口")
-        val names = apis.map { it.optString("model").ifBlank { it.optString("name") } }
+    /** 两级选择：运营商（地址） → 该家下的模型。 */
+    private fun pickProviderThenModel() {
+        if (providers.isEmpty()) return toast("还没有生图运营商")
+        val names = providers.map { it.optString("name").ifBlank { it.optString("baseUrl") } }
         AlertDialog.Builder(this)
             .setTitle("选择生图运营商")
             .setItems(names.toTypedArray()) { _, i ->
-                val uid = apis[i].optString("uid")
-                EngineBridge.command(JSONObject().put("cmd", "imgUseApi").put("uid", uid))
+                val models = providers[i].optJSONArray("models") ?: JSONArray()
+                if (models.length() == 0) return@setItems toast("这家还没添加模型")
+                if (models.length() == 1) {
+                    val uid = models.getJSONObject(0).optString("uid")
+                    EngineBridge.command(JSONObject().put("cmd", "imgUseApi").put("uid", uid))
+                    return@setItems
+                }
+                val labels = (0 until models.length()).map { j ->
+                    models.getJSONObject(j).optString("model").ifBlank { models.getJSONObject(j).optString("name") }
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("选择模型")
+                    .setItems(labels.toTypedArray()) { _, j ->
+                        val uid = models.getJSONObject(j).optString("uid")
+                        EngineBridge.command(JSONObject().put("cmd", "imgUseApi").put("uid", uid))
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
             }
             .setNegativeButton("取消", null)
             .show()

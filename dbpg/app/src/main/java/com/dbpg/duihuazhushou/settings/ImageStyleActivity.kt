@@ -45,6 +45,9 @@ class ImageStyleActivity : Activity() {
     /** 当前编辑的风格 uid（跟随 store 的 currentStyleId）。 */
     private var currentUid = ""
 
+    /** 风格 uid → (缩略图 ImageView, 占位字)；异步取参考图后回填。 */
+    private val thumbViews = mutableMapOf<String, Pair<ImageView, TextView>>()
+
     /** 待保存的参考图 dataURL；null = 不改动，"" = 清除。 */
     private var pendingThumb: String? = null
 
@@ -58,6 +61,22 @@ class ImageStyleActivity : Activity() {
                 return@ApiResultListener
             }
             when (kind) {
+                "getStyleThumb" -> {
+                    val uid = obj.optString("uid")
+                    val dataUrl = obj.optString("thumb")
+                    val pair = thumbViews[uid] ?: return@ApiResultListener
+                    if (dataUrl.isNotBlank() && dataUrl.contains("base64,")) {
+                        runCatching {
+                            val bytes = Base64.decode(dataUrl.substringAfter("base64,"), Base64.DEFAULT)
+                            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            if (bmp != null) {
+                                pair.first.setImageBitmap(bmp)
+                                pair.second.visibility = TextView.GONE
+                            }
+                        }
+                    }
+                    return@ApiResultListener
+                }
                 "imgAddStyle" -> {
                     toast("已新建风格")
                     load()
@@ -207,19 +226,9 @@ class ImageStyleActivity : Activity() {
             cell.addView(thumbBox)
 
             if (s.optBoolean("hasThumb")) {
-                EngineBridge.fetchArg(this, "getStyleThumb", uid) { obj ->
-                    val dataUrl = obj?.optString("thumb").orEmpty()
-                    if (dataUrl.isNotBlank() && dataUrl.contains("base64,")) {
-                        runCatching {
-                            val bytes = Base64.decode(dataUrl.substringAfter("base64,"), Base64.DEFAULT)
-                            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                            if (bmp != null) {
-                                iv.setImageBitmap(bmp)
-                                initial.visibility = TextView.GONE
-                            }
-                        }
-                    }
-                }
+                thumbViews[uid] = iv to initial
+                // thumb 可能是 blob: 引用，交给 web 的 resolveCached 解析成 dataURL
+                EngineBridge.command(JSONObject().put("cmd", "getStyleThumb").put("uid", uid))
             }
 
             cell.addView(TextView(this).apply {

@@ -36,6 +36,7 @@ import { useVariablesStore } from '../stores/variables';
 import { useStorageSettingsStore } from '../stores/storageSettings';
 import { useImageStore } from '../stores/image';
 import { useTagLibraryStore } from '../stores/tagLibrary';
+import { resolveCached } from '../lib/lazyImage';
 import { fetchModels } from '../engine/imageGen';
 
 /** 原生交来的一次生成请求。 */
@@ -621,6 +622,8 @@ async function apiCommand(raw: string): Promise<void> {
         if (!models.length) throw new Error('没有要添加的模型');
         let added = 0;
         let skipped = 0;
+        // 当前条目还没选模型 → 直接把第一个模型写进它，避免多出一条"空模型"
+        let anchorEmpty = !(cur.model || cur.novelaiModel || '');
         for (const model of models) {
           const exists = img.apiConfigs.some(
             (c) => (c.baseUrl || '') === baseUrl && (c.model || c.novelaiModel || '') === model,
@@ -629,10 +632,16 @@ async function apiCommand(raw: string): Promise<void> {
             skipped++;
             continue;
           }
+          if (anchorEmpty) {
+            await img.updateApi(cur._uid, { model });
+            anchorEmpty = false;
+            added++;
+            continue;
+          }
           const made = await img.addApi(model);
           await img.updateApi(made._uid, {
-            ...(req.baseUrl ? { baseUrl: String(req.baseUrl) } : {}),
-            ...(req.apiKey ? { apiKey: String(req.apiKey) } : {}),
+            baseUrl: baseUrl || (req.baseUrl ? String(req.baseUrl) : ''),
+            apiKey: req.apiKey ? String(req.apiKey) : cur.apiKey,
             model,
           });
           added++;
@@ -681,6 +690,55 @@ async function apiCommand(raw: string): Promise<void> {
           await img.updateStyle(styleId, stylePatch);
         }
         break;
+      }
+
+      // ─────────── 运营商管理（LLM 与生图各一套） ───────────
+
+      /** 新建 LLM 运营商（地址+密钥），并切为当前。 */
+      case 'llmAddProvider': {
+        const api = useApiConfigStore();
+        await api.load();
+        const name = String(req.name || hostOf(req.baseUrl) || '新运营商');
+        await api.addConfig(name);
+        const cur = api.currentConfig;
+        if (!cur) throw new Error('创建运营商失败');
+        await api.updateProvider(cur._uid, {
+          baseUrl: String(req.baseUrl || ''),
+          apiKey: String(req.apiKey || ''),
+        });
+        replyApiResult({ kind: cmd, ok: true, uid: cur._uid });
+        return;
+      }
+
+      /** 新建生图运营商（地址+密钥），并切为当前。 */
+      case 'imgAddProvider': {
+        const img = useImageStore();
+        const name = String(req.name || hostOf(req.baseUrl) || '新运营商');
+        const made = await img.addApi(name);
+        await img.updateApi(made._uid, {
+          baseUrl: String(req.baseUrl || ''),
+          apiKey: String(req.apiKey || ''),
+          // 新建运营商不继承默认模型：模型由「拉取模型」添加
+          model: '',
+          novelaiModel: '',
+        });
+        await img.setCurrentApi(made._uid);
+        replyApiResult({ kind: cmd, ok: true, uid: made._uid });
+        return;
+      }
+
+      /**
+       * 取某套风格的参考图（已解析成 dataURL）。
+       * thumb 可能是 blob: 引用（网页端压缩后存图库），必须走 resolveCached 解析，
+       * 原生直接拿来当 base64 用当然显示不出来（用户："直接是单个字"）。
+       */
+      case 'getStyleThumb': {
+        const img = useImageStore();
+        const st: any = (img.styleConfigs || []).find((x) => x._uid === req.uid);
+        const raw = st?.thumb || '';
+        const dataUrl = raw ? (await resolveCached(raw)) || '' : '';
+        replyApiResult({ kind: cmd, ok: true, uid: req.uid, thumb: dataUrl || '' });
+        return;
       }
 
       // ─────────── 生图风格（多套 + 参考图） ───────────
@@ -982,11 +1040,21 @@ async function apiCommand(raw: string): Promise<void> {
 }
 
 /** 生图接口列表：交互对齐 LLM 运营商（地址/密钥/拉模型/多选添加/快捷切换）。 */
+/** 从地址里取主机名，作为运营商默认显示名。 */
+function hostOf(baseUrl?: string): string {
+  try {
+    return new URL(String(baseUrl || '')).host;
+  } catch {
+    return '';
+  }
+}
+
 function imageApiSummary(): string {
   const img = useImageStore();
   const api = useApiConfigStore();
   const cur: any = img.currentConfig || {};
   return JSON.stringify({
+    // 兼容字段：扁平列表（老调用方还在用；新界面请用 providers）
     apis: (img.apiConfigs || []).map((a) => ({
       uid: a._uid,
       name: a.name || '',
@@ -996,6 +1064,31 @@ function imageApiSummary(): string {
       model: a.model || a.novelaiModel || '',
       current: a._uid === img.currentApiId,
     })),
+    // 运营商 = 同一 baseUrl（地址相同就是同一家，其下可挂多个模型）
+    providers: (() => {
+      const groups = new Map<string, any[]>();
+      for (const a of img.apiConfigs || []) {
+        const key = (a.baseUrl || '').trim().replace(/\/+$/, '') || `__own__:${a._uid}`;
+        const arr = groups.get(key);
+        if (arr) arr.push(a);
+        else groups.set(key, [a]);
+      }
+      return [...groups.entries()].map(([key, list]) => ({
+        key,
+        baseUrl: list[0].baseUrl || '',
+        name: list[0].name || hostOf(list[0].baseUrl) || '(未填地址)',
+        hasKey: list.some((x) => !!(x.apiKey || x.novelaiToken)),
+        current: list.some((x) => x._uid === img.currentApiId),
+        models: list
+          .map((x) => ({
+            uid: x._uid,
+            model: x.model || x.novelaiModel || '',
+            name: x.name || x.model || '',
+            current: x._uid === img.currentApiId,
+          }))
+          .filter((m) => m.model !== '' || list.length === 1),
+      }));
+    })(),
     current: {
       uid: img.currentApiId || '',
       baseUrl: cur.baseUrl || '',
@@ -1139,17 +1232,6 @@ function imageStyleSummary(): string {
   });
 }
 
-/** 单套风格的参考图（列表卡片按需取，避免一次把所有图都传过去）。 */
-function styleThumb(rawUid: string): string {
-  try {
-    const img = useImageStore();
-    const s: any = (img.styleConfigs || []).find((x) => x._uid === rawUid);
-    return JSON.stringify({ thumb: s?.thumb || '' });
-  } catch {
-    return JSON.stringify({ thumb: '' });
-  }
-}
-
 /** 标签库搜索（原生标签生图的快捷标签）。 */
 function tagSearch(rawQuery: string): string {
   try {
@@ -1195,7 +1277,6 @@ export function installGenerateService(): void {
     getConfig: apiConfigSummary,
     getImageConfig: imageApiSummary,
     getImageStyle: imageStyleSummary,
-    getStyleThumb: styleThumb,
     getDisplaySettings: displaySettingsSummary,
     getAssets: assetsDetail,
     getTags: tagSearch,

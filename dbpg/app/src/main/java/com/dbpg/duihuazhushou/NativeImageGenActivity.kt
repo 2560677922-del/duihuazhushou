@@ -44,7 +44,7 @@ class NativeImageGenActivity : Activity() {
     private var styleNegative = ""
 
     /** 选择器数据。 */
-    private var apiList: List<org.json.JSONObject> = emptyList()
+    private var providerList: List<org.json.JSONObject> = emptyList()
     private var styleList: List<org.json.JSONObject> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -283,25 +283,11 @@ class NativeImageGenActivity : Activity() {
         val styleSelect = findViewById<TextView>(R.id.gen_style_select)
         EngineBridge.fetch(this, "getImageConfig") { obj ->
             if (obj == null) return@fetch
-            val arr = obj.optJSONArray("apis") ?: org.json.JSONArray()
-            apiList = (0 until arr.length()).map { arr.getJSONObject(it) }
+            val arr = obj.optJSONArray("providers") ?: org.json.JSONArray()
+            providerList = (0 until arr.length()).map { arr.getJSONObject(it) }
             val cur = obj.optJSONObject("current") ?: org.json.JSONObject()
-            val curUid = cur.optString("uid")
-            val curApi = apiList.find { it.optString("uid") == curUid }
-            apiSelect.text = "运营商：" + (curApi?.optString("model")?.ifBlank { null }
-                ?: cur.optString("model").ifBlank { "未选择" })
-            apiSelect.setOnClickListener {
-                val names = apiList.map { it.optString("model").ifBlank { it.optString("name") } }
-                if (names.isEmpty()) { toast("还没有生图接口，去「配置」里加一个"); return@setOnClickListener }
-                AlertDialog.Builder(this)
-                    .setTitle("选择生图运营商")
-                    .setItems(names.toTypedArray()) { _, which ->
-                        val uid = apiList[which].optString("uid")
-                        EngineBridge.command(org.json.JSONObject().put("cmd", "imgUseApi").put("uid", uid))
-                    }
-                    .setNegativeButton("取消", null)
-                    .show()
-            }
+            apiSelect.text = "运营商：" + (cur.optString("model").ifBlank { "未选择" })
+            apiSelect.setOnClickListener { pickProviderThenModel() }
         }
         EngineBridge.fetch(this, "getImageStyle") { obj ->
             if (obj == null) return@fetch
@@ -325,6 +311,43 @@ class NativeImageGenActivity : Activity() {
                     .show()
             }
         }
+    }
+
+    /** 两级选择：先选运营商（地址），再选它下面的模型。 */
+    private fun pickProviderThenModel() {
+        if (providerList.isEmpty()) {
+            toast("还没有生图运营商，去「配置」里新建")
+            return
+        }
+        val names = providerList.map { it.optString("name").ifBlank { it.optString("baseUrl") } }
+        AlertDialog.Builder(this)
+            .setTitle("选择生图运营商")
+            .setItems(names.toTypedArray()) { _, i ->
+                val prov = providerList[i]
+                val models = prov.optJSONArray("models") ?: org.json.JSONArray()
+                if (models.length() == 0) {
+                    toast("这家还没添加模型，去「配置」里拉取")
+                    return@setItems
+                }
+                if (models.length() == 1) {
+                    val uid = models.getJSONObject(0).optString("uid")
+                    EngineBridge.command(org.json.JSONObject().put("cmd", "imgUseApi").put("uid", uid))
+                    return@setItems
+                }
+                val labels = (0 until models.length()).map { j ->
+                    models.getJSONObject(j).optString("model").ifBlank { models.getJSONObject(j).optString("name") }
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("选择模型")
+                    .setItems(labels.toTypedArray()) { _, j ->
+                        val uid = models.getJSONObject(j).optString("uid")
+                        EngineBridge.command(org.json.JSONObject().put("cmd", "imgUseApi").put("uid", uid))
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     /** 选择器/风格变更后刷新（放在 onResume 与动作完成后调用）。 */

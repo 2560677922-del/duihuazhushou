@@ -614,6 +614,41 @@ class AssetsHomeActivity : Activity() {
                         setPadding(0, dp(3), 0, 0)
                     })
                 }
+                // 快捷开关：展开前也能直接切换「启用」与「常驻/触发」
+                val quick = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setPadding(0, dp(6), 0, 0)
+                }
+                quick.addView(TextView(this).apply {
+                    text = if (e.optBoolean("enabled")) "☑ 已启用" else "☐ 已停用"
+                    setTextColor(if (e.optBoolean("enabled")) 0xFF2F66D8.toInt() else 0xFF8A94A6.toInt())
+                    textSize = 11f
+                    background = getDrawable(R.drawable.bg_btn_soft)
+                    setPadding(dp(10), dp(5), dp(10), dp(5))
+                    setOnClickListener {
+                        EngineBridge.command(
+                            JSONObject().put("cmd", "wbSaveEntry").put("bookId", id)
+                                .put("uid", e.optInt("uid"))
+                                .put("entry", JSONObject().put("enabled", !e.optBoolean("enabled"))),
+                        )
+                    }
+                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6) })
+                quick.addView(TextView(this).apply {
+                    text = if (e.optBoolean("constant")) "🔵 常驻" else "🟢 关键词触发"
+                    setTextColor(0xFF2F66D8.toInt())
+                    textSize = 11f
+                    background = getDrawable(R.drawable.bg_btn_soft)
+                    setPadding(dp(10), dp(5), dp(10), dp(5))
+                    setOnClickListener {
+                        EngineBridge.command(
+                            JSONObject().put("cmd", "wbSaveEntry").put("bookId", id)
+                                .put("uid", e.optInt("uid"))
+                                .put("entry", JSONObject().put("constant", !e.optBoolean("constant"))),
+                        )
+                    }
+                })
+                row.addView(quick)
+
                 if (entryOpen) {
                     row.addView(TextView(this).apply {
                         text = e.optString("content").ifBlank { "（空条目）" }
@@ -863,6 +898,11 @@ class AssetsHomeActivity : Activity() {
             when (obj.optString("kind")) {
                 "setAssets" -> {
                     if (obj.optBoolean("ok")) load() else toast("切换失败：${obj.optString("error")}")
+                }
+                "wbSaveEntry", "wbAddEntry", "wbRemoveEntry",
+                "presetSavePrompt", "presetAddPrompt", "presetRemovePrompt" -> {
+                    if (obj.optBoolean("ok")) load()
+                    else toast("操作失败：${obj.optString("error")}")
                 }
                 "importAsset" -> {
                     if (obj.optBoolean("ok")) {
