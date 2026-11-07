@@ -82,6 +82,7 @@ class AssetsHomeActivity : Activity() {
             R.id.tab_preset to TAB_PRESET,
             R.id.tab_worldbook to TAB_WORLDBOOK,
             R.id.tab_regex to TAB_REGEX,
+            R.id.tab_dna to TAB_DNA,
         )
         for ((id, t) in tabs) {
             findViewById<TextView>(id).setOnClickListener {
@@ -99,6 +100,7 @@ class AssetsHomeActivity : Activity() {
             R.id.tab_preset to TAB_PRESET,
             R.id.tab_worldbook to TAB_WORLDBOOK,
             R.id.tab_regex to TAB_REGEX,
+            R.id.tab_dna to TAB_DNA,
         )
         for ((id, t) in map) {
             val v = findViewById<TextView>(id)
@@ -157,7 +159,119 @@ class AssetsHomeActivity : Activity() {
                 }
                 if (arr.length() == 0) box.addView(emptyCard("还没有正则组", "点右上角「导入」选 ST 的正则 .json"))
             }
+            TAB_DNA -> {
+                renderDna(box, status)
+                return
+            }
             else -> renderWorldBooks(a, box, status)
+        }
+    }
+
+    // ------------------------------------------------------------ 角色 DNA（英文外观锚定，生图时给 LLM 当人物参考）
+
+    /**
+     * DNA 独立于世界书/预设：它是"视觉层"的固定参数（发色瞳色服装等英文标签），
+     * 只在生图时生效。每条可单独启用（启用＝对话里可选），对话在「本对话资产」里勾。
+     */
+    private fun renderDna(box: LinearLayout, status: TextView) {
+        // DNA 存在原生配置（ConnectionStore），走本地快照取，不经过 web 引擎
+        EngineBridge.fetch(this, "getImageStyle") { obj ->
+            if (obj == null) {
+                status.text = "读取 DNA 库失败"
+                return@fetch
+            }
+            val arr = obj.optJSONArray("dnaList") ?: JSONArray()
+            status.text = "共 ${arr.length()} 条 DNA；生图时把勾选的外观标签拼进提示词（对话里在「本对话资产」勾选）"
+            box.removeAllViews()
+            box.addView(actionCard("＋ 新建 DNA", "写英文外观标签，如 1girl, silver hair, red eyes") {
+                promptEditDna(null)
+            })
+            for (i in 0 until arr.length()) {
+                val d = arr.getJSONObject(i)
+                renderDnaCard(box, d)
+            }
+            if (arr.length() == 0) {
+                box.addView(emptyCard("还没有 DNA", "DNA 锚定角色外观，同一角色每张图长一个样"))
+            }
+        }
+    }
+
+    private fun renderDnaCard(box: LinearLayout, d: JSONObject) {
+        val uid = d.optString("_uid")
+        val name = d.optString("name").ifBlank { "未命名" }
+        val tags = d.optString("tags")
+        val enabled = d.optBoolean("enabled", true)
+        val open = uid in openEntries
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(10), dp(8), dp(10))
+        }
+        head.addView(TextView(this).apply {
+            text = "🧬 $name"
+            setTextColor(if (enabled) 0xFF1A2230.toInt() else 0xFF9AA4B2.toInt())
+            textSize = 14f
+            setOnClickListener {
+                if (uid in openEntries) openEntries.remove(uid) else openEntries.add(uid)
+                lastAssets?.let { render(it) } ?: load()
+            }
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(chipToggle(if (enabled) "☑ 启用" else "☐ 停用", enabled) {
+            EngineBridge.command(
+                JSONObject().put("cmd", "dnaSave").put("uid", uid)
+                    .put("name", name).put("enabled", !enabled),
+            )
+            load()
+        })
+        head.addView(arrow(open))
+        box.addView(head, cardParams())
+
+        if (!open) return
+        // 展开后：标签预览 + 编辑/删除
+        box.addView(TextView(this).apply {
+            text = "外观标签：${tags.ifBlank { "（空）" }}"
+            setTextColor(0xFF66707F.toInt())
+            textSize = 12f
+            setPadding(dp(16), dp(4), dp(16), dp(4))
+        })
+        box.addView(actionRow("✏️ 编辑") { promptEditDna(d) })
+        box.addView(actionRow("🗑️ 删除") {
+            AlertDialog.Builder(this)
+                .setTitle("删除 DNA")
+                .setMessage("「$name」将被删除，不可恢复。")
+                .setPositiveButton("删除") { _, _ ->
+                    EngineBridge.command(JSONObject().put("cmd", "dnaRemove").put("uid", uid))
+                    load()
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        })
+    }
+
+    /** DNA 编辑器：名称 + 英文外观标签 + 备注。复用通用 editDialog。 */
+    private fun promptEditDna(existing: JSONObject?) {
+        editDialog(
+            if (existing == null) "新建 DNA" else "编辑 DNA",
+            listOf(
+                "名称" to (existing?.optString("name") ?: ""),
+                "外观标签（发色瞳色服装等，逗号分隔）" to (existing?.optString("tags") ?: ""),
+                "备注" to (existing?.optString("note") ?: ""),
+            ),
+        ) { values ->
+            val name = values[0].trim()
+            if (name.isEmpty()) {
+                toast("名字不能为空")
+                return@editDialog
+            }
+            EngineBridge.command(
+                JSONObject().put("cmd", "dnaSave")
+                    .put("uid", existing?.optString("_uid") ?: "")
+                    .put("name", name)
+                    .put("tags", values[1])
+                    .put("note", values[2])
+                    .put("enabled", existing?.optBoolean("enabled", true) ?: true),
+            )
+            load()
         }
     }
 
@@ -1281,6 +1395,7 @@ class AssetsHomeActivity : Activity() {
         const val TAB_PRESET = "preset"
         const val TAB_WORLDBOOK = "worldbook"
         const val TAB_REGEX = "regex"
+        const val TAB_DNA = "dna"
         const val REQ_IMPORT = 2001
         const val REQ_EXPORT = 2002
     }

@@ -84,6 +84,10 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     private var quickStyleArtist = ""
     private var quickStyleQuality = ""
     private var quickStyleNegative = ""
+    private var quickStyleRef = ""
+    private var quickStyleRefStrength = 0.6
+    private var quickStyleRefInfo = 0.7
+    private var quickDnaTags = ""
     private var quickSize = ""
     private var quickApiUrl = ""
     private var quickApiKey = ""
@@ -414,6 +418,9 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         val sessionItems = mutableListOf(
             MenuEntry("✏️", "重命名会话", "给这次冒险起个好记的名字") { promptRename() },
             MenuEntry("🔍", "搜索消息", "搜关键词定位剧情，方便改写") { showSearch() },
+            MenuEntry("📚", "本对话资产", "世界书 / 预设 / 正则 / DNA，按对话单独配置") {
+                com.dbpg.duihuazhushou.chat.ChatAssetsDialog.show(this, controller?.doc?.id.orEmpty())
+            },
             MenuEntry("🖼️", "换本会话背景", "只对当前会话生效，不影响其它会话") { pickBackground() },
         )
         if (hasSessionBg) {
@@ -817,6 +824,9 @@ class NativeChatActivity : Activity(), ChatController.Sink {
                 quickStyleArtist = st.optString("artistTags")
                 quickStyleQuality = st.optString("qualityTags")
                 quickStyleNegative = st.optString("negativePrompt")
+                quickStyleRef = st.optString("refImage")
+                quickStyleRefStrength = st.optDouble("refStrength", 0.6)
+                quickStyleRefInfo = st.optDouble("refInfoExtracted", 0.7)
                 quickSteps = st.optInt("steps", 28)
                 quickCfg = st.optDouble("cfgScale", 6.0)
                 quickSampler = st.optString("sampler")
@@ -838,11 +848,20 @@ class NativeChatActivity : Activity(), ChatController.Sink {
                     finishQuick("上下文为空")
                     return@fetch
                 }
+                // 角色 DNA：本对话勾选的英文外观标签，只在生图时生效（LLM 人物参考 + 手动模式直接拼）
+                val dna = com.dbpg.duihuazhushou.settings.ConnectionStore.dnaTags(
+                    com.dbpg.duihuazhushou.session.SessionBindingStore.load(
+                        this, controller?.doc?.id.orEmpty(),
+                    ).dnaIds,
+                )
+                quickDnaTags = dna
+                val contextWithDna = if (dna.isBlank()) context
+                else "人物外观参考（提示词中必须保留这些特征）：$dna\n\n$context"
                 if (useLlm) {
                     toast("让模型生成画面标签…")
                     EngineBridge.command(
                         JSONObject().put("cmd", "optimizeImagePrompt")
-                            .put("context", context).put("llmConfigId", llmId),
+                            .put("context", contextWithDna).put("llmConfigId", llmId),
                     )
                 } else {
                     // 不用模型：直接用这段上下文（截断），够用且零额外成本
@@ -878,7 +897,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             finishQuick("提示词为空")
             return
         }
-        val full = listOf(quickStyleArtist, quickStyleQuality, tags)
+        val full = listOf(quickStyleArtist, quickStyleQuality, quickDnaTags, tags)
             .map { it.trim() }.filter { it.isNotEmpty() }.joinToString(", ")
         toast("出图中…")
         val model = quickApiModel.ifBlank { "nai-diffusion-4-5-full" }
@@ -895,6 +914,9 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             steps = quickSteps,
             sampler = quickSampler,
             noiseSchedule = quickNoise,
+            refImageBase64 = quickStyleRef.ifBlank { null },
+            refStrength = quickStyleRefStrength,
+            refInfoExtracted = quickStyleRefInfo,
         )
         val urls = ImageEngineSupport.candidateUrls(quickEngine, quickApiUrl)
         val req = ImageGenService.Request(

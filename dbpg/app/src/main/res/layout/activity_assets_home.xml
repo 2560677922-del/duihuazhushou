@@ -90,6 +90,11 @@
             android:id="@+id/tab_regex"
             style="@style/AssetsTab"
             android:text="正则" />
+
+        <TextView
+            android:id="@+id/tab_dna"
+            style="@style/AssetsTab"
+            android:text="DNA" />
     </LinearLayout>
 
     <TextView

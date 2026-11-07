@@ -60,6 +60,10 @@ object AutoImageService {
         context: Context,
         text: String,
         env: AutoImageEnv,
+        /** 参考图（NAI 参考图 / Vibe Transfer）：随风格取，出图时发给模型。 */
+        refImage: String? = null,
+        refStrength: Double = 0.6,
+        refInfoExtracted: Double = 0.7,
         onImage: ImageCallback,
         onDone: () -> Unit,
     ) {
@@ -77,7 +81,12 @@ object AutoImageService {
             val service = ImageGenService(context)
             try {
                 for (t in targets) {
-                    val image = runCatching { drawOne(service, env, t.description) }.getOrNull()
+                    val image = runCatching {
+                        drawOne(
+                            service, env, t.description,
+                            refImage, refStrength, refInfoExtracted,
+                        )
+                    }.getOrNull()
                     if (image != null) {
                         val att = ActionImage(
                             id = "img_" + System.currentTimeMillis().toString(36) +
@@ -103,13 +112,16 @@ object AutoImageService {
         service: ImageGenService,
         env: AutoImageEnv,
         description: String,
+        refImage: String?,
+        refStrength: Double,
+        refInfoExtracted: Double,
     ): Drawn? {
         val optimized = if (env.settings.skipOptimization) {
             description
         } else {
             optimize(env, description).ifBlank { description }
         }
-        val prompt = AutoImageSupport.finalPrompt(env.config, optimized, description)
+        val prompt = AutoImageSupport.finalPrompt(env.config, optimized, description, env.dnaTags)
         if (prompt.isBlank()) return null
 
         val c = env.config
@@ -131,6 +143,9 @@ object AutoImageService {
                 steps = c.steps,
                 sampler = c.sampler,
                 noiseSchedule = c.noiseSchedule,
+                refImageBase64 = refImage?.takeIf { it.isNotBlank() },
+                refStrength = refStrength,
+                refInfoExtracted = refInfoExtracted,
             )
             val req = ImageGenService.Request(
                 url = url,

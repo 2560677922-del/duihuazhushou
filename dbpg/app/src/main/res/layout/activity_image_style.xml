@@ -198,6 +198,40 @@
                 android:textColor="#1A2230"
                 android:textSize="13sp" />
 
+            <!-- 模板库：命名保存当前模板文本，跨风格一键套用 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/style_tpl_save"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/bg_btn_soft"
+                    android:gravity="center"
+                    android:padding="9dp"
+                    android:text="存为模板"
+                    android:textColor="#2F66D8"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/style_tpl_use"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_btn_soft"
+                    android:gravity="center"
+                    android:padding="9dp"
+                    android:text="套用模板…"
+                    android:textColor="#2F66D8"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -273,7 +307,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="14dp"
-                android:text="风格参考图（只作展示，不参与出图）"
+                android:text="参考图（参与出图 · NAI 参考图）"
                 android:textColor="#5A6B85"
                 android:textSize="12sp" />
 
@@ -317,6 +351,53 @@
                     android:text="清除参考图"
                     android:textColor="#8A94A6"
                     android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- 参考强度 / 信息提取度（NAI Vibe Transfer 的两个旋钮） -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="参考强度（0.6）"
+                    android:textColor="#3A4353"
+                    android:textSize="12sp" />
+
+                <SeekBar
+                    android:id="@+id/style_ref_strength"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="100" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="信息提取度（0.7）"
+                    android:textColor="#3A4353"
+                    android:textSize="12sp" />
+
+                <SeekBar
+                    android:id="@+id/style_ref_info"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="100" />
             </LinearLayout>
 
             <TextView

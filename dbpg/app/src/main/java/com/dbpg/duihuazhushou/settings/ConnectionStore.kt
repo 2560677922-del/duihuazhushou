@@ -64,6 +64,8 @@ object ConnectionStore {
         "imgSetEngine", "imgSaveSize",
         // 2026-11-07 新增：运营商整组删除 + 模型批量删除
         "llmRemoveProvider", "llmRemoveModels", "imgRemoveProvider", "imgRemoveApis",
+        // 2026-11-08 新增：LLM 转标签模板库（命名保存，跨风格套用）+ 角色 DNA 库
+        "tplSave", "tplRemove", "dnaSave", "dnaRemove",
     )
 
     private val lock = Any()
@@ -138,12 +140,17 @@ object ConnectionStore {
         return true
     }
 
-    /** 引擎注入用的只读镜像。风格缩略图可能对体积很大，且引擎只做展示，故剥掉。 */
+    /** 引擎注入用的只读镜像。风格缩略图/参考图体积很大，且引擎只做展示，故剥掉。 */
     fun exportForEngine(): JSONObject = synchronized(lock) {
         initFromApp()
         val copy = JSONObject(doc.toString())
         val styles = arr(copy.optJSONObject("image"), "styleConfigs")
-        for (i in 0 until styles.length()) styles.optJSONObject(i)?.remove("thumb")
+        for (i in 0 until styles.length()) {
+            styles.optJSONObject(i)?.apply {
+                remove("thumb")
+                remove("refImage")
+            }
+        }
         return copy
     }
 
@@ -159,6 +166,26 @@ object ConnectionStore {
             .put("maxTokens", cur.optInt("maxTokens", 2000))
             .put("contextWindow", cur.optInt("contextWindow", 1000000))
             .put("userLookbackTokens", cur.optInt("userLookbackTokens", 200000))
+    }
+
+    /**
+     * 角色 DNA 的英文外观标签（逗号拼接）。
+     *
+     * @param ids 本对话勾选的 DNA id；null = 取全部启用项（未配置的对话走默认）。
+     * 资产页停用/删除的条目自动跳过（读不到就当没选）。
+     */
+    fun dnaTags(ids: List<String>?): String = synchronized(lock) {
+        initFromApp()
+        val list = arr(doc.optJSONObject("image"), "dnaList")
+        val out = ArrayList<String>()
+        for (i in 0 until list.length()) {
+            val d = list.optJSONObject(i) ?: continue
+            if (!d.optBoolean("enabled", true)) continue
+            if (ids != null && !ids.contains(d.optString("_uid"))) continue
+            val tags = d.optString("tags").trim()
+            if (tags.isNotEmpty()) out.add(tags)
+        }
+        return out.joinToString(", ")
     }
 
     // ─────────────────────────── 同步取值（本地） ───────────────────────────
@@ -420,6 +447,14 @@ object ConnectionStore {
             .put("negativePrompt", style?.optString("negativePrompt") ?: "")
             .put("promptTemplate", style?.optString("promptTemplate") ?: "")
             .put("thumb", style?.optString("thumb") ?: "")
+            // 参考图（NAI Vibe Transfer）：随风格存，生图时发给模型
+            .put("refImage", style?.optString("refImage") ?: "")
+            .put("refStrength", style?.optDouble("refStrength", 0.6) ?: 0.6)
+            .put("refInfoExtracted", style?.optDouble("refInfoExtracted", 0.7) ?: 0.7)
+            // LLM 转标签模板库：命名保存，跨风格套用
+            .put("promptTemplates", arr(image, "promptTemplates"))
+            // 角色 DNA 库：英文外观锚定，生图时给 LLM 当人物参考
+            .put("dnaList", arr(image, "dnaList"))
             .put("sampler", style?.optString("sampler") ?: "")
             .put("steps", style?.optInt("steps", 28) ?: 28)
             .put("cfgScale", style?.optDouble("cfgScale", 6.0) ?: 6.0)
@@ -702,9 +737,12 @@ object ConnectionStore {
                 val uid = a.optString("uid").ifBlank { image.optString("currentStyleId") }
                 val s = findByUid(styles, uid) ?: return reply
                 val p = a.optJSONObject("style") ?: JSONObject()
-                listOf("artistTags", "qualityTags", "negativePrompt", "promptTemplate", "thumb").forEach { k ->
+                listOf("artistTags", "qualityTags", "negativePrompt", "promptTemplate", "thumb", "refImage").forEach { k ->
                     if (p.has(k)) s.put(k, p.optString(k))
                 }
+                // 数值字段单独写：optString 会把 0.6 变成字符串
+                if (p.has("refStrength")) s.put("refStrength", p.optDouble("refStrength", 0.6))
+                if (p.has("refInfoExtracted")) s.put("refInfoExtracted", p.optDouble("refInfoExtracted", 0.7))
             }
             "imgSaveAuto" -> {
                 val p = a.optJSONObject("auto") ?: JSONObject()
@@ -727,6 +765,63 @@ object ConnectionStore {
                 if (p.has("cfgScale")) s.put("cfgScale", p.optDouble("cfgScale"))
                 if (p.has("sampler")) s.put("sampler", p.optString("sampler"))
                 if (p.has("noiseSchedule")) s.put("noiseSchedule", p.optString("noiseSchedule"))
+            }
+
+            // ── LLM 转标签模板库：命名保存，风格页套用（跨风格共享） ──
+            "tplSave" -> {
+                val name = a.optString("name").trim()
+                if (name.isEmpty()) return reply
+                val tpls = arr(image, "promptTemplates")
+                val text = a.optString("text")
+                val uid = a.optString("uid")
+                val hit = if (uid.isNotBlank()) findByUid(tpls, uid)
+                else (0 until tpls.length()).mapNotNull { tpls.optJSONObject(it) }
+                    .firstOrNull { it.optString("name") == name }
+                if (hit != null) {
+                    hit.put("name", name).put("text", text).put("updatedAt", System.currentTimeMillis())
+                    reply.put("uid", hit.optString("_uid"))
+                } else {
+                    val t = JSONObject()
+                        .put("_uid", newId("tpl")).put("name", name).put("text", text)
+                        .put("createdAt", System.currentTimeMillis())
+                    tpls.put(t)
+                    reply.put("uid", t.optString("_uid"))
+                }
+            }
+            "tplRemove" -> {
+                removeByUid(arr(image, "promptTemplates"), a.optString("uid"))
+                reply.put("removed", true)
+            }
+
+            // ── 角色 DNA 库：英文外观锚定，生图时给 LLM 当人物参考 ──
+            "dnaSave" -> {
+                val name = a.optString("name").trim()
+                if (name.isEmpty()) return reply
+                val list = arr(image, "dnaList")
+                val uid = a.optString("uid")
+                val hit = if (uid.isNotBlank()) findByUid(list, uid)
+                else (0 until list.length()).mapNotNull { list.optJSONObject(it) }
+                    .firstOrNull { it.optString("name") == name }
+                if (hit != null) {
+                    if (a.has("name")) hit.put("name", name)
+                    if (a.has("tags")) hit.put("tags", a.optString("tags"))
+                    if (a.has("note")) hit.put("note", a.optString("note"))
+                    if (a.has("enabled")) hit.put("enabled", a.optBoolean("enabled"))
+                    hit.put("updatedAt", System.currentTimeMillis())
+                    reply.put("uid", hit.optString("_uid"))
+                } else {
+                    val d = JSONObject()
+                        .put("_uid", newId("dna")).put("name", name)
+                        .put("tags", a.optString("tags")).put("note", a.optString("note"))
+                        .put("enabled", a.optBoolean("enabled", true))
+                        .put("createdAt", System.currentTimeMillis())
+                    list.put(d)
+                    reply.put("uid", d.optString("_uid"))
+                }
+            }
+            "dnaRemove" -> {
+                removeByUid(arr(image, "dnaList"), a.optString("uid"))
+                reply.put("removed", true)
             }
         }
         normalize()
@@ -758,6 +853,8 @@ object ConnectionStore {
         val image = doc.optJSONObject("image") ?: JSONObject().also { doc.put("image", it) }
         if (image.optJSONArray("apiConfigs") == null) image.put("apiConfigs", JSONArray())
         if (image.optJSONArray("styleConfigs") == null) image.put("styleConfigs", JSONArray())
+        if (image.optJSONArray("promptTemplates") == null) image.put("promptTemplates", JSONArray())
+        if (image.optJSONArray("dnaList") == null) image.put("dnaList", JSONArray())
         if (image.optJSONObject("autoImage") == null) image.put("autoImage", JSONObject())
         if (image.optJSONObject("sceneApiIds") == null) {
             image.put("sceneApiIds", JSONObject().put("chat", "").put("tag", ""))

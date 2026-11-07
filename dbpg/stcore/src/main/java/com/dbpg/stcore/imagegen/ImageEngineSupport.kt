@@ -1,5 +1,6 @@
 package com.dbpg.stcore.imagegen
 
+import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.random.Random
 
@@ -93,6 +94,18 @@ data class ImageParams(
     /** img2img 底图（纯 base64，可带 dataURL 前缀，构造时自动剥掉） */
     val imageBase64: String? = null,
     val strength: Double = 0.7,
+    /**
+     * 参考图（NAI Vibe Transfer，只对 NAI 系生效）。
+     *
+     * 与 img2img 的区别：img2img（[imageBase64]）是"在这张图上改"，
+     * 参考图是"照着这张图的氛围/画风出新图"，action 仍是 generate。
+     * V4/V4.5/V5 共用 `reference_*_multiple` 数组字段；V3 用单数字段。
+     */
+    val refImageBase64: String? = null,
+    /** 参考强度 0–1：越高越贴近参考图构图。 */
+    val refStrength: Double = 0.6,
+    /** 信息提取度 0–1：越高越强调参考图的画风/氛围信息。 */
+    val refInfoExtracted: Double = 0.7,
 ) {
     val sizeText: String get() = "${width}x$height"
 }
@@ -229,6 +242,20 @@ object ImageEngineSupport {
             params.put("noise", 0)
             params.put("extra_noise_seed", params.opt("seed"))
             params.put("inpaintImg2ImgStrength", p.strength)
+        }
+        // 参考图（Vibe Transfer）：照着参考图的氛围出新图，action 保持 generate。
+        // V4/V4.5/V5 格式通用（数组字段），V3 用单数字段，更早的模型不带（会被判 422）。
+        p.refImageBase64?.takeIf { it.isNotBlank() }?.let { raw ->
+            val b64 = raw.replace(Regex("^data:image/\\w+;base64,"), "")
+            if (isV4) {
+                params.put("reference_image_multiple", JSONArray().put(b64))
+                params.put("reference_strength_multiple", JSONArray().put(p.refStrength))
+                params.put("reference_information_extracted_multiple", JSONArray().put(p.refInfoExtracted))
+            } else if (isV3) {
+                params.put("reference_image", b64)
+                params.put("reference_strength", p.refStrength)
+                params.put("reference_information_extracted", p.refInfoExtracted)
+            }
         }
         return JSONObject().apply {
             put("input", p.prompt)

@@ -261,10 +261,12 @@ object AutoImageSupport {
         config: NativeImageConfig,
         optimized: String,
         rawText: String,
+        dnaTags: String = "",
     ): String {
         val tagsOnly = stripStyleTags(optimized)
         val body = tagsOnly.ifBlank { rawText.trim() }
-        return composePrompt(listOf(config.artistTags, config.qualityTags, body))
+        // 角色 DNA（英文外观标签）插在画师串之后、画面标签之前：锚定人物特征不被画面描述冲掉
+        return composePrompt(listOf(config.artistTags, config.qualityTags, dnaTags, body))
     }
 
     // ------------------------------------------------------------ 请求体

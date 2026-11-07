@@ -82,6 +82,10 @@ class NativeImageGenActivity : Activity() {
     private var styleQuality = ""
     private var styleNegative = ""
     private var styleUid = ""
+    /** 参考图（NAI 参考图 / Vibe Transfer）：随风格存，生图时发给模型。 */
+    private var styleRef = ""
+    private var styleRefStrength = 0.6
+    private var styleRefInfo = 0.7
 
     /** 选择器数据。 */
     private var providerList: List<JSONObject> = emptyList()
@@ -315,6 +319,9 @@ class NativeImageGenActivity : Activity() {
             sampler = curSampler,
             noiseSchedule = "karras",
             qualityToggle = true,
+            refImageBase64 = styleRef.ifBlank { null },
+            refStrength = styleRefStrength,
+            refInfoExtracted = styleRefInfo,
         )
         val urls = ImageEngineSupport.candidateUrls(curEngine, baseUrl)
         val req = ImageGenService.Request(
@@ -450,6 +457,9 @@ class NativeImageGenActivity : Activity() {
             styleArtist = obj.optString("artistTags")
             styleQuality = obj.optString("qualityTags")
             styleNegative = obj.optString("negativePrompt")
+            styleRef = obj.optString("refImage")
+            styleRefStrength = obj.optDouble("refStrength", 0.6)
+            styleRefInfo = obj.optDouble("refInfoExtracted", 0.7)
             stepsInput.setText(obj.optInt("steps", 28).toString())
             cfgInput.setText(obj.optDouble("cfgScale", 6.0).toString())
             curSampler = obj.optString("sampler").ifBlank { "k_euler_ancestral" }

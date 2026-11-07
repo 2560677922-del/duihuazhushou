@@ -28,6 +28,7 @@
 import { assemblePrompt } from '../engine/assembler';
 import { streamChatCompletion } from '../engine/apiClient';
 import { imageMarkerInstruction } from '../engine/imageMarker';
+import { flattenForEngine } from '../engine/regexGroups';
 import type { ChatMessage } from '../engine/types';
 import { OpenAIPreset, WorldBook } from 'parsecard';
 import { useAssetsStore } from '../stores/assets';
@@ -195,17 +196,39 @@ function buildMessages(
   imageInstruction: boolean,
   imageMax: number,
   sessionId: string,
+  assetBinding?: { worldBookIds?: string[]; presetId?: string; regexGroupIds?: string[] },
 ): ChatMessage[] | null {
   const assets = useAssetsStore();
-  const presetRaw = assets.getCurrentPreset();
+  // 按对话绑定取资产：绑定 ∩ 资产页启用项。没绑定的对话跟随全局（旧行为）。
+  // 资产页停用/删除后绑定自然失效（读不到就当没选）。
+  const enabledBookIds: string[] = assets.getCurrentWorldBooks().map((w: any) => w._uid);
+  let presetRaw: any;
+  if (assetBinding?.presetId) {
+    presetRaw = (assets.presets as any[]).find(
+      (p) => p._uid === assetBinding!.presetId && p.enabled !== false,
+    );
+  }
+  presetRaw = presetRaw ?? assets.getCurrentPreset();
   if (!presetRaw) return null;
 
   const preset = OpenAIPreset.fromJSON(presetRaw);
-  const worldBooks = assets.getCurrentWorldBooks().map((w: any) =>
-    WorldBook.fromJSON(w).toStandaloneJSON(),
-  );
+  let worldBooks = assets.getCurrentWorldBooks();
+  if (assetBinding?.worldBookIds) {
+    const want = assetBinding.worldBookIds.filter((id) => enabledBookIds.includes(id));
+    worldBooks = worldBooks.filter((w: any) => want.includes(w._uid));
+  }
+  const worldBookJsons = worldBooks.map((w: any) => WorldBook.fromJSON(w).toStandaloneJSON());
   const storageSettings = useStorageSettingsStore();
-  const regexScripts = storageSettings.llmContextRaw ? [] : assets.getCurrentRegexScripts();
+  let regexScripts = storageSettings.llmContextRaw ? [] : assets.getCurrentRegexScripts();
+  if (assetBinding?.regexGroupIds && !storageSettings.llmContextRaw) {
+    const want = new Set(assetBinding.regexGroupIds);
+    // 按组过滤：flattenForEngine 之后脚本已脱组，故回到组层重算。
+    // 只保留「对话勾了 ∩ 资产页仍启用」的组，与世界书同一套基准。
+    const groups = (assets.regexGroups as any[]).filter(
+      (g: any) => want.has(g._uid) && assets.currentRegexGroupIds.includes(g._uid),
+    );
+    regexScripts = flattenForEngine(groups as any);
+  }
   // 上下文裁剪预算来自原生配置镜像；网页版独立运行时回退到 store。
   const llmCfg = nativeLlm() ?? useApiConfigStore().currentConfig;
   const variables = useVariablesStore();
@@ -216,7 +239,7 @@ function buildMessages(
   const result = assemblePrompt({
     preset,
     characterCard: assets.getCurrentCharacter(),
-    worldBooks,
+    worldBooks: worldBookJsons,
     regexScripts,
     chatHistory,
     contextWindowTokens: llmCfg?.contextWindow,
@@ -297,7 +320,15 @@ async function generate(reqJson: string): Promise<void> {
       typeof req.imageInstruction === 'boolean' ? req.imageInstruction : !!auto.enabled;
     const imageMax = req.imageInstructionMax ?? auto.maxPerReply ?? 2;
 
-    const finalMessages = buildMessages(history, cleanInput, wantImage, imageMax, sessionId);
+    // 按对话资产绑定（世界书/预设/正则）过滤后再组装；没绑定走全局配置
+    const finalMessages = buildMessages(
+      history,
+      cleanInput,
+      wantImage,
+      imageMax,
+      sessionId,
+      (req as any).assetBinding,
+    );
     if (!finalMessages) {
       callNative('onGenError', requestId, '还没有启用预设，请先在「资产」里选一个');
       return;
@@ -527,6 +558,15 @@ async function setActive(json: string): Promise<void> {
   const a = useAssetsStore();
   if (typeof req.presetId === 'string') {
     await a.setCurrentPreset(req.presetId || undefined);
+    // 「启用这个预设」＝设为默认 + 对话里可选；「停用」＝取消默认 + 从对话选项移除。
+    // 资产页启停以这里为基准，对话勾选只在这个范围内生效。
+    for (const p of a.presets as any[]) {
+      if (p._uid === req.presetId) p.enabled = true;
+    }
+    if (!req.presetId) {
+      // 取消默认时不动 enabled（仍可被对话选用）；显式停用走 presetsEnabled
+    }
+    await a.save();
   }
   if (typeof req.characterId === 'string') {
     await a.setCurrentCharacter(req.characterId || undefined);
@@ -551,6 +591,14 @@ async function setActive(json: string): Promise<void> {
     // 整组开关要连 group.enabled 一起写：flattenForEngine 会先按它过滤，
     // 只改 currentRegexGroupIds 会出现「组显示已启用但脚本一条都没跑」的错位。
     for (const g of a.regexGroups as any[]) g.enabled = want.includes(g._uid);
+    await a.save();
+  }
+  // 预设「启用」＝对话里可不可选（可见性），与"使用中"（默认预设）解耦。
+  if (Array.isArray(req.presetsEnabled)) {
+    for (const pe of req.presetsEnabled) {
+      const p = (a.presets as any[]).find((x) => x._uid === pe.id);
+      if (p) p.enabled = pe.enabled !== false;
+    }
     await a.save();
   }
 }
@@ -1456,6 +1504,8 @@ function assetsDetail(): string {
     id: p._uid || '',
     name: p.name || p.data?.name || '未命名',
     current: p._uid === a.currentPresetId,
+    // 「启用」＝对话里可不可选（可见性基准）；缺省视为启用
+    enabled: p.enabled !== false,
     // 子条目要把「单独开关」用到的字段全带出来。enabled 有两处权威来源：
     // prompts[].enabled 与 prompt_order 里的 order[].enabled，任一为 false 都算关。
     prompts: (p.data?.prompts || p.prompts || []).map((x: any, i: number) => ({

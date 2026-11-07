@@ -6,6 +6,7 @@ import android.os.Looper
 import com.dbpg.duihuazhushou.appearance.AppearanceConfig
 import com.dbpg.duihuazhushou.imagegen.AutoImageService
 import com.dbpg.duihuazhushou.session.SessionRepo
+import com.dbpg.duihuazhushou.settings.ConnectionStore
 import com.dbpg.stcore.ContentBlock
 import com.dbpg.stcore.NativeImage
 import com.dbpg.stcore.imagegen.AutoImageEnv
@@ -18,6 +19,7 @@ import com.dbpg.stcore.session.SessionHistory
 import com.dbpg.stcore.stripHtmlNoise
 import com.dbpg.stcore.stripImageMarkers
 import com.dbpg.stcore.transformForDisplayRich
+import org.json.JSONObject
 import java.util.concurrent.Executors
 
 /**
@@ -383,12 +385,21 @@ class ChatController(
         val history = SessionHistory.export(d, uptoActionId = actionId)
         val env = imageEnv
 
+        // 本对话的资产引用（世界书/预设/正则）：绑定 ∩ 资产页启用项在引擎侧过滤
+        val binding = com.dbpg.duihuazhushou.session.SessionBindingStore.load(appContext, d.id)
+        val bindingJson = JSONObject().apply {
+            binding.worldBookIds?.let { put("worldBookIds", org.json.JSONArray(it)) }
+            binding.presetId?.let { put("presetId", it) }
+            binding.regexGroupIds?.let { put("regexGroupIds", org.json.JSONArray(it)) }
+        }
+
         val reqId = GenBridge.request(
             sessionId = d.id,
             messages = history,
             userInput = userInput,
             imageInstruction = env?.settings?.enabled,
             imageMax = env?.settings?.maxPerReply ?: 2,
+            assetBinding = bindingJson,
             sink = this,
         )
         if (reqId == null) {
@@ -638,10 +649,18 @@ class ChatController(
             return
         }
 
+        // 本对话的 DNA（人物外观锚定）＋ 风格参考图：都只在生图时生效
+        val binding = com.dbpg.duihuazhushou.session.SessionBindingStore.load(appContext, doc?.id.orEmpty())
+        val envWithDna = env.copy(dnaTags = ConnectionStore.dnaTags(binding.dnaIds))
+        val style = ConnectionStore.snapshot("getImageStyle")
+
         AutoImageService.run(
             context = appContext,
             text = text,
-            env = env,
+            env = envWithDna,
+            refImage = style?.optString("refImage")?.takeIf { it.isNotBlank() },
+            refStrength = style?.optDouble("refStrength", 0.6) ?: 0.6,
+            refInfoExtracted = style?.optDouble("refInfoExtracted", 0.7) ?: 0.7,
             onImage = { att ->
                 // 会话可能已经切走/这条被删了：找不到就不写，避免往别的会话里塞图
                 val d = doc ?: return@run
