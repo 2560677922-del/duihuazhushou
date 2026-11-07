@@ -21,9 +21,28 @@ android {
         versionName = "1.1.1"
     }
 
+    // -----------------------------------------------------------------------
+    // 统一签名：把本机 debug keystore 收进仓库（dbpg/app/keystore/debug.keystore），
+    // 这样任何机器（云电脑/本机/以后换机）clone 后用同一签名打包，
+    // 手机上已装的 APK 才能覆盖安装、不会因签名不一致丢失数据。
+    //
+    // 这是 Android 默认 debug keystore（store/key 密码均为公开默认值 android，
+    // alias 为 androiddebugkey），泄露风险低；请勿用此法存放 release 私钥。
+    // 仓库保持私有即可。
+    // -----------------------------------------------------------------------
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("keystore/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         getByName("debug") {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
         }
         getByName("release") {
             // 先不开混淆：APK 里绝大部分体积是 Web 资源，混淆 Java 层没有收益。
