@@ -39,6 +39,9 @@ class SettingsActivity : Activity() {
     private lateinit var bgValue: TextView
     private lateinit var dimBar: SeekBar
     private lateinit var dimValue: TextView
+    private lateinit var accentValue: TextView
+    private lateinit var baseValue: TextView
+    private lateinit var decoValue: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,9 +63,15 @@ class SettingsActivity : Activity() {
         bgValue = findViewById(R.id.set_bg_value)
         dimBar = findViewById(R.id.set_bg_dim)
         dimValue = findViewById(R.id.set_bg_dim_value)
+        accentValue = findViewById(R.id.set_accent_value)
+        baseValue = findViewById(R.id.set_base_value)
+        decoValue = findViewById(R.id.set_deco_value)
 
         bubbleBtn.setOnClickListener { pickBubbleStyle() }
-        bgValue.setOnClickListener { pickGlobalBackground() }
+        bgValue.setOnClickListener { pickUiBackground() }
+        accentValue.setOnClickListener { pickAccent() }
+        baseValue.setOnClickListener { pickBaseColor() }
+        decoValue.setOnClickListener { pickDecoration() }
         dimBar.max = 90
         dimBar.progress = cfg.bgDim
 
@@ -134,8 +143,15 @@ class SettingsActivity : Activity() {
         widthValue.text = "${cfg.bubbleWidthPercent}%"
 
         bubbleBtn.text = BubbleStyle.byId(cfg.bubbleStyle).label
-        bgValue.text = if (ChatBackground.hasGlobal(this)) "已设置" else "选择图片"
+        bgValue.text = if (ChatBackground.hasUi(this)) "已设置" else "选择图片"
         dimValue.text = "${cfg.bgDim}%"
+        accentValue.text = ThemePalette.labelOf(ThemePalette.ACCENTS, ThemePalette.accentHex(cfg))
+        baseValue.text = ThemePalette.labelOf(ThemePalette.BASES, ThemePalette.baseHex(cfg))
+        decoValue.text = when (cfg.decoration) {
+            "sakura" -> "樱花"
+            "grass" -> "青草"
+            else -> "无"
+        }
 
         preview.textSize = cfg.textSizeSp
         preview.setLineSpacing(0f, cfg.lineSpacing)
@@ -163,16 +179,17 @@ class SettingsActivity : Activity() {
     }
 
     /**
-     * 全局聊天背景：选图 / 清除。
+     * 界面背景（首页/设置/资产等操作界面）：选图 / 清除。
      *
-     * 只做「全局」这一层；单会话背景在聊天页 ⋯ 里换 —— 两层各管一处，
+     * 聊天背景不在这里 —— 每个会话在聊天页 ⋯ 里单独换，两层各管一处，
      * 用户不用在一堆设置里找"这条会话的背景到底存在哪"。
+     * 图按等比显示不拉伸，没盖到的边条填「页面底色」。
      */
-    private fun pickGlobalBackground() {
-        val has = ChatBackground.hasGlobal(this)
+    private fun pickUiBackground() {
+        val has = ChatBackground.hasUi(this)
         val items = if (has) arrayOf("选择图片", "清除（改为纯色）") else arrayOf("选择图片")
         AlertDialog.Builder(this)
-            .setTitle("聊天背景（全局）")
+            .setTitle("界面背景")
             .setItems(items) { _, which ->
                 if (which == 0) {
                     try {
@@ -190,6 +207,57 @@ class SettingsActivity : Activity() {
                     ChatBackground.clear(this, null)
                     render()
                 }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 主题色：单选色板。改完立即生效（各页 onResume 重染）。 */
+    private fun pickAccent() {
+        val all = ThemePalette.ACCENTS
+        val labels = all.map { it.label }.toTypedArray()
+        val current = all.indexOfFirst { it.hex.equals(ThemePalette.accentHex(cfg), true) }.coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("主题色")
+            .setSingleChoiceItems(labels, current) { dialog, which ->
+                cfg = cfg.copy(accentColor = all[which].hex)
+                Appearance.save(this, cfg)
+                render()
+                dialog.dismiss()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 页面底色：纯色背景 + 背景图边条的填色。 */
+    private fun pickBaseColor() {
+        val all = ThemePalette.BASES
+        val labels = all.map { it.label }.toTypedArray()
+        val current = all.indexOfFirst { it.hex.equals(ThemePalette.baseHex(cfg), true) }.coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("页面底色")
+            .setSingleChoiceItems(labels, current) { dialog, which ->
+                cfg = cfg.copy(bgBaseColor = all[which].hex)
+                Appearance.save(this, cfg)
+                render()
+                dialog.dismiss()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 装饰风格：樱花 / 青草 / 无。自绘，全部界面统一。 */
+    private fun pickDecoration() {
+        val ids = arrayOf("none", "sakura", "grass")
+        val labels = arrayOf("无装饰", "樱花", "青草")
+        val current = ids.indexOf(cfg.decoration).coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("装饰风格")
+            .setSingleChoiceItems(labels, current) { dialog, which ->
+                cfg = cfg.copy(decoration = ids[which])
+                Appearance.save(this, cfg)
+                render()
+                dialog.dismiss()
             }
             .setNegativeButton("取消", null)
             .show()

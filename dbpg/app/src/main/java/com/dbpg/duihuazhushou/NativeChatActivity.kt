@@ -410,7 +410,6 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     private fun showMoreMenu() {
         val sid = controller?.doc?.id.orEmpty()
         val hasSessionBg = ChatBackground.hasSession(this, sid)
-        val hasGlobalBg = ChatBackground.hasGlobal(this)
 
         val sessionItems = mutableListOf(
             MenuEntry("✏️", "重命名会话", "给这次冒险起个好记的名字") { promptRename() },
@@ -419,7 +418,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         )
         if (hasSessionBg) {
             sessionItems.add(
-                MenuEntry("🧹", "清除本会话背景", if (hasGlobalBg) "回到全局背景" else "恢复纯色背景") {
+                MenuEntry("🧹", "清除本会话背景", "回到页面底色（可在设置里换）") {
                     ChatBackground.clear(this, sid)
                     applyBackground()
                 },

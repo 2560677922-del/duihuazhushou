@@ -36,6 +36,12 @@ data class AppearanceConfig(
     val bubbleStyle: String = BubbleStyle.ROUND.id,
     /** 聊天背景遮罩浓度 0–90：越高字越清楚、图越淡。 */
     val bgDim: Int = 55,
+    /** 主题色（按钮/高亮/chip 的强调色）。存 hex 字符串，不认识回落默认蓝。 */
+    val accentColor: String = "#2F66D8",
+    /** 页面底色：纯色背景，也是背景图没盖到的边条颜色。 */
+    val bgBaseColor: String = "#F4F6FA",
+    /** 装饰风格：none / sakura（樱花）/ grass（青草）。自绘，不带图片资产。 */
+    val decoration: String = "none",
 )
 
 object Appearance {
@@ -49,6 +55,9 @@ object Appearance {
     private const val K_ALLOW_SCRIPT = "allow_script"
     private const val K_BUBBLE_STYLE = "bubble_style"
     private const val K_BG_DIM = "bg_dim"
+    private const val K_ACCENT = "accent_color"
+    private const val K_BASE = "bg_base_color"
+    private const val K_DECO = "decoration"
 
     fun load(ctx: Context): AppearanceConfig {
         val p = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
@@ -61,6 +70,9 @@ object Appearance {
             allowScript = p.getBoolean(K_ALLOW_SCRIPT, false),
             bubbleStyle = BubbleStyle.byId(p.getString(K_BUBBLE_STYLE, null)).id,
             bgDim = p.getInt(K_BG_DIM, 55).coerceIn(0, 90),
+            accentColor = p.getString(K_ACCENT, "#2F66D8") ?: "#2F66D8",
+            bgBaseColor = p.getString(K_BASE, "#F4F6FA") ?: "#F4F6FA",
+            decoration = p.getString(K_DECO, "none") ?: "none",
         )
     }
 
@@ -74,6 +86,9 @@ object Appearance {
             .putBoolean(K_ALLOW_SCRIPT, cfg.allowScript)
             .putString(K_BUBBLE_STYLE, cfg.bubbleStyle)
             .putInt(K_BG_DIM, cfg.bgDim)
+            .putString(K_ACCENT, cfg.accentColor)
+            .putString(K_BASE, cfg.bgBaseColor)
+            .putString(K_DECO, cfg.decoration)
             .apply()
     }
 }

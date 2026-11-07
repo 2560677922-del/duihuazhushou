@@ -27,9 +27,18 @@ public final class DhpApp extends Application {
         super.onCreate();
         instance = this;
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
-            @Override public void onActivityStarted(Activity a) { MainActivity.attachEngineTo(a); }
+            @Override public void onActivityStarted(Activity a) {
+                MainActivity.attachEngineTo(a);
+                // 界面背景（图/底色/装饰）+ 主题色统一铺设，各页面零改动。
+                // 聊天页/看图器内部自行处理背景，这里会自动跳过。
+                com.dbpg.duihuazhushou.appearance.UiBackdrop.INSTANCE.apply(a);
+            }
 
-            @Override public void onActivityResumed(Activity a) { MainActivity.attachEngineTo(a); }
+            @Override public void onActivityResumed(Activity a) {
+                MainActivity.attachEngineTo(a);
+                // onResume 再铺一次：从设置页换完主题回来立刻生效
+                com.dbpg.duihuazhushou.appearance.UiBackdrop.INSTANCE.apply(a);
+            }
 
             @Override public void onActivityCreated(Activity a, Bundle b) { }
 

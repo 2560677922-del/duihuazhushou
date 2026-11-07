@@ -296,7 +296,7 @@
                 android:textSize="13sp" />
         </LinearLayout>
 
-        <!-- 全局聊天背景：所有会话共用；单会话可在聊天页 ⋯ 里单独换 -->
+        <!-- 界面背景：首页/设置/资产等操作界面用；聊天背景在聊天页 ⋯ 里单独设 -->
         <LinearLayout
             android:id="@+id/set_bg_row"
             android:layout_width="match_parent"
@@ -316,7 +316,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="聊天背景（全局）"
+                    android:text="界面背景"
                     android:textColor="#1A2230"
                     android:textSize="15sp" />
 
@@ -324,7 +324,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:text="每个会话还能单独换一张（聊天页右上 ⋯）"
+                    android:text="首页 / 设置 / 资产等操作界面；图不拉伸，边缘填页面底色"
                     android:textColor="#66707F"
                     android:textSize="12sp" />
             </LinearLayout>
@@ -381,6 +381,147 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
                 android:max="90" />
+        </LinearLayout>
+
+        <!-- 主题色：按钮 / 高亮 / chip 的强调色 -->
+        <LinearLayout
+            android:id="@+id/set_accent_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="18dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="主题色"
+                    android:textColor="#1A2230"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="按钮 / 高亮 / 导航的强调色，整体风格跟着它走"
+                    android:textColor="#66707F"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/set_accent_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_btn_soft"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="7dp"
+                android:paddingBottom="7dp"
+                android:text="默认蓝"
+                android:textColor="#2F66D8"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- 页面底色：纯色背景 + 背景图没盖到的边条 -->
+        <LinearLayout
+            android:id="@+id/set_base_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="14dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="页面底色"
+                    android:textColor="#1A2230"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="没设背景图时的纯色；有图时填在图没盖到的边上"
+                    android:textColor="#66707F"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/set_base_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_btn_soft"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="7dp"
+                android:paddingBottom="7dp"
+                android:text="云白"
+                android:textColor="#2F66D8"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- 装饰风格：樱花 / 青草，自绘不带图 -->
+        <LinearLayout
+            android:id="@+id/set_deco_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="14dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="装饰风格"
+                    android:textColor="#1A2230"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="樱花 / 青草点缀，全部界面统一生效"
+                    android:textColor="#66707F"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/set_deco_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_btn_soft"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="7dp"
+                android:paddingBottom="7dp"
+                android:text="无"
+                android:textColor="#2F66D8"
+                android:textSize="13sp" />
         </LinearLayout>
 
         <TextView

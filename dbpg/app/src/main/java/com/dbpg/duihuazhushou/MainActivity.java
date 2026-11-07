@@ -66,7 +66,15 @@ public final class MainActivity extends Activity {
     private static final int REQ_PICK_FILE = 1001;
     /** 底部原生导航高度（dp），与 view_bottom_nav.xml 保持一致 */
     private static final int NAV_HEIGHT_DP = 56;
-    private static final int BG_COLOR = 0xFFF4F6FA; // 与 Web 版主题色一致，避免启动闪白
+    /** 页面底色兜底值；实际取外观设置里的「页面底色」，见 bgColor()。 */
+    private static final int BG_COLOR = 0xFFF4F6FA;
+
+    /** 当前页面底色（外观设置可换）：状态栏/导航栏/错误页都跟它一致。 */
+    private int bgColor() {
+        com.dbpg.duihuazhushou.appearance.AppearanceConfig cfg =
+                com.dbpg.duihuazhushou.appearance.Appearance.INSTANCE.load(this);
+        return com.dbpg.duihuazhushou.appearance.ThemePalette.INSTANCE.base(cfg);
+    }
 
     private WebView webView;
     private TextView errorView;
@@ -150,8 +158,8 @@ public final class MainActivity extends Activity {
             Log.e(TAG, "上次崩溃记录：\n" + lastCrash);
         }
 
-        getWindow().setStatusBarColor(BG_COLOR);
-        getWindow().setNavigationBarColor(BG_COLOR);
+        getWindow().setStatusBarColor(bgColor());
+        getWindow().setNavigationBarColor(bgColor());
 
         FrameLayout root = new FrameLayout(this);
         FrameLayout.LayoutParams fill = new FrameLayout.LayoutParams(
@@ -161,7 +169,7 @@ public final class MainActivity extends Activity {
         errorView = new TextView(this);
         errorView.setVisibility(View.GONE);
         errorView.setGravity(Gravity.CENTER);
-        errorView.setBackgroundColor(BG_COLOR);
+        errorView.setBackgroundColor(bgColor());
         errorView.setTextColor(0xFFFFFFFF);
         errorView.setPadding(64, 64, 64, 64);
         errorView.setLineSpacing(0, 1.3f);

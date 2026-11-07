@@ -300,6 +300,9 @@ class ChatAdapter(
      *
      * 系统消息（分隔提示）永远用小圆角灰底，不参与款式选择——
      * 它不是"对话气泡"，跟着换色会显得很乱。
+     *
+     * 用户气泡在自定义主题色时改用「淡主题色」：整体配色跟着主题走；
+     * 默认蓝时保持原款配色，视觉零变化。
      */
     private fun bubbleBackground(
         style: BubbleStyle,
@@ -312,12 +315,25 @@ class ChatAdapter(
         setColor(
             when {
                 isSystem -> COLOR_SYS
-                isUser -> style.userColor
+                isUser -> paleUserColor(style.userColor)
                 else -> style.aiColor
             },
         )
         if (style.stroke && !isSystem) {
             setStroke((1 * density).toInt(), 0xFFE4E9F2.toInt())
         }
+    }
+
+    /** 自定义主题色 → 用户气泡用淡主题色；默认蓝 → 原配色不动。 */
+    private fun paleUserColor(fallback: Int): Int {
+        val accentHex = config.accentColor
+        if (accentHex.isBlank() || accentHex.equals("#2F66D8", ignoreCase = true)) return fallback
+        val accent = com.dbpg.duihuazhushou.appearance.ThemePalette.parseHex(accentHex, "#2F66D8")
+        // 18% 主题色压在白底上：淡而不脏，正文仍好读
+        return android.graphics.Color.rgb(
+            (android.graphics.Color.red(accent) * 0.18 + 255 * 0.82).toInt(),
+            (android.graphics.Color.green(accent) * 0.18 + 255 * 0.82).toInt(),
+            (android.graphics.Color.blue(accent) * 0.18 + 255 * 0.82).toInt(),
+        )
     }
 }
