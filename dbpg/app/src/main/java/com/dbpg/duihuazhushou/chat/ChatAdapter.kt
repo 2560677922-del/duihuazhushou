@@ -67,6 +67,7 @@ class ChatAdapter(
         root: FrameLayout,
         val bubble: LinearLayout,
         val text: TextView,
+        val html: android.webkit.WebView,
         val images: LinearLayout,
         val meta: LinearLayout,
         val verOlder: TextView,
@@ -81,6 +82,7 @@ class ChatAdapter(
             v as FrameLayout,
             v.findViewById(R.id.bubble),
             v.findViewById(R.id.msg_text),
+            v.findViewById(R.id.msg_html),
             v.findViewById(R.id.msg_images),
             v.findViewById(R.id.msg_meta),
             v.findViewById(R.id.msg_ver_older),
@@ -117,13 +119,28 @@ class ChatAdapter(
             density,
         )
 
-        // 2) 文本：maxWidth 封顶 + Spannable 渲染（字号/行距跟随外观设置）
+        // 2) 美化 HTML：交给内嵌 WebView 渲染；普通消息仍用 TextView
+        val richHtml = item.html
+        if (richHtml != null) {
+            holder.text.visibility = View.GONE
+            holder.html.visibility = View.VISIBLE
+            bindHtml(holder, richHtml, config)
+        } else {
+            holder.html.visibility = View.GONE
+            holder.html.tag = null
+            holder.text.visibility = View.VISIBLE
+        }
+
+        // 3) 文本：maxWidth 封顶 + Spannable 渲染（字号/行距跟随外观设置）
         holder.text.maxWidth = bubbleMaxWidthPx
         holder.text.setTextColor(0xFF1A2230.toInt())
         holder.text.textSize = config.textSizeSp
         holder.text.setLineSpacing(0f, config.lineSpacing)
         val content = if (item.streaming) item.content + "▍" else item.content
-        if (content.isBlank()) {
+        if (richHtml != null) {
+            // 已由 WebView 渲染，TextView 留空不占位
+            holder.text.text = ""
+        } else if (content.isBlank()) {
             holder.text.visibility = View.GONE
         } else {
             holder.text.visibility = View.VISIBLE
@@ -177,6 +194,88 @@ class ChatAdapter(
             holder.more.setOnClickListener { listener.onActionMenu(item, it) }
         }
     }
+
+    /**
+     * 把美化 HTML 渲染到气泡里的 WebView。
+     *
+     * 安全边界：默认**剥离 <script> 与 on* 事件属性**再加载 —— 内容来自模型，
+     * 不可信；只有用户在设置里显式打开「允许脚本」才执行。
+     * JS 引擎本身保持开启：只为量内容高度（否则 WebView 高度算不出来）。
+     */
+    private fun bindHtml(holder: VH, html: String, cfg: com.dbpg.duihuazhushou.appearance.AppearanceConfig) {
+        val web = holder.html
+        if (web.tag == html + "|" + cfg.allowScript + "|" + cfg.textSizeSp) return
+        web.tag = html + "|" + cfg.allowScript + "|" + cfg.textSizeSp
+
+        val safe = if (cfg.allowScript) html else sanitizeHtml(html)
+        val doc = wrapHtml(safe, cfg.textSizeSp, cfg.lineSpacing)
+
+        val s = web.settings
+        s.javaScriptEnabled = true
+        s.domStorageEnabled = false
+        s.allowFileAccess = false
+        s.allowContentAccess = false
+        s.loadsImagesAutomatically = true
+        s.blockNetworkLoads = false
+        s.setSupportZoom(false)
+        web.isVerticalScrollBarEnabled = false
+        web.overScrollMode = View.OVER_SCROLL_NEVER
+        web.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        web.webViewClient = object : android.webkit.WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                view: android.webkit.WebView,
+                request: android.webkit.WebResourceRequest,
+            ): Boolean = true // 气泡里的链接不跳转，避免把聊天页变成浏览器
+
+            override fun onPageFinished(view: android.webkit.WebView, url: String?) {
+                // 量出真实内容高度，把 WebView 撑开（内部不再滚动，整页跟着列表滚）。
+                // 量两次：首次 paint 前 web font/图片还没占位，只量一次会把内容截断
+                // （实测：卡片下方的段落与提示条被裁掉）。
+                fun measure() {
+                    view.evaluateJavascript(
+                        "Math.ceil(Math.max(document.documentElement.scrollHeight, document.body.scrollHeight))",
+                    ) { raw ->
+                        // scrollHeight 是 CSS px；Android 布局要设备 px，必须乘 density
+                        val cssPx = raw?.trim('"')?.toFloatOrNull()?.toInt() ?: 0
+                        val px = (cssPx * view.resources.displayMetrics.density).toInt()
+                        if (px > 0) {
+                            val lp = view.layoutParams
+                            if (lp.height != px) {
+                                lp.height = px
+                                view.layoutParams = lp
+                            }
+                        }
+                    }
+                }
+                measure()
+                view.postDelayed({ measure() }, 320L)
+            }
+        }
+        web.loadDataWithBaseURL(null, doc, "text/html", "utf-8", null)
+    }
+
+    /** 剥脚本与事件属性（allowScript=false 时）。 */
+    private fun sanitizeHtml(html: String): String {
+        var out = html
+        out = Regex("<script\\b[^>]*>[\\s\\S]*?</script\\s*>", RegexOption.IGNORE_CASE).replace(out, "")
+        out = Regex("<script\\b[^>]*/?>", RegexOption.IGNORE_CASE).replace(out, "")
+        out = Regex("\\son\\w+\\s*=\\s*(\"[^\"]*\"|'[^']*')", RegexOption.IGNORE_CASE).replace(out, "")
+        return out
+    }
+
+    /** 统一包一层：视口、透明底、正文字号/行距跟随外观设置，图片不溢出。 */
+    private fun wrapHtml(html: String, textSizeSp: Float, lineSpacing: Float): String = """
+        <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          html,body{margin:0;padding:0;background:transparent;}
+          body{color:#1A2230;font-size:${textSizeSp}px;line-height:${lineSpacing};
+               word-break:break-word;overflow-wrap:anywhere;}
+          img,video,canvas{max-width:100%;height:auto;}
+          table{max-width:100%;border-collapse:collapse;}
+          pre{white-space:pre-wrap;word-break:break-word;overflow-x:auto;}
+          a{color:#2F66D8;}
+        </style></head><body>$html</body></html>
+    """.trimIndent()
 
     private fun roundedBackground(color: Int, density: Float): GradientDrawable =
         GradientDrawable().apply {

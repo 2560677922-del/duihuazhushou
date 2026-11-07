@@ -26,6 +26,8 @@ class SettingsActivity : Activity() {
     private lateinit var lineBar: SeekBar
     private lateinit var widthBar: SeekBar
     private lateinit var hideSwitch: Switch
+    private lateinit var htmlSwitch: Switch
+    private lateinit var scriptSwitch: Switch
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,6 +43,8 @@ class SettingsActivity : Activity() {
         lineBar = findViewById(R.id.set_line)
         widthBar = findViewById(R.id.set_width)
         hideSwitch = findViewById(R.id.set_hide_reasoning)
+        htmlSwitch = findViewById(R.id.set_html_render)
+        scriptSwitch = findViewById(R.id.set_allow_script)
 
         findViewById<TextView>(R.id.set_back).setOnClickListener { finish() }
         findViewById<TextView>(R.id.set_reset).setOnClickListener { reset() }
@@ -59,6 +63,8 @@ class SettingsActivity : Activity() {
         widthBar.max = 34
         widthBar.progress = (cfg.bubbleWidthPercent - 60).coerceIn(0, 34)
         hideSwitch.isChecked = cfg.hideReasoning
+        htmlSwitch.isChecked = cfg.htmlRender
+        scriptSwitch.isChecked = cfg.allowScript
 
         bind()
         render()
@@ -76,6 +82,14 @@ class SettingsActivity : Activity() {
         })
         hideSwitch.setOnCheckedChangeListener { _, checked ->
             cfg = cfg.copy(hideReasoning = checked)
+            Appearance.save(this, cfg)
+        }
+        htmlSwitch.setOnCheckedChangeListener { _, checked ->
+            cfg = cfg.copy(htmlRender = checked)
+            Appearance.save(this, cfg)
+        }
+        scriptSwitch.setOnCheckedChangeListener { _, checked ->
+            cfg = cfg.copy(allowScript = checked)
             Appearance.save(this, cfg)
         }
     }
@@ -111,6 +125,8 @@ class SettingsActivity : Activity() {
         lineBar.progress = ((cfg.lineSpacing - 1f) * 100).toInt()
         widthBar.progress = cfg.bubbleWidthPercent - 60
         hideSwitch.isChecked = cfg.hideReasoning
+        htmlSwitch.isChecked = cfg.htmlRender
+        scriptSwitch.isChecked = cfg.allowScript
         render()
     }
 }

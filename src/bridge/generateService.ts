@@ -1279,7 +1279,6 @@ export function installGenerateService(): void {
     getImageStyle: imageStyleSummary,
     getDisplaySettings: displaySettingsSummary,
     getAssets: assetsDetail,
-    getTags: tagSearch,
     fetchModels: (json: string) => {
       void fetchApiModels(json);
     },

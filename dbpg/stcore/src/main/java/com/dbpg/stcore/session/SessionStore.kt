@@ -153,11 +153,13 @@ class SessionStore(private val root: File) {
 
     private fun ensureIndex(): MutableList<SessionIndexEntry> {
         indexCache?.let { return it }
-        val loaded = if (indexFile.exists()) {
-            SessionIndexEntry.parseArray(runCatching { indexFile.readText() }.getOrNull())
-        } else {
-            emptyList()
+        // 索引文件不存在 → 从目录重建。
+        // 以前这里直接返回空列表：索引一旦丢失（清缓存、迁移中断、手动拷贝会话文件），
+        // 磁盘上明明有会话，列表却显示"还没有会话"，用户以为数据全丢了。
+        if (!indexFile.exists()) {
+            return rebuildIndex().toMutableList()
         }
+        val loaded = SessionIndexEntry.parseArray(runCatching { indexFile.readText() }.getOrNull())
         val list = loaded.toMutableList()
         indexCache = list
         return list

@@ -200,6 +200,12 @@ fun stripHtmlNoise(text: String): String {
  * 原生界面的一站式变换：剥思维链 → 跑显示正则 → 展开变量宏 → 剥图片标记 → 切块。
  * 对应 web 的 displayText + buildContentBlocks 组合。
  */
+/** 显示变换结果：blocks 给纯文本渲染用，html 保留美化 HTML（给消息 WebView 用）。 */
+data class DisplayResult(
+    val blocks: List<ContentBlock>,
+    val html: String,
+)
+
 fun transformForDisplay(
     text: String,
     attachments: List<NativeImage>,
@@ -210,7 +216,27 @@ fun transformForDisplay(
     reasoningCutMarker: String?,
     /** 这条消息距最新一条的深度（0 = 最新）。显示路径逐条传，对齐 web displayText 的 depthOverride。 */
     depthOverride: Int = 0,
-): List<ContentBlock> {
+): List<ContentBlock> = transformForDisplayRich(
+    text, attachments, scripts, vars, ctx, hideReasoning, reasoningCutMarker, depthOverride,
+).blocks
+
+/**
+ * 同 [transformForDisplay]，但额外保留"跑完正则/变量、尚未剥 HTML"的文本。
+ *
+ * 为什么保留：美化正则产出的是一整份 HTML+CSS。文本化（stripHtmlNoise）只
+ * 能保证"读得懂"，排不出卡片/颜色/布局。原生聊天把这类消息交给内嵌 WebView
+ * 渲染（与 Tavo 同路线），纯文本仍作兜底。
+ */
+fun transformForDisplayRich(
+    text: String,
+    attachments: List<NativeImage>,
+    scripts: List<RawScript>,
+    vars: VariableTables?,
+    ctx: MacroContext?,
+    hideReasoning: Boolean,
+    reasoningCutMarker: String?,
+    depthOverride: Int = 0,
+): DisplayResult {
     var out = text
     if (hideReasoning) out = cleanOutput(out, reasoningCutMarker)
     if (scripts.isNotEmpty()) {
@@ -228,9 +254,9 @@ fun transformForDisplay(
         out = msgs.first().content
     }
     if (vars != null) out = readVariables(out, vars)
-    // 美化正则常带 <style>/<script>：web 里 style 生效、script 被忽略；
-    // 原生不执行也不解析它们，留着就会把整段 CSS/JS 当正文显示 —— 直接剥掉。
-    out = stripHtmlNoise(out)
-    out = stripImageMarkers(out)
-    return buildContentBlocks(out, attachments)
+    // 保留一份"带 HTML"的版本给消息 WebView（脚本在渲染侧再剥）
+    val richHtml = stripImageMarkers(out)
+    // 纯文本兜底：美化正则常带 <style>/<script>，文本化时全部清掉
+    val plain = stripHtmlNoise(richHtml)
+    return DisplayResult(buildContentBlocks(plain, attachments), richHtml)
 }

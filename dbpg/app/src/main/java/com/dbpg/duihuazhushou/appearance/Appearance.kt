@@ -17,6 +17,16 @@ data class AppearanceConfig(
     val bubbleWidthPercent: Int = 90,
     /** 原生侧也隐藏思维链（网页快照里也有这个开关，这里优先） */
     val hideReasoning: Boolean = true,
+    /**
+     * 美化 HTML 消息用内嵌 WebView 真渲染（CSS 生效）。
+     * 关掉则退化为纯文本（清洗后的可读版本）。
+     */
+    val htmlRender: Boolean = true,
+    /**
+     * 是否允许美化消息里的 JavaScript 执行。
+     * 默认关：模型输出不可信；需要社区美化卡（状态栏/按钮）时可自己打开。
+     */
+    val allowScript: Boolean = false,
 )
 
 object Appearance {
@@ -26,6 +36,8 @@ object Appearance {
     private const val K_LINE = "line_spacing"
     private const val K_WIDTH = "bubble_width"
     private const val K_HIDE_REASONING = "hide_reasoning"
+    private const val K_HTML_RENDER = "html_render"
+    private const val K_ALLOW_SCRIPT = "allow_script"
 
     fun load(ctx: Context): AppearanceConfig {
         val p = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
@@ -34,6 +46,8 @@ object Appearance {
             lineSpacing = p.getFloat(K_LINE, 1.4f).coerceIn(1.0f, 2.0f),
             bubbleWidthPercent = p.getInt(K_WIDTH, 90).coerceIn(60, 94),
             hideReasoning = p.getBoolean(K_HIDE_REASONING, true),
+            htmlRender = p.getBoolean(K_HTML_RENDER, true),
+            allowScript = p.getBoolean(K_ALLOW_SCRIPT, false),
         )
     }
 
@@ -43,6 +57,8 @@ object Appearance {
             .putFloat(K_LINE, cfg.lineSpacing)
             .putInt(K_WIDTH, cfg.bubbleWidthPercent)
             .putBoolean(K_HIDE_REASONING, cfg.hideReasoning)
+            .putBoolean(K_HTML_RENDER, cfg.htmlRender)
+            .putBoolean(K_ALLOW_SCRIPT, cfg.allowScript)
             .apply()
     }
 }

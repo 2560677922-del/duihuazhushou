@@ -17,7 +17,7 @@ import com.dbpg.stcore.session.SessionEditor
 import com.dbpg.stcore.session.SessionHistory
 import com.dbpg.stcore.stripHtmlNoise
 import com.dbpg.stcore.stripImageMarkers
-import com.dbpg.stcore.transformForDisplay
+import com.dbpg.stcore.transformForDisplayRich
 import java.util.concurrent.Executors
 
 /**
@@ -237,7 +237,7 @@ class ChatController(
                 continue
             }
 
-            val (text, paths) = renderAi(
+            val rendered = renderAi(
                 text = aiText,
                 images = a.images,
                 depth = d.actions.size - 1 - i,
@@ -248,12 +248,13 @@ class ChatController(
                 ChatItem(
                     id = "a:${a.id}",
                     role = "assistant",
-                    content = text,
-                    imagePaths = paths,
+                    content = rendered.plain,
+                    imagePaths = rendered.paths,
                     streaming = generating,
                     actionId = a.id,
                     variantIndex = a.variantIndex,
                     variantCount = a.variants.size,
+                    html = rendered.html,
                 ),
             )
         }
@@ -261,14 +262,21 @@ class ChatController(
     }
 
     /** AI 正文 → 显示文本 + 本地图片路径（跑 ST 显示变换：思维链/正则/变量/剥标记）。 */
+    /** renderAi 的输出：纯文本 + 图片路径 + 可选的富 HTML（给 WebView 渲染）。 */
+    private data class RenderedMsg(
+        val plain: String,
+        val paths: List<String>,
+        val html: String?,
+    )
+
     private fun renderAi(
         text: String,
         images: List<ActionImage>,
         depth: Int,
         display: DisplayConfig,
         appearance: AppearanceConfig,
-    ): Pair<String, List<String>> {
-        if (text.isBlank()) return "" to emptyList()
+    ): RenderedMsg {
+        if (text.isBlank()) return RenderedMsg("", emptyList(), null)
 
         val attachments = images.map {
             NativeImage(
@@ -281,7 +289,7 @@ class ChatController(
             )
         }
 
-        val blocks = transformForDisplay(
+        val rich = transformForDisplayRich(
             text = text,
             attachments = attachments,
             scripts = display.scripts,
@@ -292,6 +300,7 @@ class ChatController(
             depthOverride = depth,
         )
 
+        val blocks = rich.blocks
         val sb = StringBuilder()
         val paths = ArrayList<String>()
         for (b in blocks) {
@@ -313,7 +322,14 @@ class ChatController(
                 }
             }
         }
-        return sb.toString() to paths
+        // 只有"像一份 HTML"的消息才交给 WebView：带 <style>、或块级标签 ≥2 个。
+        // 普通 Markdown/纯文本继续走 TextView（更快、可选中复制）。
+        val html = rich.html
+        val looksLikeHtml = appearance.htmlRender && html.isNotBlank() &&
+            (html.contains("<style", ignoreCase = true) ||
+                Regex("<(div|details|table|section|article)\\b", RegexOption.IGNORE_CASE)
+                    .findAll(html).count() >= 2)
+        return RenderedMsg(sb.toString(), paths, if (looksLikeHtml) html else null)
     }
 
     // ------------------------------------------------------------ 发送 / 生成

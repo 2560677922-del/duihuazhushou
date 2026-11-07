@@ -23,4 +23,9 @@ data class ChatItem(
     val variantIndex: Int = 0,
     /** 一共有几版；<= 1 时不出「‹ ›」 */
     val variantCount: Int = 0,
+    /**
+     * 美化 HTML（跑完正则、保留标签的原文）。
+     * 非空时气泡用内嵌 WebView 真渲染（CSS 生效），content 只作降级与搜索。
+     */
+    val html: String? = null,
 )
