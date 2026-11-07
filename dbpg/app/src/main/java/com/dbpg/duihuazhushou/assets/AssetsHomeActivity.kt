@@ -28,10 +28,17 @@ import org.json.JSONObject
  * 与网页版资产页同构 —— 快捷切换 + 导入导出 + 世界书条目展开阅读。
  *
  * 数据在引擎 assets store（ST 兼容层原样），经 window.__dhpApi 读写：
- *   getAssets()                清单（预设/世界书含条目/正则）
- *   command setAssets          快捷切换（传完整目标 id 集合）
+ *   getAssets()                清单（预设含 prompts / 世界书含 entries / 正则组含 scripts）
+ *   command setAssets          快捷切换（传完整目标 id 集合，正则组会同步 group.enabled）
  *   command importAsset        导入 ST 的 .json（importAnyJson 统一识别）
  *   command exportAsset        导出 → 原生落盘（ACTION_CREATE_DOCUMENT）
+ *   wb*Entry                   世界书条目增删改
+ *   preset*Prompt              预设子条目增删改与**单条启停**（web 侧同步 prompt_order）
+ *   regex*Script               正则组内脚本增删改与**单条启停**（写 scripts[].disabled）
+ *
+ * 三类资产都是「组头展开 → 子条目卡片（快捷开关 + 点开编辑 + 长按删除）」的同构交互。
+ * 配置类数据已搬原生 ConnectionStore，但 ST 兼容层（预设/世界书/正则/角色卡）
+ * 仍留在引擎，这里不复制一份，避免两边状态打架。
  */
 class AssetsHomeActivity : Activity() {
 
@@ -131,7 +138,9 @@ class AssetsHomeActivity : Activity() {
             }
             TAB_PRESET -> {
                 val arr = a.optJSONArray("presets") ?: JSONArray()
-                status.text = "共 ${arr.length()} 个预设；点「启用」切换，点名称展开子条目"
+                var total = 0
+                for (i in 0 until arr.length()) total += arr.optJSONObject(i)?.optJSONArray("prompts")?.length() ?: 0
+                status.text = "共 ${arr.length()} 个预设 / $total 条子条目；点名称展开，每条可单独开关、编辑"
                 for (i in 0 until arr.length()) {
                     val p = arr.getJSONObject(i)
                     renderPreset(box, a, p)
@@ -140,26 +149,11 @@ class AssetsHomeActivity : Activity() {
             }
             TAB_REGEX -> {
                 val arr = a.optJSONArray("regexGroups") ?: JSONArray()
-                status.text = "共 ${arr.length()} 个正则组，点一下切换启用；长按导出"
+                var total = 0
+                for (i in 0 until arr.length()) total += arr.optJSONObject(i)?.optJSONArray("scripts")?.length() ?: 0
+                status.text = "共 ${arr.length()} 个正则组 / $total 条脚本；点名称展开，逐条开关、编辑"
                 for (i in 0 until arr.length()) {
-                    val g = arr.getJSONObject(i)
-                    box.addView(assetRow(g, titleOf = { it.optString("name").ifBlank { "未命名" } },
-                        currentOf = { it.optBoolean("current") },
-                        currentLabel = "已启用", actionLabel = "启用",
-                        subOf = { it.optString("name") + " · " + it.optInt("scriptCount") + " 条脚本" },
-                        onUse = {
-                            val want = JSONArray()
-                            val cur = a.optJSONArray("regexGroups") ?: JSONArray()
-                            val id = g.optString("id")
-                            val turnOn = !g.optBoolean("current")
-                            for (j in 0 until cur.length()) {
-                                val o = cur.getJSONObject(j)
-                                if (o.optBoolean("current") && o.optString("id") != id) want.put(o.optString("id"))
-                                if (o.optString("id") == id && turnOn) want.put(id)
-                            }
-                            commandSetAssets(JSONObject().put("regexGroupIds", want))
-                        },
-                        onExport = { exportAsset(g.optString("id")) }))
+                    renderRegexGroup(box, a, arr.getJSONObject(i))
                 }
                 if (arr.length() == 0) box.addView(emptyCard("还没有正则组", "点右上角「导入」选 ST 的正则 .json"))
             }
@@ -169,6 +163,15 @@ class AssetsHomeActivity : Activity() {
 
     // ------------------------------------------------------------ 预设（子条目展开/编辑/新建/删除）
 
+    /**
+     * 预设：组头可展开；组内每条 prompt 都有**独立的启用开关**，点整行进编辑器，
+     * 长按删除。之前这里只有「整组启用 + 点行编辑名称/内容」，用户反馈
+     * 「子条目还是没有加单独的开关、点都点不开」，所以重做成与世界书同构的两层卡片。
+     *
+     * ST 预设的 enabled 有两处权威来源（prompts[].enabled 与 prompt_order 里的
+     * order[].enabled），开关命令在 web 侧 syncPromptEnabled 里同步写两处，
+     * 原生只发命令，兼容层语义不下沉到这一层。
+     */
     private fun renderPreset(box: LinearLayout, a: JSONObject, p: JSONObject) {
         val id = p.optString("id")
         val name = p.optString("name").ifBlank { "未命名" }
@@ -181,7 +184,6 @@ class AssetsHomeActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             background = getDrawable(R.drawable.bg_card)
             setPadding(dp(14), dp(12), dp(14), dp(12))
-            (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(8)
             setOnClickListener {
                 if (open) openBooks.remove("preset:$id") else openBooks.add("preset:$id")
                 lastAssets?.let { render(it) }
@@ -199,10 +201,10 @@ class AssetsHomeActivity : Activity() {
             setTextColor(0xFF66707F.toInt())
             textSize = 11f
         })
-        // 显式的启用按钮：点名称只是展开，启用点这里（用户反馈"没法决定启用哪个"）
+        // 整组启用：点名称只是展开，启用点这里
         head.addView(TextView(this).apply {
             text = if (current) "使用中" else "启用"
-            setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF2F66D8.toInt())
+            setTextColor(0xFF2F66D8.toInt())
             textSize = 12f
             setTypeface(typeface, if (current) Typeface.BOLD else Typeface.NORMAL)
             background = getDrawable(R.drawable.bg_btn_soft)
@@ -212,56 +214,233 @@ class AssetsHomeActivity : Activity() {
                 toast(if (current) "已停用" else "已启用这个预设")
             }
         })
-        head.addView(TextView(this).apply {
-            text = if (open) "▾" else "▸"
-            setTextColor(0xFF8A94A6.toInt())
-            textSize = 14f
-            setPadding(dp(8), 0, 0, 0)
-        })
-        box.addView(head)
+        head.addView(arrow(open))
+        box.addView(head, cardParams())
 
         if (!open) return
 
-        // 新建子条目
         box.addView(actionRow("＋ 新建子条目") {
-            EngineBridge.command(
-                JSONObject().put("cmd", "presetAddPrompt").put("presetId", id),
-            )
+            EngineBridge.command(JSONObject().put("cmd", "presetAddPrompt").put("presetId", id))
             toast("已新建，展开后可编辑")
         })
 
         for (j in 0 until prompts.length()) {
             val it0 = prompts.getJSONObject(j)
             val identifier = it0.optString("identifier")
+            val enabled = it0.optBoolean("enabled", true)
+            val system = it0.optBoolean("system", true)
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
-                background = getDrawable(R.drawable.bg_btn_soft)
+                background = getDrawable(R.drawable.bg_card)
                 setPadding(dp(12), dp(10), dp(12), dp(10))
-                (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(6)
-                setOnClickListener {
-                    editDialog(
-                        title = "编辑子条目",
-                        fields = listOf("名称" to (it0.optString("name")), "内容" to (it0.optString("content"))),
-                    ) { values ->
-                        EngineBridge.command(
-                            JSONObject()
-                                .put("cmd", "presetSavePrompt")
-                                .put("presetId", id)
-                                .put("identifier", identifier)
-                                .put("prompt", JSONObject().put("name", values[0]).put("content", values[1])),
-                        )
-                    }
+                setOnClickListener { editPresetPromptDialog(id, it0) }
+                setOnLongClickListener { confirmDeletePrompt(id, identifier, it0.optString("name")); true }
+            }
+            val line = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            line.addView(TextView(this).apply {
+                text = if (enabled) "🟢 " else "⛔ "
+                textSize = 12f
+            })
+            line.addView(TextView(this).apply {
+                text = it0.optString("name").ifBlank { identifier }
+                setTextColor(0xFF1A2230.toInt())
+                textSize = 13f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            line.addView(TextView(this).apply { text = "✏️"; textSize = 12f })
+            row.addView(line)
+            row.addView(TextView(this).apply {
+                text = it0.optString("content").ifBlank { "（空内容，点开编辑）" }
+                setTextColor(0xFF66707F.toInt())
+                textSize = 11f
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(0, dp(3), 0, 0)
+            })
+            // 快捷开关：不展开也能一条条关，且不会误触整行的编辑器
+            val quick = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(6), 0, 0)
+            }
+            quick.addView(chipToggle(
+                if (enabled) "☑ 已启用" else "☐ 已停用", enabled,
+            ) {
+                EngineBridge.command(
+                    JSONObject().put("cmd", "presetSavePrompt")
+                        .put("presetId", id).put("identifier", identifier)
+                        .put("prompt", JSONObject().put("enabled", !enabled)),
+                )
+            })
+            quick.addView(chipToggle(
+                if (system) "🔵 系统提示词" else "👤 角色提示词", true,
+            ) {
+                EngineBridge.command(
+                    JSONObject().put("cmd", "presetSavePrompt")
+                        .put("presetId", id).put("identifier", identifier)
+                        .put("prompt", JSONObject().put("system", !system)),
+                )
+            })
+            row.addView(quick)
+            box.addView(row, cardParams())
+        }
+    }
+
+    private fun confirmDeletePrompt(presetId: String, identifier: String, name: String) {
+        AlertDialog.Builder(this)
+            .setTitle("删除子条目")
+            .setMessage(name.ifBlank { identifier })
+            .setPositiveButton("删除") { _, _ ->
+                EngineBridge.command(
+                    JSONObject().put("cmd", "presetRemovePrompt")
+                        .put("presetId", presetId).put("identifier", identifier),
+                )
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 预设子条目完整编辑器：名称 / 内容 / 角色 / 三个开关，保存走部分更新。 */
+    private fun editPresetPromptDialog(presetId: String, p: JSONObject) {
+        val ctx = this
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(6), dp(18), dp(6))
+        }
+        newLabel(box, "名称")
+        val name = newInput(box, p.optString("name"))
+        newLabel(box, "内容（支持 {{char}} 等宏）")
+        val content = newInput(box, p.optString("content"), multiline = true)
+        newLabel(box, "角色")
+        val roles = arrayOf("系统 system", "用户 user", "AI assistant")
+        val role = android.widget.Spinner(ctx).apply {
+            adapter = android.widget.ArrayAdapter(ctx, android.R.layout.simple_spinner_dropdown_item, roles)
+            setSelection(
+                when (p.optString("role")) {
+                    "user" -> 1
+                    "assistant" -> 2
+                    else -> 0
+                },
+            )
+        }
+        box.addView(role)
+        newLabel(box, "这条提示词的开关")
+        val enabled = newSwitchRow(box, "启用（关掉就不进提示词）", p.optBoolean("enabled", true))
+        val system = newSwitchRow(box, "系统提示词 system_prompt", p.optBoolean("system", true))
+        val marker = newSwitchRow(box, "标记为 marker", p.optBoolean("marker"))
+
+        AlertDialog.Builder(ctx)
+            .setTitle("编辑子条目")
+            .setView(android.widget.ScrollView(ctx).apply { addView(box) })
+            .setPositiveButton("保存") { _, _ ->
+                val patch = JSONObject()
+                    .put("name", name.text?.toString().orEmpty())
+                    .put("content", content.text?.toString().orEmpty())
+                    .put(
+                        "role", when (role.selectedItemPosition) {
+                            1 -> "user"
+                            2 -> "assistant"
+                            else -> "system"
+                        },
+                    )
+                    .put("enabled", enabled.isChecked)
+                    .put("system", system.isChecked)
+                    .put("marker", marker.isChecked)
+                EngineBridge.command(
+                    JSONObject().put("cmd", "presetSavePrompt")
+                        .put("presetId", presetId)
+                        .put("identifier", p.optString("identifier"))
+                        .put("prompt", patch),
+                )
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    // ------------------------------------------------------------ 正则组（组内脚本逐条管理）
+
+    /**
+     * 正则：与预设同构的两层卡片。组开关沿用 setAssets 的完整 id 集合语义
+     * （web 侧会同步 group.enabled），组内每条脚本的开关写 scripts[].disabled。
+     */
+    private fun renderRegexGroup(box: LinearLayout, a: JSONObject, g: JSONObject) {
+        val id = g.optString("id")
+        val name = g.optString("name").ifBlank { "未命名" }
+        val current = g.optBoolean("current") && g.optBoolean("enabled", true)
+        val scripts = g.optJSONArray("scripts") ?: JSONArray()
+        val open = openBooks.contains("regex:$id")
+
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = getDrawable(R.drawable.bg_card)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setOnClickListener {
+                if (open) openBooks.remove("regex:$id") else openBooks.add("regex:$id")
+                lastAssets?.let { render(it) }
+            }
+            setOnLongClickListener { exportAsset(id); true }
+        }
+        head.addView(TextView(this).apply {
+            text = (if (current) "✓ " else "") + name
+            setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF1A2230.toInt())
+            textSize = 14f
+            if (current) setTypeface(typeface, Typeface.BOLD)
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(TextView(this).apply {
+            text = "${scripts.length()} 条"
+            setTextColor(0xFF66707F.toInt())
+            textSize = 11f
+        })
+        head.addView(TextView(this).apply {
+            text = if (current) "已启用" else "启用"
+            setTextColor(0xFF2F66D8.toInt())
+            textSize = 12f
+            background = getDrawable(R.drawable.bg_btn_soft)
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            setOnClickListener {
+                val want = JSONArray()
+                val cur = a.optJSONArray("regexGroups") ?: JSONArray()
+                val turnOn = !current
+                for (j in 0 until cur.length()) {
+                    val o = cur.getJSONObject(j)
+                    if (o.optBoolean("current") && o.optString("id") != id) want.put(o.optString("id"))
+                    if (o.optString("id") == id && turnOn) want.put(id)
                 }
+                commandSetAssets(JSONObject().put("regexGroupIds", want))
+            }
+        })
+        head.addView(arrow(open))
+        box.addView(head, cardParams())
+
+        if (!open) return
+
+        box.addView(actionRow("＋ 新建正则脚本") {
+            EngineBridge.command(JSONObject().put("cmd", "regexAddScript").put("groupId", id))
+            toast("已新建（默认关闭，填好正则再打开）")
+        })
+
+        for (j in 0 until scripts.length()) {
+            val s = scripts.getJSONObject(j)
+            val sid = s.optString("id")
+            val on = !s.optBoolean("disabled")
+            val find = s.optString("findRegex")
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = getDrawable(R.drawable.bg_card)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                setOnClickListener { editRegexScriptDialog(id, s) }
                 setOnLongClickListener {
                     AlertDialog.Builder(this@AssetsHomeActivity)
-                        .setTitle("删除子条目")
-                        .setMessage(it0.optString("name").ifBlank { identifier })
+                        .setTitle("删除正则脚本")
+                        .setMessage(s.optString("name").ifBlank { sid })
                         .setPositiveButton("删除") { _, _ ->
                             EngineBridge.command(
-                                JSONObject()
-                                    .put("cmd", "presetRemovePrompt")
-                                    .put("presetId", id)
-                                    .put("identifier", identifier),
+                                JSONObject().put("cmd", "regexRemoveScript")
+                                    .put("groupId", id).put("scriptId", sid),
                             )
                         }
                         .setNegativeButton("取消", null)
@@ -269,23 +448,186 @@ class AssetsHomeActivity : Activity() {
                     true
                 }
             }
-            row.addView(TextView(this).apply {
-                text = it0.optString("name").ifBlank { identifier }
+            val line = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            line.addView(TextView(this).apply {
+                text = if (on) "🟢 " else "⛔ "
+                textSize = 12f
+            })
+            line.addView(TextView(this).apply {
+                text = s.optString("name").ifBlank { sid }
                 setTextColor(0xFF1A2230.toInt())
                 textSize = 13f
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
-            })
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            line.addView(TextView(this).apply { text = "✏️"; textSize = 12f })
+            row.addView(line)
             row.addView(TextView(this).apply {
-                text = it0.optString("content").ifBlank { "（空内容，点开编辑）" }
+                text = buildString {
+                    append("查找：").append(find.ifBlank { "（还没填正则）" })
+                    val rep = s.optString("replaceString")
+                    if (rep.isNotBlank()) append("  →  ").append(rep.take(40))
+                }
                 setTextColor(0xFF66707F.toInt())
                 textSize = 11f
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, dp(2), 0, 0)
+                setPadding(0, dp(3), 0, 0)
             })
-            box.addView(row)
+            val quick = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(6), 0, 0)
+            }
+            quick.addView(chipToggle(if (on) "☑ 生效" else "☐ 停用", on) {
+                EngineBridge.command(
+                    JSONObject().put("cmd", "regexSaveScript")
+                        .put("groupId", id).put("scriptId", sid)
+                        .put("script", JSONObject().put("disabled", on)),
+                )
+            })
+            val scope = when {
+                s.optBoolean("markdownOnly") && !s.optBoolean("promptOnly") -> "仅显示"
+                s.optBoolean("promptOnly") && !s.optBoolean("markdownOnly") -> "仅提示词"
+                else -> "显示 + 提示词"
+            }
+            quick.addView(TextView(this).apply {
+                text = "🎯 $scope"
+                setTextColor(0xFF5A6B85.toInt())
+                textSize = 11f
+                background = getDrawable(R.drawable.bg_btn_soft)
+                setPadding(dp(10), dp(5), dp(10), dp(5))
+            })
+            row.addView(quick)
+            box.addView(row, cardParams())
         }
+    }
+
+    /** 正则脚本编辑器：ST 常用字段，placement / minDepth 等保持原值不动。 */
+    private fun editRegexScriptDialog(groupId: String, s: JSONObject) {
+        val ctx = this
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(6), dp(18), dp(6))
+        }
+        newLabel(box, "脚本名称")
+        val name = newInput(box, s.optString("name"))
+        newLabel(box, "查找正则 findRegex")
+        val find = newInput(box, s.optString("findRegex"), multiline = true)
+        newLabel(box, "替换文本 replaceString（$1 引用捕获组）")
+        val replace = newInput(box, s.optString("replaceString"), multiline = true)
+        newLabel(box, "作用范围")
+        val scopes = arrayOf("显示 + 提示词（两者都作用）", "仅显示 markdownOnly", "仅提示词 promptOnly")
+        val scope = android.widget.Spinner(ctx).apply {
+            adapter = android.widget.ArrayAdapter(ctx, android.R.layout.simple_spinner_dropdown_item, scopes)
+            setSelection(
+                when {
+                    s.optBoolean("markdownOnly") && !s.optBoolean("promptOnly") -> 1
+                    s.optBoolean("promptOnly") && !s.optBoolean("markdownOnly") -> 2
+                    else -> 0
+                },
+            )
+        }
+        box.addView(scope)
+        newLabel(box, "脚本开关")
+        val enabled = newSwitchRow(box, "启用这条正则", !s.optBoolean("disabled"))
+        val runOnEdit = newSwitchRow(box, "编辑消息时也运行", s.optBoolean("runOnEdit"))
+        val substitute = newSwitchRow(box, "替换文本里的 $ 走正则替换", s.optInt("substituteRegex") != 0)
+
+        AlertDialog.Builder(ctx)
+            .setTitle("编辑正则脚本")
+            .setView(android.widget.ScrollView(ctx).apply { addView(box) })
+            .setPositiveButton("保存") { _, _ ->
+                val patch = JSONObject()
+                    .put("name", name.text?.toString().orEmpty())
+                    .put("findRegex", find.text?.toString().orEmpty())
+                    .put("replaceString", replace.text?.toString().orEmpty())
+                    .put("markdownOnly", scope.selectedItemPosition == 1)
+                    .put("promptOnly", scope.selectedItemPosition == 2)
+                    .put("disabled", !enabled.isChecked)
+                    .put("runOnEdit", runOnEdit.isChecked)
+                    .put("substituteRegex", if (substitute.isChecked) 1 else 0)
+                EngineBridge.command(
+                    JSONObject().put("cmd", "regexSaveScript")
+                        .put("groupId", groupId)
+                        .put("scriptId", s.optString("id"))
+                        .put("script", patch),
+                )
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    // ------------------------------------------------------------ 卡片通用控件
+
+    /** 展开箭头。 */
+    private fun arrow(open: Boolean): TextView = TextView(this).apply {
+        text = if (open) "▾" else "▸"
+        setTextColor(0xFF8A94A6.toInt())
+        textSize = 14f
+        setPadding(dp(8), 0, 0, 0)
+    }
+
+    /** 卡片间距：新建 View 还没 parent，必须在 addView 时传 LayoutParams 才生效。 */
+    private fun cardParams(): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            .apply { topMargin = dp(8) }
+
+    /** 行内快捷开关 chip（带自己的点击，不冒泡到整行编辑器）。 */
+    private fun chipToggle(label: String, on: Boolean, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = label
+            setTextColor(if (on) 0xFF2F66D8.toInt() else 0xFF8A94A6.toInt())
+            textSize = 11f
+            background = getDrawable(R.drawable.bg_btn_soft)
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { marginEnd = dp(6) }
+            setOnClickListener { onClick() }
+        }
+
+    private fun newLabel(box: LinearLayout, t: String) {
+        box.addView(TextView(this).apply {
+            text = t
+            setTextColor(0xFF5A6B85.toInt())
+            textSize = 12f
+            setPadding(0, dp(10), 0, dp(2))
+        })
+    }
+
+    private fun newInput(box: LinearLayout, value: String, multiline: Boolean = false): EditText =
+        EditText(this).apply {
+            setText(value)
+            setTextSize(13f)
+            setTextColor(0xFF1A2230.toInt())
+            background = getDrawable(R.drawable.bg_input)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            if (multiline) {
+                minLines = 4
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            }
+        }.also { box.addView(it) }
+
+    private fun newSwitchRow(box: LinearLayout, text: String, checked: Boolean): Switch {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(6), 0, dp(6))
+        }
+        row.addView(TextView(this).apply {
+            setText(text)
+            setTextColor(0xFF1A2230.toInt())
+            textSize = 13f
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val sw = Switch(this).apply { isChecked = checked }
+        row.addView(sw)
+        box.addView(row)
+        return sw
     }
 
     private fun actionRow(label: String, onClick: () -> Unit): View =
@@ -900,7 +1242,8 @@ class AssetsHomeActivity : Activity() {
                     if (obj.optBoolean("ok")) load() else toast("切换失败：${obj.optString("error")}")
                 }
                 "wbSaveEntry", "wbAddEntry", "wbRemoveEntry",
-                "presetSavePrompt", "presetAddPrompt", "presetRemovePrompt" -> {
+                "presetSavePrompt", "presetAddPrompt", "presetRemovePrompt",
+                "regexSaveScript", "regexAddScript", "regexRemoveScript" -> {
                     if (obj.optBoolean("ok")) load()
                     else toast("操作失败：${obj.optString("error")}")
                 }

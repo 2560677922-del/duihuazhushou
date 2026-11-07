@@ -15,7 +15,7 @@ import com.dbpg.duihuazhushou.R
  */
 class SessionAdapter(
     private val onClick: (SessionSummary) -> Unit,
-    /** 长按：目前只有「重命名」。为 null 时列表不响应长按。 */
+    /** 长按：重命名 / 删除会话。为 null 时列表不响应长按。 */
     private val onLongClick: ((SessionSummary) -> Unit)? = null,
 ) : RecyclerView.Adapter<SessionAdapter.VH>() {
 

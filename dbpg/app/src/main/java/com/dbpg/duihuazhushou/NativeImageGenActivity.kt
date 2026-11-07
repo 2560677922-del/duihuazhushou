@@ -38,6 +38,12 @@ import org.json.JSONObject
  *    这些参数选了等于没选。
  * 4. **小图尺寸快捷档位**：只给 832×1216 / 1216×832 / 512×512 这类小尺寸，
  *    点一下即写入配置，风格页与这里共用。
+ * 5. **标签库是完整 21097 条**：APK 里带的 `assets/www/tags/novelai-tags.json`
+ *    一直是全量，之前 UI 无筛选只取 12 条还把 12 当总数显示，看着像「只有十几个标签」。
+ *    现在状态行分别显示库总量 / 筛选命中量 / 本页显示量，并可「加载更多」。
+ * 6. **中文展示、英文发送**：已选标签在界面上以中文 chip 呈现（可单个移除 / 清空），
+ *    但拼进生图请求体的只有英文 tag。生成按钮与结果图放在标签列表**之前**，
+ *    这样标签列表再怎么展开也不会把出图结果顶出屏幕。
  */
 class NativeImageGenActivity : Activity() {
 
@@ -50,6 +56,7 @@ class NativeImageGenActivity : Activity() {
     private lateinit var cfgInput: EditText
     private lateinit var samplerSelect: TextView
     private lateinit var promptInput: EditText
+    private lateinit var selectedBox: LinearLayout
     private lateinit var runBtn: TextView
     private lateinit var statusView: TextView
     private lateinit var results: LinearLayout
@@ -59,6 +66,16 @@ class NativeImageGenActivity : Activity() {
     /** 标签一级/二级分类筛选（空 = 全部）。 */
     private var tagGroup = ""
     private var tagSub = ""
+
+    /**
+     * 已选标签：界面只显示中文（zh），发请求时只取英文 tag。
+     * 用户之前记不住自己选过什么，就是因为没有这份「看得懂」的清单。
+     */
+    private val selectedTags = mutableListOf<TagLibrary.Tag>()
+
+    /** 标签结果分页：默认铺开 30 条，点「加载更多」再加 60 条。 */
+    private var tagLimit = 30
+    private var tagQuery = ""
 
     /** 当前风格提示词（出图时拼进提示词/负面）。 */
     private var styleArtist = ""
@@ -91,6 +108,7 @@ class NativeImageGenActivity : Activity() {
         cfgInput = findViewById(R.id.gen_cfg)
         samplerSelect = findViewById(R.id.gen_sampler_select)
         promptInput = findViewById(R.id.gen_prompt)
+        selectedBox = findViewById(R.id.gen_selected_tags)
         runBtn = findViewById(R.id.gen_run)
         statusView = findViewById(R.id.gen_status)
         results = findViewById(R.id.gen_results)
@@ -109,13 +127,13 @@ class NativeImageGenActivity : Activity() {
         val tagBox = findViewById<LinearLayout>(R.id.gen_tags)
         val tagStatus = findViewById<TextView>(R.id.gen_tag_status)
         TagLibrary.load(this)
-        tagStatus.text = if (TagLibrary.size() > 0) "标签库 ${TagLibrary.size()} 条" else "标签库未随包发布（web 构建产物缺失）"
         var tagDebounce: Runnable? = null
         tagSearch.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
                 tagDebounce?.let { tagSearch.removeCallbacks(it) }
+                tagLimit = 30 // 换了关键词就重新从第一页开始
                 val r = Runnable { renderTags(tagBox, tagStatus, s?.toString() ?: "") }
                 tagDebounce = r
                 tagSearch.postDelayed(r, 300)
@@ -123,32 +141,38 @@ class NativeImageGenActivity : Activity() {
         })
         buildGroupTabs()
         loadSelectors()
+        renderSelectedTags()
         renderTags(tagBox, tagStatus, "")
     }
 
-    /** 标签搜索结果：每行两个 chip，点一下追加进提示词（纯原生数据）。 */
+    /**
+     * 标签搜索结果：每行两个 chip，点一下加入「已选标签」。
+     *
+     * 之前无筛选时只取 12 条、并把这 12 条当「匹配 12 条」显示，
+     * 用户以为整个标签库只有十几个（实际打包的是 21097 条）。
+     * 现在状态行分三个数：库总量 / 当前筛选命中量 / 本页显示量，
+     * 显示完还能继续「加载更多」。
+     */
     private fun renderTags(box: LinearLayout, status: TextView, query: String) {
         box.removeAllViews()
-        val noFilter = query.isBlank() && tagGroup.isBlank() && tagSub.isBlank()
-        val hits = TagLibrary.search(query, tagGroup, tagSub, if (noFilter) 12 else 40)
+        tagQuery = query
+        val total = TagLibrary.count(query, tagGroup, tagSub)
+        val hits = TagLibrary.search(query, tagGroup, tagSub, tagLimit)
         status.text = buildString {
+            append("标签库 ").append(TagLibrary.size()).append(" 条")
             if (tagGroup.isNotBlank()) {
-                append(tagGroup)
+                append(" · ").append(tagGroup)
                 if (tagSub.isNotBlank()) append(" · ").append(TagCategories.subLabel(tagSub))
-                append(" · ")
             }
-            append(if (hits.isEmpty()) "没有匹配的标签" else "匹配 ${hits.size} 条")
+            append(" · 命中 ").append(total).append(" 条 · 显示 ").append(hits.size).append(" 条")
         }
         var row: LinearLayout? = null
         for ((i, t) in hits.withIndex()) {
             if (i % 2 == 0) {
-                row = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    (layoutParams as? LinearLayout.LayoutParams)?.topMargin = 4
-                }
+                row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
                 box.addView(row)
             }
-            val chip = TextView(this).apply {
+            row?.addView(TextView(this).apply {
                 text = "${t.zh}（${t.tag}）"
                 textSize = 12f
                 setTextColor(0xFF3A4353.toInt())
@@ -158,22 +182,105 @@ class NativeImageGenActivity : Activity() {
                     marginEnd = 8
                     topMargin = 4
                 }
-                setOnClickListener {
-                    val cur = promptInput.text?.toString()?.trimEnd()
-                        ?.trimEnd(',', '，')?.trimEnd().orEmpty()
-                    val next = if (cur.isEmpty()) "${t.tag}, " else "$cur, ${t.tag}, "
-                    promptInput.setText(next)
-                    promptInput.setSelection(next.length)
-                }
-            }
-            row?.addView(chip)
+                setOnClickListener { addTag(t) }
+            })
         }
+        if (hits.size < total) {
+            box.addView(TextView(this).apply {
+                text = "加载更多（还有 ${total - hits.size} 条）"
+                textSize = 12f
+                gravity = android.view.Gravity.CENTER
+                setTextColor(0xFF2F66D8.toInt())
+                background = getDrawable(R.drawable.bg_btn_soft)
+                setPadding(0, dp(10), 0, dp(10))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = dp(8) }
+                setOnClickListener {
+                    tagLimit += 60
+                    renderTags(box, status, tagQuery)
+                }
+            })
+        }
+        if (total == 0) {
+            box.addView(TextView(this).apply {
+                text = "没有匹配的标签，换个关键词或分类试试"
+                textSize = 12f
+                setTextColor(0xFF8A94A6.toInt())
+                setPadding(0, dp(10), 0, dp(10))
+            })
+        }
+    }
+
+    /** 选中一个标签：只记对象，界面用中文，出图时才取英文 tag。 */
+    private fun addTag(t: TagLibrary.Tag) {
+        if (selectedTags.any { it.tag == t.tag }) {
+            toast("「${t.zh}」已经选过了")
+            return
+        }
+        selectedTags.add(t)
+        renderSelectedTags()
+    }
+
+    /** 已选清单：中文 chip + × 移除 + 一键清空。 */
+    private fun renderSelectedTags() {
+        selectedBox.removeAllViews()
+        selectedBox.addView(TextView(this).apply {
+            text = if (selectedTags.isEmpty()) {
+                "已选标签：还没选（点下方标签，界面显示中文，出图只发英文）"
+            } else {
+                "已选 ${selectedTags.size} 个标签 · 显示中文，出图只发英文 tag"
+            }
+            textSize = 11f
+            setTextColor(0xFF5A6B85.toInt())
+            setPadding(dp(2), dp(2), 0, dp(4))
+        })
+        if (selectedTags.isEmpty()) return
+
+        var row: LinearLayout? = null
+        for ((i, t) in selectedTags.withIndex()) {
+            if (i % 2 == 0) {
+                row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                selectedBox.addView(row)
+            }
+            row?.addView(TextView(this).apply {
+                text = "${t.zh}  ×"
+                textSize = 12f
+                setTextColor(0xFF2F66D8.toInt())
+                background = getDrawable(R.drawable.bg_btn_soft)
+                setPadding(dp(10), dp(7), dp(10), dp(7))
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = dp(6)
+                    topMargin = dp(4)
+                }
+                setOnClickListener {
+                    selectedTags.remove(t)
+                    renderSelectedTags()
+                }
+            })
+        }
+        selectedBox.addView(TextView(this).apply {
+            text = "清空已选"
+            textSize = 11f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(0xFF8A94A6.toInt())
+            setPadding(0, dp(8), 0, dp(2))
+            setOnClickListener {
+                selectedTags.clear()
+                renderSelectedTags()
+            }
+        })
     }
 
     /** 出图：按选定渲染器构造参数，端点候选逐个试。 */
     private fun run() {
-        val prompt = promptInput.text.toString().trim()
-        if (prompt.isEmpty()) { statusView.text = "请填写标签 / 提示词"; return }
+        // 已选标签只把英文 tag 发给模型；中文只存在于界面上。
+        // 手写的补充提示词仍然保留，方便老用户直接粘英文 tag 串。
+        val typed = promptInput.text.toString().trim().trimEnd(',', '，').trim()
+        val tagPart = selectedTags.joinToString(", ") { it.tag }
+        val prompt = listOf(tagPart, typed).filter { it.isNotEmpty() }.joinToString(", ")
+        if (prompt.isEmpty()) { statusView.text = "请点选标签或填写提示词"; return }
         val baseUrl = scene.optString("baseUrl")
         if (baseUrl.isBlank()) {
             statusView.text = "还没配置生图运营商，点右上「运营商」新建"
@@ -274,6 +381,7 @@ class NativeImageGenActivity : Activity() {
                     if (tagGroup == g) return@setOnClickListener
                     tagGroup = g
                     tagSub = ""
+                    tagLimit = 30
                     buildGroupTabs()
                     renderTags(tabBox, status, search.text?.toString() ?: "")
                 }
@@ -304,6 +412,7 @@ class NativeImageGenActivity : Activity() {
                 setOnClickListener {
                     if (tagSub == s0) return@setOnClickListener
                     tagSub = s0
+                    tagLimit = 30
                     buildSubTabs()
                     renderTags(tabBox, status, search.text?.toString() ?: "")
                 }

@@ -144,7 +144,11 @@ class ChatImageConfigActivity : Activity() {
             val la = obj.optJSONArray("llmConfigs") ?: JSONArray()
             llms = (0 until la.length()).map { la.getJSONObject(it) }
             val hit = llms.find { it.optString("uid") == llmUid }
-            llmLabel = hit?.optString("name")?.ifBlank { hit.optString("model") } ?: "跟随当前模型"
+            llmLabel = if (hit == null) "跟随当前模型" else {
+                val p = hit.optString("providerName").ifBlank { "默认运营商" }
+                val m = hit.optString("model").ifBlank { hit.optString("name") }
+                "$p · $m"
+            }
             llmSelect.text = "提示词模型：$llmLabel"
         }
         EngineBridge.fetch(this, "getImageStyle") { obj ->
@@ -260,24 +264,57 @@ class ChatImageConfigActivity : Activity() {
             .show()
     }
 
+    /**
+     * 提示词模型两级选择：先选运营商，再选该运营商下的模型。
+     *
+     * 原来只列模型名，好几家都叫 gpt-4o / claude-3 时根本分不清是哪家的；
+     * 现在一级显示「运营商（N 个模型）」，二级显示模型，选中后标签也带运营商。
+     */
     private fun pickLlm() {
+        val byProvider = LinkedHashMap<String, MutableList<JSONObject>>()
+        for (l in llms) {
+            val key = l.optString("providerKey").ifBlank { l.optString("uid") }
+            byProvider.getOrPut(key) { mutableListOf() }.add(l)
+        }
+        val keys = byProvider.keys.toList()
         val names = mutableListOf("跟随当前模型")
-        for (l in llms) names.add(l.optString("name").ifBlank { l.optString("model") })
+        for (k in keys) {
+            val list = byProvider[k].orEmpty()
+            val p = list.firstOrNull()?.optString("providerName").orEmpty().ifBlank { "未命名运营商" }
+            names.add("$p（${list.size} 个模型）")
+        }
         AlertDialog.Builder(this)
-            .setTitle("提示词由哪个模型生成")
+            .setTitle("提示词模型 · 先选运营商")
             .setItems(names.toTypedArray()) { _, i ->
                 if (i == 0) {
-                    llmUid = ""
-                    llmLabel = "跟随当前模型"
-                } else {
-                    val l = llms[i - 1]
-                    llmUid = l.optString("uid")
-                    llmLabel = l.optString("name").ifBlank { l.optString("model") }
+                    setLlm("", "跟随当前模型")
+                    return@setItems
                 }
-                llmSelect.text = "提示词模型：$llmLabel"
+                val list = byProvider[keys[i - 1]] ?: return@setItems
+                val p = list.firstOrNull()?.optString("providerName").orEmpty().ifBlank { "未命名运营商" }
+                val models = list.map { l ->
+                    val m = l.optString("model").ifBlank { l.optString("name") }
+                    val n = l.optString("name")
+                    if (n.isNotBlank() && n != m) "$m（$n）" else m
+                }.toTypedArray()
+                AlertDialog.Builder(this)
+                    .setTitle("$p · 选模型")
+                    .setItems(models) { _, j ->
+                        val l = list[j]
+                        val m = l.optString("model").ifBlank { l.optString("name") }
+                        setLlm(l.optString("uid"), "$p · $m")
+                    }
+                    .setNegativeButton("返回", null)
+                    .show()
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    private fun setLlm(uid: String, label: String) {
+        llmUid = uid
+        llmLabel = label
+        llmSelect.text = "提示词模型：$llmLabel"
     }
 
     private fun pickSampler() {

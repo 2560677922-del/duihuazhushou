@@ -13,6 +13,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.dbpg.duihuazhushou.NativeChatActivity
 import com.dbpg.duihuazhushou.R
+import com.dbpg.duihuazhushou.chat.ChatBackground
 import com.dbpg.duihuazhushou.data.MigrationActivity
 import com.dbpg.stcore.session.SessionEditor
 
@@ -53,7 +54,7 @@ object HomeBinder {
         lateinit var reload: Refresher
         val adapter = SessionAdapter(
             onClick = { item -> openChat(activity, item.id) },
-            onLongClick = { item -> promptRename(activity, item) { reload.refresh() } },
+            onLongClick = { item -> showSessionMenu(activity, item) { reload.refresh() } },
         )
         list.layoutManager = LinearLayoutManager(activity)
         list.adapter = adapter
@@ -91,6 +92,38 @@ object HomeBinder {
 
         reload.refresh()
         return reload
+    }
+
+    /** 长按会话：重命名 / 删除。首页这套列表用得最多，删除入口必须在这里。 */
+    private fun showSessionMenu(activity: Activity, item: SessionSummary, onDone: () -> Unit) {
+        AlertDialog.Builder(activity)
+            .setTitle(item.displayTitle)
+            .setItems(arrayOf("重命名", "删除会话")) { _, which ->
+                when (which) {
+                    0 -> promptRename(activity, item, onDone)
+                    1 -> confirmDelete(activity, item, onDone)
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * 删除会话：文件 + 索引一起走 [SessionRepo.delete]，顺带清掉该会话的
+     * 专属背景图，避免留下一张永远没人引用的孤儿图。
+     */
+    private fun confirmDelete(activity: Activity, item: SessionSummary, onDone: () -> Unit) {
+        AlertDialog.Builder(activity)
+            .setTitle("删除会话")
+            .setMessage("「${item.displayTitle}」及其全部消息会被删除，此操作不可恢复。")
+            .setPositiveButton("删除") { _, _ ->
+                ChatBackground.clear(activity, item.id)
+                SessionRepo.delete(item.id) { ok ->
+                    if (ok) onDone()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     /**

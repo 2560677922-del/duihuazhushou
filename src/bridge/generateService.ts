@@ -548,6 +548,10 @@ async function setActive(json: string): Promise<void> {
     for (const id of want) {
       if (!a.currentRegexGroupIds.includes(id)) await a.toggleRegexGroup(id, true);
     }
+    // 整组开关要连 group.enabled 一起写：flattenForEngine 会先按它过滤，
+    // 只改 currentRegexGroupIds 会出现「组显示已启用但脚本一条都没跑」的错位。
+    for (const g of a.regexGroups as any[]) g.enabled = want.includes(g._uid);
+    await a.save();
   }
 }
 
@@ -1129,7 +1133,10 @@ async function apiCommand(raw: string): Promise<void> {
         await a.save();
         break;
       }
-      /** 预设子条目（prompt）保存：内容 / 名称 / 角色。 */
+      /**
+       * 预设子条目保存：**部分更新**（只传 enabled 就是快捷开关，不碰其它字段）。
+       * enabled 会同步 prompt_order，见 syncPromptEnabled 的说明。
+       */
       case 'presetSavePrompt': {
         const a = useAssetsStore();
         const ps: any = (a.presets || []).find((x: any) => x._uid === req.presetId);
@@ -1141,21 +1148,41 @@ async function apiCommand(raw: string): Promise<void> {
         if (typeof p.name === 'string') it.name = p.name;
         if (typeof p.content === 'string') it.content = p.content;
         if (typeof p.role === 'string') it.role = p.role;
+        if (typeof p.system === 'boolean') it.system_prompt = p.system;
+        if (typeof p.marker === 'boolean') it.marker = p.marker;
+        if (typeof p.enabled === 'boolean') {
+          it.enabled = p.enabled;
+          syncPromptEnabled(ps, String(it.identifier ?? req.identifier), p.enabled);
+        }
         await a.save();
         break;
       }
-      /** 预设新建子条目。 */
+      /** 预设新建子条目：同时把它接进 prompt_order，否则新条目能编辑却不会进提示词。 */
       case 'presetAddPrompt': {
         const a = useAssetsStore();
         const ps: any = (a.presets || []).find((x: any) => x._uid === req.presetId);
         const list = ps?.data?.prompts || ps?.prompts;
         if (!list) throw new Error('找不到预设');
         const id = `native-${Date.now()}`;
-        list.push({ identifier: id, name: '新子条目', content: '', role: 'system', system_prompt: true });
+        list.push({ identifier: id, name: '新子条目', content: '', role: 'system', system_prompt: true, enabled: true });
+        const po = ps?.data?.prompt_order ?? ps?.prompt_order;
+        if (Array.isArray(po)) {
+          for (const section of po) {
+            if (Array.isArray(section?.order) && section.order.every((x: any) => x && typeof x === 'object')) {
+              section.order.push({ identifier: id, enabled: true });
+            }
+          }
+        } else if (po && typeof po === 'object') {
+          for (const v of Object.values(po)) {
+            if (Array.isArray(v) && v.every((x: any) => x && typeof x === 'object')) {
+              (v as any[]).push({ identifier: id, enabled: true });
+            }
+          }
+        }
         await a.save();
         break;
       }
-      /** 预设删除子条目。 */
+      /** 预设删除子条目：prompts 与 prompt_order 里的同一 identifier 一起清掉。 */
       case 'presetRemovePrompt': {
         const a = useAssetsStore();
         const ps: any = (a.presets || []).find((x: any) => x._uid === req.presetId);
@@ -1163,6 +1190,81 @@ async function apiCommand(raw: string): Promise<void> {
         if (!list) throw new Error('找不到预设');
         const i = list.findIndex((x: any, j: number) => String(x.identifier || `#${j}`) === req.identifier);
         if (i >= 0) list.splice(i, 1);
+        const po = ps?.data?.prompt_order ?? ps?.prompt_order;
+        const drop = (arr: any[]) => {
+          for (let k = arr.length - 1; k >= 0; k--) {
+            const o = arr[k];
+            if (o && typeof o === 'object' && Array.isArray(o.order)) drop(o.order);
+            else if (String(o?.identifier ?? o?.id ?? o) === req.identifier) arr.splice(k, 1);
+          }
+        };
+        if (Array.isArray(po)) drop(po);
+        else if (po && typeof po === 'object') for (const v of Object.values(po)) if (Array.isArray(v)) drop(v);
+        await a.save();
+        break;
+      }
+
+      // ─────────── 正则组内脚本（逐条开关 / 编辑 / 新建 / 删除） ───────────
+
+      /** 按组 id + 脚本 id（或 #下标）找一条脚本；找不到直接抛，原生会显示错误。 */
+      case 'regexSaveScript': {
+        const a = useAssetsStore();
+        const g: any = (a.regexGroups || []).find((x: any) => x._uid === req.groupId);
+        if (!g) throw new Error('找不到正则组');
+        const list = g.scripts || (g.scripts = []);
+        const idx = list.findIndex((s: any, i: number) => String(s.id || `#${i}`) === req.scriptId);
+        if (idx < 0) throw new Error('找不到这条正则');
+        const s = list[idx];
+        const p = req.script || {};
+        if (typeof p.name === 'string') s.scriptName = p.name;
+        if (typeof p.findRegex === 'string') s.findRegex = p.findRegex;
+        if (typeof p.replaceString === 'string') s.replaceString = p.replaceString;
+        if (typeof p.disabled === 'boolean') s.disabled = p.disabled;
+        if (typeof p.markdownOnly === 'boolean') s.markdownOnly = p.markdownOnly;
+        if (typeof p.promptOnly === 'boolean') s.promptOnly = p.promptOnly;
+        if (typeof p.runOnEdit === 'boolean') s.runOnEdit = p.runOnEdit;
+        if (p.substituteRegex !== undefined) s.substituteRegex = Number(p.substituteRegex) || 0;
+        if (Array.isArray(p.placement)) s.placement = p.placement.map((v: any) => Number(v));
+        if (Array.isArray(p.trimStrings)) s.trimStrings = p.trimStrings;
+        if (p.minDepth !== undefined) s.minDepth = p.minDepth === '' || p.minDepth === null ? null : Number(p.minDepth);
+        if (p.maxDepth !== undefined) s.maxDepth = p.maxDepth === '' || p.maxDepth === null ? null : Number(p.maxDepth);
+        g.updatedAt = Date.now();
+        await a.save();
+        break;
+      }
+      /** 组内新建一条脚本，默认关闭（避免空正则立刻参与匹配报错）。 */
+      case 'regexAddScript': {
+        const a = useAssetsStore();
+        const g: any = (a.regexGroups || []).find((x: any) => x._uid === req.groupId);
+        if (!g) throw new Error('找不到正则组');
+        const list = g.scripts || (g.scripts = []);
+        list.push({
+          id: `native-rx-${Date.now()}`,
+          scriptName: '新正则',
+          findRegex: '',
+          replaceString: '',
+          trimStrings: [],
+          placement: [2],
+          disabled: true,
+          markdownOnly: false,
+          promptOnly: false,
+          runOnEdit: false,
+          substituteRegex: 0,
+          minDepth: null,
+          maxDepth: null,
+        });
+        g.updatedAt = Date.now();
+        await a.save();
+        break;
+      }
+      case 'regexRemoveScript': {
+        const a = useAssetsStore();
+        const g: any = (a.regexGroups || []).find((x: any) => x._uid === req.groupId);
+        if (!g) throw new Error('找不到正则组');
+        const list: any[] = g.scripts || [];
+        const i = list.findIndex((s: any, j: number) => String(s.id || `#${j}`) === req.scriptId);
+        if (i >= 0) list.splice(i, 1);
+        g.updatedAt = Date.now();
         await a.save();
         break;
       }
@@ -1263,6 +1365,65 @@ function imageApiSummary(): string {
 }
 
 /**
+ * 遍历 ST 预设 prompt_order 的所有历史形态，回调每个「顺序项」。
+ *
+ * 见过的三种：
+ *   1. [{ character_id: 100001, order: [{ identifier, enabled }] }]  ← ST 1.12+
+ *   2. { '100001': [{ identifier, enabled }] }                       ← 部分分支
+ *   3. { '100001': ['main', 'jailbreak', ...] }                      ← 老预设，纯 id 数组
+ * 第 3 种没有 enabled 可写，只能靠 prompts[].enabled，遍历时自然跳过字符串。
+ * 限制深度是防止预设里塞了奇形怪状的循环引用把这里跑死。
+ */
+function forEachPromptOrderEntry(ps: any, fn: (e: any) => void): void {
+  const po = ps?.data?.prompt_order ?? ps?.prompt_order
+    ?? ps?.data?.promptOrder ?? ps?.promptOrder;
+  if (!po) return;
+  const walk = (node: any, depth: number): void => {
+    if (node == null || depth > 5) return;
+    if (Array.isArray(node)) {
+      for (const x of node) walk(x, depth + 1);
+      return;
+    }
+    if (typeof node !== 'object') return;
+    if (Array.isArray(node.order)) {
+      walk(node.order, depth + 1);
+      return;
+    }
+    if ('identifier' in node || 'id' in node || 'enabled' in node) {
+      fn(node);
+      return;
+    }
+    for (const v of Object.values(node)) walk(v, depth + 1);
+  };
+  walk(po, 0);
+}
+
+/** prompt_order 里这条是否被单独关掉。 */
+function promptOrderDisabled(ps: any, identifier: string): boolean {
+  let disabled = false;
+  forEachPromptOrderEntry(ps, (e) => {
+    if (String(e.identifier ?? e.id ?? '') === identifier && e.enabled === false) disabled = true;
+  });
+  return disabled;
+}
+
+/**
+ * 单条 prompt 开关要同时写两处，否则「界面显示关了但提示词还在」：
+ * `assembler.ts` 阶段 1 优先用 parsecard 的 listPromptEntries()（读 order.enabled），
+ * 回退路径才读 prompts[].enabled。两处都同步才对任何版本预设生效。
+ */
+function syncPromptEnabled(ps: any, identifier: string, enabled: boolean): void {
+  forEachPromptOrderEntry(ps, (e) => {
+    if (String(e.identifier ?? e.id ?? '') === identifier) e.enabled = enabled;
+  });
+  // store 里若存的是 parsecard 实例（而不是 toJSON 后的普通对象），
+  // 顺带用官方 API 同步它内部的顺序表。
+  if (typeof ps?.setPromptEnabled === 'function') {
+    try { ps.setPromptEnabled(identifier, enabled); } catch { /* 普通对象无此方法 */ }
+  }
+}
+
+/**
  * 引擎资产明细：预设 / 世界书（含全部条目）/ 正则组，供原生浏览。
  * 数据原样来自 assets store（ST 兼容层），原生只读不复制。
  */
@@ -1295,12 +1456,16 @@ function assetsDetail(): string {
     id: p._uid || '',
     name: p.name || p.data?.name || '未命名',
     current: p._uid === a.currentPresetId,
+    // 子条目要把「单独开关」用到的字段全带出来。enabled 有两处权威来源：
+    // prompts[].enabled 与 prompt_order 里的 order[].enabled，任一为 false 都算关。
     prompts: (p.data?.prompts || p.prompts || []).map((x: any, i: number) => ({
       identifier: x.identifier || `#${i}`,
       name: x.name || x.identifier || `#${i}`,
       content: x.content || '',
       role: x.role || '',
       system: x.system_prompt !== false,
+      enabled: x.enabled !== false && !promptOrderDisabled(p, x.identifier || `#${i}`),
+      marker: !!x.marker,
       idx: i,
     })),
   }));
@@ -1308,7 +1473,25 @@ function assetsDetail(): string {
     id: g._uid || '',
     name: g.name || '未命名',
     current: a.currentRegexGroupIds.includes(g._uid),
+    enabled: g.enabled !== false,
     scriptCount: (g.scripts || []).length,
+    // 组内脚本明细：原生资产页要能逐条开关 / 编辑 / 新建 / 删除。
+    scripts: (g.scripts || []).map((s: any, i: number) => ({
+      id: String(s.id || `#${i}`),
+      name: s.scriptName || s.name || '未命名脚本',
+      findRegex: s.findRegex || '',
+      replaceString: s.replaceString || '',
+      disabled: s.disabled === true,
+      markdownOnly: !!s.markdownOnly,
+      promptOnly: !!s.promptOnly,
+      runOnEdit: !!s.runOnEdit,
+      substituteRegex: Number(s.substituteRegex || 0),
+      placement: Array.isArray(s.placement) ? s.placement.map((v: any) => Number(v)) : [],
+      minDepth: s.minDepth ?? null,
+      maxDepth: s.maxDepth ?? null,
+      trimStrings: Array.isArray(s.trimStrings) ? s.trimStrings : [],
+      idx: i,
+    })),
   }));
   return JSON.stringify({
     presets,

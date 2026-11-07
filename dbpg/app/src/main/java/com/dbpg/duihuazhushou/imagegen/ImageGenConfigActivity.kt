@@ -21,9 +21,14 @@ import org.json.JSONObject
 /**
  * 原生生图接口配置页：交互与 LLM 运营商配置一致。
  *
- * 数据在 web 的 image store（生图走引擎管线，配置必须同源），
- * 经 window.__dhpApi.getImageConfig() 读、command() 写：
+ * 数据已经搬到原生 [com.dbpg.duihuazhushou.settings.ConnectionStore]
+ * （files/connection_store.json），读写走 EngineBridge 的本地分支，**零桥**；
+ * 引擎只收单向配置镜像。命令：
  *   imgSaveConn / imgAddModels / imgUseApi / imgRemoveApi
+ *   imgRemoveApis（批量删模型） / imgRemoveProvider（删整个运营商）
+ *
+ * 运营商按 baseUrl 分组，展开后顶部有「批量删除模型 / 删除运营商」两个入口，
+ * 长按运营商卡片也能调出同一组操作；长按单个模型仍是单删。
  */
 class ImageGenConfigActivity : Activity() {
 
@@ -145,8 +150,8 @@ class ImageGenConfigActivity : Activity() {
                     if (open) openProviders.remove(key) else openProviders.add(key)
                     load()
                 }
-                // 长按改运营商名（整组条目一起改，换模型时名字不会跳回去）
-                setOnLongClickListener { promptRenameProvider(key, name); true }
+                // 长按运营商：重命名 / 批量删模型 / 删除整个运营商
+                setOnLongClickListener { showProviderMenu(key, name, models); true }
             }
             val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
             col.addView(TextView(this).apply {
@@ -181,6 +186,14 @@ class ImageGenConfigActivity : Activity() {
             apisBox.addView(head)
 
             if (!open) continue
+            // 批量管理入口：以前只能长按模型一个个删
+            val ops = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(6), 0, dp(2))
+            }
+            ops.addView(actionChip("☐ 批量删除模型") { batchDeleteModels(models) })
+            ops.addView(actionChip("🗑️ 删除运营商") { confirmDeleteProvider(key, name) })
+            apisBox.addView(ops)
             for (j in 0 until models.length()) {
                 val m = models.getJSONObject(j)
                 val uid = m.optString("uid")
@@ -228,6 +241,89 @@ class ImageGenConfigActivity : Activity() {
                 apisBox.addView(row)
             }
         }
+    }
+
+    /** 展开区里的操作 chip，两个各占一半宽度。 */
+    private fun actionChip(label: String, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = label
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF2F66D8.toInt())
+            background = getDrawable(R.drawable.bg_btn_soft)
+            setPadding(dp(6), dp(8), dp(6), dp(8))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { marginEnd = dp(6) }
+            setOnClickListener { onClick() }
+        }
+
+    /** 长按运营商卡片：重命名 / 批量删模型 / 删除整个运营商。 */
+    private fun showProviderMenu(key: String, name: String, models: JSONArray) {
+        AlertDialog.Builder(this)
+            .setTitle(name)
+            .setItems(
+                arrayOf("重命名", "批量删除模型（${models.length()} 个）", "删除整个运营商"),
+            ) { _, which ->
+                when (which) {
+                    0 -> promptRenameProvider(key, name)
+                    1 -> batchDeleteModels(models)
+                    2 -> confirmDeleteProvider(key, name)
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 多选删除：一条 imgRemoveApis 命令，顺带清掉场景槽位里的悬空 uid。 */
+    private fun batchDeleteModels(models: JSONArray, selectAll: Boolean = false) {
+        if (models.length() == 0) {
+            toast("这个运营商下还没有模型")
+            return
+        }
+        val names = Array(models.length()) { j ->
+            val m = models.optJSONObject(j)
+            m?.optString("model").orEmpty().ifBlank { m?.optString("name").orEmpty().ifBlank { "未命名" } }
+        }
+        val checked = BooleanArray(names.size) { selectAll }
+        AlertDialog.Builder(this)
+            .setTitle("勾选要删除的模型（${names.size} 个）")
+            .setMultiChoiceItems(names, checked) { _, which, isChecked -> checked[which] = isChecked }
+            .setPositiveButton("删除选中") { _, _ ->
+                val uids = JSONArray()
+                for (j in 0 until models.length()) {
+                    if (checked[j]) uids.put(models.optJSONObject(j)?.optString("uid").orEmpty())
+                }
+                if (uids.length() == 0) {
+                    toast("一个都没勾")
+                    return@setPositiveButton
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("确认删除")
+                    .setMessage("将删除 ${uids.length()} 个模型，此操作不可恢复。")
+                    .setPositiveButton("删除") { _, _ ->
+                        EngineBridge.command(
+                            JSONObject().put("cmd", "imgRemoveApis").put("uids", uids),
+                        )
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+            }
+            .setNeutralButton("全选") { _, _ -> batchDeleteModels(models, true) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun confirmDeleteProvider(key: String, name: String) {
+        AlertDialog.Builder(this)
+            .setTitle("删除运营商")
+            .setMessage("「$name」及其下所有模型配置会被删除，此操作不可恢复。")
+            .setPositiveButton("删除") { _, _ ->
+                EngineBridge.command(
+                    JSONObject().put("cmd", "imgRemoveProvider").put("key", key),
+                )
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     /** 长按运营商卡片：改显示名。 */
@@ -413,6 +509,14 @@ class ImageGenConfigActivity : Activity() {
                 "imgRemoveApi" -> {
                     if (ok) {
                         toast("已删除")
+                        load()
+                    } else {
+                        status.text = "删除失败：${obj.optString("error")}"
+                    }
+                }
+                "imgRemoveApis", "imgRemoveProvider" -> {
+                    if (ok) {
+                        toast("已删除 ${obj.optInt("removed", 0)} 项")
                         load()
                     } else {
                         status.text = "删除失败：${obj.optString("error")}"

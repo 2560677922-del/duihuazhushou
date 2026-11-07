@@ -241,6 +241,50 @@
                 android:background="@drawable/bg_input"
                 android:padding="12dp" />
 
+            <!--
+              已选标签：中文展示、可单个移除，实际发给生图模型的只有英文 tag。
+              放在生成按钮上方，用户一眼能确认自己选了什么。
+            -->
+            <LinearLayout
+                android:id="@+id/gen_selected_tags"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="vertical" />
+
+            <!--
+              生成与结果放在标签列表「之前」。标签库能展开/加载更多之后，
+              列表可能很长；放末尾会把按钮和出图结果顶到屏幕外，用户点了生成
+              却看不到图。现在结果区固定在上半段，标签怎么展开都不影响。
+            -->
+            <TextView
+                android:id="@+id/gen_run"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:padding="12dp"
+                android:text="生成"
+                android:background="@drawable/bg_btn_accent"
+                android:textColor="#2F66D8"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/gen_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textColor="#5A6B85"
+                android:textSize="13sp" />
+
+            <LinearLayout
+                android:id="@+id/gen_results"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="vertical" />
+
             <!-- 标签一级 / 二级分类（与网页 Tags 页一致） -->
             <HorizontalScrollView
                 android:layout_width="match_parent"
@@ -297,34 +341,6 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical" />
 
-            <TextView
-                android:id="@+id/gen_run"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:gravity="center"
-                android:padding="12dp"
-                android:text="生成"
-                android:background="@drawable/bg_btn_accent"
-                android:textColor="#2F66D8"
-                android:textSize="15sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/gen_status"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:textColor="#5A6B85"
-                android:textSize="13sp" />
-
-            <!-- 结果：本地路径解码出来的缩略图 -->
-            <LinearLayout
-                android:id="@+id/gen_results"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="vertical" />
         </LinearLayout>
     </ScrollView>
 </LinearLayout>

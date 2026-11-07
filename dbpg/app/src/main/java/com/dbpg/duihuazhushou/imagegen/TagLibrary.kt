@@ -59,6 +59,17 @@ object TagLibrary {
             .map { it.sub }.distinct().toList()
     }
 
+    /** 命中总数（不受 limit 影响）。界面要显示「共 21097 条 / 命中 N 条」，不能把分页后的条数当总数。 */
+    fun count(query: String, group: String = "", sub: String = ""): Int {
+        val q = query.trim().lowercase()
+        if (q.isEmpty() && group.isBlank() && sub.isBlank()) return tags.size
+        return tags.count {
+            (group.isBlank() || it.group == group) &&
+                (sub.isBlank() || it.sub == sub) &&
+                (q.isEmpty() || it.tag.lowercase().contains(q) || it.zh.contains(q))
+        }
+    }
+
     /**
      * 组合过滤：关键词 + 一级分类 + 二级分类。
      * 空串/空分类 = 不限制；query 为空时按库内顺序取前 limit 条。

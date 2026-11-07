@@ -184,9 +184,8 @@ class ApiConfigActivity : Activity() {
                 setPadding(dp(14), dp(12), dp(14), dp(12))
                 if (i > 0) (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(8)
                 setOnClickListener { if (expanded.contains(key)) expanded.remove(key) else expanded.add(key); loadConfig() }
-                // 长按改名字：运营商名存在 providerNotes（按 baseUrl 分组），
-                // 与「模型名」是两回事，改模型不会影响它。
-                setOnLongClickListener { promptRenameProvider(key, note); true }
+                // 长按运营商：重命名 / 批量删模型 / 删除整个运营商
+                setOnLongClickListener { showProviderMenu(key, note, models); true }
             }
             val title = TextView(this).apply {
                 text = buildString {
@@ -216,6 +215,14 @@ class ApiConfigActivity : Activity() {
                 if (baseUrl.isNotBlank()) {
                     providersBox.addView(simpleCard("", baseUrl, small = true))
                 }
+                // 批量管理入口：以前只能长按模型一个个删，几十个模型要按几十次
+                val ops = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setPadding(0, dp(6), 0, dp(2))
+                }
+                ops.addView(actionChip("☐ 批量删除模型") { batchDeleteModels(models) })
+                ops.addView(actionChip("🗑️ 删除运营商") { confirmDeleteProvider(key, note) })
+                providersBox.addView(ops)
                 for (j in 0 until models.length()) {
                     val m = models.getJSONObject(j)
                     val uid = m.optString("uid")
@@ -266,6 +273,85 @@ class ApiConfigActivity : Activity() {
                 }
             }
         }
+    }
+
+    /** 展开区里的操作 chip，两个各占一半宽度。 */
+    private fun actionChip(label: String, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = label
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF2F66D8.toInt())
+            background = getDrawable(R.drawable.bg_btn_soft)
+            setPadding(dp(6), dp(8), dp(6), dp(8))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { marginEnd = dp(6) }
+            setOnClickListener { onClick() }
+        }
+
+    /** 长按运营商卡片：重命名 / 批量删模型 / 删除整个运营商。 */
+    private fun showProviderMenu(key: String, note: String, models: JSONArray) {
+        AlertDialog.Builder(this)
+            .setTitle(note.ifBlank { "运营商" })
+            .setItems(
+                arrayOf("重命名", "批量删除模型（${models.length()} 个）", "删除整个运营商"),
+            ) { _, which ->
+                when (which) {
+                    0 -> promptRenameProvider(key, note)
+                    1 -> batchDeleteModels(models)
+                    2 -> confirmDeleteProvider(key, note)
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 多选删除：一条 llmRemoveModels 命令搞定，删前二次确认。 */
+    private fun batchDeleteModels(models: JSONArray, selectAll: Boolean = false) {
+        if (models.length() == 0) {
+            toast("这个运营商下还没有模型")
+            return
+        }
+        val names = Array(models.length()) { j ->
+            val m = models.optJSONObject(j)
+            m?.optString("model").orEmpty().ifBlank { m?.optString("name").orEmpty().ifBlank { "未命名" } }
+        }
+        val checked = BooleanArray(names.size) { selectAll }
+        AlertDialog.Builder(this)
+            .setTitle("勾选要删除的模型（${names.size} 个）")
+            .setMultiChoiceItems(names, checked) { _, which, isChecked -> checked[which] = isChecked }
+            .setPositiveButton("删除选中") { _, _ ->
+                val uids = JSONArray()
+                for (j in 0 until models.length()) {
+                    if (checked[j]) uids.put(models.optJSONObject(j)?.optString("uid").orEmpty())
+                }
+                if (uids.length() == 0) {
+                    toast("一个都没勾")
+                    return@setPositiveButton
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("确认删除")
+                    .setMessage("将删除 ${uids.length()} 个模型，此操作不可恢复。")
+                    .setPositiveButton("删除") { _, _ ->
+                        command("llmRemoveModels", JSONObject().put("uids", uids))
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+            }
+            .setNeutralButton("全选") { _, _ -> batchDeleteModels(models, true) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun confirmDeleteProvider(key: String, note: String) {
+        AlertDialog.Builder(this)
+            .setTitle("删除运营商")
+            .setMessage("「${note.ifBlank { "未命名运营商" }}」及其下所有模型配置会被删除，此操作不可恢复。")
+            .setPositiveButton("删除") { _, _ ->
+                command("llmRemoveProvider", JSONObject().put("key", key))
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     /** 长按运营商卡片：改显示名。 */
@@ -485,6 +571,14 @@ class ApiConfigActivity : Activity() {
                 }
                 "llmRenameProvider" -> {
                     if (ok) loadConfig() else toast("改名失败：${obj.optString("error")}")
+                }
+                "llmRemoveModels", "llmRemoveProvider" -> {
+                    if (ok) {
+                        toast("已删除 ${obj.optInt("removed", 0)} 项")
+                        loadConfig()
+                    } else {
+                        status.text = "删除失败：${obj.optString("error")}"
+                    }
                 }
                 "llmAddProvider" -> {
                     if (ok) {

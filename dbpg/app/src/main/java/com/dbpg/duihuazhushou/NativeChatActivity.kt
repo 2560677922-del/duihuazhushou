@@ -344,6 +344,11 @@ class NativeChatActivity : Activity(), ChatController.Sink {
                 },
             )
         }
+        if (sid.isNotBlank()) {
+            sessionItems.add(
+                MenuEntry("🗑️", "删除会话", "连同全部消息一起删除，不可恢复") { confirmDeleteSession(sid) },
+            )
+        }
         val sections = listOf(
             "会话" to sessionItems,
             "内容与资产" to listOf(
@@ -352,9 +357,14 @@ class NativeChatActivity : Activity(), ChatController.Sink {
                 },
                 MenuEntry("📥", "导入聊天记录", "从 jsonl 载入一份只读预览") { pickJsonl() },
             ),
+            // 聊天里的生图是「对话生图」：按上文生成、用 chat 场景配置。
+            // 独立的标签生图页在首页「标签生图」入口，两套配置互不干扰。
             "创作" to listOf(
-                MenuEntry("🎨", "标签生图", "用标签库与当前风格直接出图") {
-                    startActivity(Intent(this, NativeImageGenActivity::class.java))
+                MenuEntry("🎨", "对话生图", "按最近 N 条上文生成一张配图") { quickImage() },
+                MenuEntry("⚙️", "对话生图设置", "上文条数 / 运营商 / 模型 / 尺寸") {
+                    startActivity(
+                        Intent(this, com.dbpg.duihuazhushou.settings.ChatImageConfigActivity::class.java),
+                    )
                 },
             ),
         )
@@ -464,6 +474,30 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             .setTitle("重命名会话")
             .setView(wrap)
             .setPositiveButton("保存") { _, _ -> controller?.rename(input.text?.toString().orEmpty()) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * 删除当前会话：先清掉它的专属背景图，再删会话文件与索引，最后退出聊天页。
+     * 会话列表 onResume 会自己重新读一次索引，不需要额外广播。
+     */
+    private fun confirmDeleteSession(id: String) {
+        val title = controller?.doc?.title.orEmpty().ifBlank { "当前会话" }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("删除会话")
+            .setMessage("「$title」及其全部消息会被删除，此操作不可恢复。")
+            .setPositiveButton("删除") { _, _ ->
+                ChatBackground.clear(this, id)
+                com.dbpg.duihuazhushou.session.SessionRepo.delete(id) { ok ->
+                    if (ok) {
+                        toast("已删除")
+                        finish()
+                    } else {
+                        toast("删除失败")
+                    }
+                }
+            }
             .setNegativeButton("取消", null)
             .show()
     }

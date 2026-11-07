@@ -62,6 +62,8 @@ object ConnectionStore {
         "imgSaveAuto", "imgSaveSampling",
         // 2026-11-07 新增：场景隔离 / 渲染引擎 / 尺寸快捷档位
         "imgSetEngine", "imgSaveSize",
+        // 2026-11-07 新增：运营商整组删除 + 模型批量删除
+        "llmRemoveProvider", "llmRemoveModels", "imgRemoveProvider", "imgRemoveApis",
     )
 
     private val lock = Any()
@@ -299,13 +301,21 @@ object ConnectionStore {
         }
         val llmConfigs = JSONArray()
         val llmArr = arr(llm, "configs")
+        val llmNotes = llm.optJSONObject("providerNotes") ?: JSONObject()
         for (i in 0 until llmArr.length()) {
             val c = llmArr.optJSONObject(i) ?: continue
+            // 提示词模型选择器要按「运营商 → 模型」两级展开。
+            // 运营商名优先用用户自己起的名（providerNotes），没起过就退回域名。
+            val key = llmKey(c)
+            val providerName = llmNotes.optString(key).ifEmpty { hostOf(c.optString("baseUrl")) }
+                .ifEmpty { c.optString("_name") }.ifEmpty { "默认运营商" }
             llmConfigs.put(
                 JSONObject()
                     .put("uid", c.optString("_uid"))
                     .put("name", c.optString("_name").ifEmpty { c.optString("model") }.ifEmpty { "未命名" })
                     .put("model", c.optString("model"))
+                    .put("providerKey", key)
+                    .put("providerName", providerName)
                     .put("current", c.optString("_uid") == llm.optString("currentConfigId")),
             )
         }
@@ -479,6 +489,37 @@ object ConnectionStore {
                     llm.put("currentConfigId", configs.optJSONObject(0)?.optString("_uid") ?: "")
                 }
             }
+            /**
+             * 批量删模型：一次勾选、一条命令，避免几十个模型要长按几十次。
+             * 删完把 currentConfigId 指到还活着的第一个，别留悬空 id。
+             */
+            "llmRemoveModels" -> {
+                val uids = stringArray(a.optJSONArray("uids")).toSet()
+                for (uid in uids) {
+                    if (removeByUid(configs, uid) && llm.optString("currentConfigId") == uid) {
+                        llm.put("currentConfigId", "")
+                    }
+                }
+                if (llm.optString("currentConfigId").isBlank()) {
+                    llm.put("currentConfigId", configs.optJSONObject(0)?.optString("_uid") ?: "")
+                }
+                reply.put("removed", uids.size)
+            }
+            /** 删除整个 LLM 运营商：按 llmKey 分组，连用户起的名一起删。 */
+            "llmRemoveProvider" -> {
+                val key = a.optString("key")
+                var removed = 0
+                for (i in configs.length() - 1 downTo 0) {
+                    val c = configs.optJSONObject(i) ?: continue
+                    if (llmKey(c) == key) {
+                        configs.remove(i)
+                        removed++
+                    }
+                }
+                llm.optJSONObject("providerNotes")?.remove(key)
+                llm.put("currentConfigId", configs.optJSONObject(0)?.optString("_uid") ?: "")
+                reply.put("removed", removed)
+            }
             "saveParams" -> {
                 val p = a.optJSONObject("params") ?: JSONObject()
                 val c = curLlm ?: return reply
@@ -555,6 +596,37 @@ object ConnectionStore {
                 }
                 if (sceneIds.optString("chat") == uid) sceneIds.put("chat", "")
                 if (sceneIds.optString("tag") == uid) sceneIds.put("tag", "")
+            }
+            /** 生图模型批量删；同时清掉两个场景槽位里指向被删 uid 的引用。 */
+            "imgRemoveApis" -> {
+                val uids = stringArray(a.optJSONArray("uids")).toSet()
+                for (uid in uids) {
+                    removeByUid(apis, uid)
+                    if (image.optString("currentApiId") == uid) image.put("currentApiId", "")
+                    if (sceneIds.optString("chat") == uid) sceneIds.put("chat", "")
+                    if (sceneIds.optString("tag") == uid) sceneIds.put("tag", "")
+                }
+                if (image.optString("currentApiId").isBlank()) {
+                    image.put("currentApiId", apis.optJSONObject(0)?.optString("_uid") ?: "")
+                }
+                reply.put("removed", uids.size)
+            }
+            /** 删除整个生图运营商：按 baseUrl 分组（imageKey）整组清掉。 */
+            "imgRemoveProvider" -> {
+                val key = a.optString("key")
+                var removed = 0
+                for (i in apis.length() - 1 downTo 0) {
+                    val x = apis.optJSONObject(i) ?: continue
+                    if (imageKey(x) == key) {
+                        val uid = x.optString("_uid")
+                        if (sceneIds.optString("chat") == uid) sceneIds.put("chat", "")
+                        if (sceneIds.optString("tag") == uid) sceneIds.put("tag", "")
+                        apis.remove(i)
+                        removed++
+                    }
+                }
+                image.put("currentApiId", apis.optJSONObject(0)?.optString("_uid") ?: "")
+                reply.put("removed", removed)
             }
             "imgSetEngine" -> {
                 // 同一家运营商（同一 baseUrl）下的模型共享渲染器，避免逐条设。
