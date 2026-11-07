@@ -66,7 +66,7 @@ public final class MainActivity extends Activity {
     private static final int REQ_PICK_FILE = 1001;
     /** 底部原生导航高度（dp），与 view_bottom_nav.xml 保持一致 */
     private static final int NAV_HEIGHT_DP = 56;
-    private static final int BG_COLOR = 0xFF0F1115; // 与 Web 版主题色一致，避免启动闪白
+    private static final int BG_COLOR = 0xFFF4F6FA; // 与 Web 版主题色一致，避免启动闪白
 
     private WebView webView;
     private TextView errorView;
@@ -152,9 +152,24 @@ public final class MainActivity extends Activity {
         FrameLayout.LayoutParams navLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(NAV_HEIGHT_DP), Gravity.BOTTOM);
         root.addView(nav, navLp);
+        // 手势条/三键导航的安全区：给导航条加底部内边距，避免图标被系统条压住
+        nav.setOnApplyWindowInsetsListener((v, insets) -> {
+            int bottom = insets.getSystemWindowInsetBottom();
+            v.setPadding(v.getPaddingLeft(), v.getPaddingTop(), v.getPaddingRight(), bottom);
+            FrameLayout.LayoutParams lp2 = (FrameLayout.LayoutParams) v.getLayoutParams();
+            int want = dp(NAV_HEIGHT_DP) + bottom;
+            if (lp2.height != want) {
+                lp2.height = want;
+                v.setLayoutParams(lp2);
+            }
+            return insets;
+        });
+        nav.requestApplyInsets();
         bindBottomNav(nav);
 
         setContentView(root);
+
+        com.dbpg.duihuazhushou.Insets.INSTANCE.applyTop(this);
         loadApp();
     }
 

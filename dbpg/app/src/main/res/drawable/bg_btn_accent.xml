@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 主按钮：淡蓝底 + 圆角，配深色文字（对比网页版主按钮的观感） -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="#2A3B5E" />
+    <solid android:color="#DCE9FF" />
     <corners android:radius="10dp" />
 </shape>

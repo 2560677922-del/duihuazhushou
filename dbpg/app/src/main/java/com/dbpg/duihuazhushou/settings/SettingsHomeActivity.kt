@@ -1,8 +1,11 @@
 package com.dbpg.duihuazhushou.settings
 
+import com.dbpg.duihuazhushou.Insets
+
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
 import android.widget.TextView
 import com.dbpg.duihuazhushou.R
 
@@ -15,34 +18,35 @@ class SettingsHomeActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings_home)
+        Insets.applyTop(this)
 
-        findViewById<TextView>(R.id.shome_back).setOnClickListener { finish() }
+        findViewById<View>(R.id.shome_back).setOnClickListener { finish() }
 
-        findViewById<TextView>(R.id.shome_api).setOnClickListener {
+        findViewById<View>(R.id.shome_api).setOnClickListener {
             startActivity(Intent(this, ApiConfigActivity::class.java))
         }
-        findViewById<TextView>(R.id.shome_imgapi).setOnClickListener {
+        findViewById<View>(R.id.shome_imgapi).setOnClickListener {
             startActivity(
                 Intent(this, com.dbpg.duihuazhushou.imagegen.ImageGenConfigActivity::class.java),
             )
         }
-        findViewById<TextView>(R.id.shome_style).setOnClickListener {
+        findViewById<View>(R.id.shome_style).setOnClickListener {
             startActivity(Intent(this, ImageStyleActivity::class.java))
         }
-        findViewById<TextView>(R.id.shome_display).setOnClickListener {
+        findViewById<View>(R.id.shome_display).setOnClickListener {
             startActivity(Intent(this, DisplayActivity::class.java))
         }
-        findViewById<TextView>(R.id.shome_appearance).setOnClickListener {
+        findViewById<View>(R.id.shome_appearance).setOnClickListener {
             startActivity(
                 Intent(this, com.dbpg.duihuazhushou.appearance.SettingsActivity::class.java),
             )
         }
-        findViewById<TextView>(R.id.shome_gallery).setOnClickListener {
+        findViewById<View>(R.id.shome_gallery).setOnClickListener {
             startActivity(
                 Intent(this, com.dbpg.duihuazhushou.gallery.GalleryActivity::class.java),
             )
         }
-        findViewById<TextView>(R.id.shome_migrate).setOnClickListener {
+        findViewById<View>(R.id.shome_migrate).setOnClickListener {
             startActivity(
                 Intent(this, com.dbpg.duihuazhushou.data.MigrationActivity::class.java),
             )

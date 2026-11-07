@@ -1,5 +1,7 @@
 package com.dbpg.duihuazhushou.character
 
+import com.dbpg.duihuazhushou.Insets
+
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
@@ -42,6 +44,7 @@ class CharacterDetailActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_character_detail)
+        Insets.applyTop(this)
 
         val path = intent.getStringExtra(EXTRA_PATH).orEmpty()
         file = File(path)
@@ -120,7 +123,7 @@ class CharacterDetailActivity : Activity() {
         val list = card.greetings
         if (list.isEmpty()) {
             greetingView.text = "（这张卡没有开场白）"
-            greetingView.setTextColor(0xFF6C7A90.toInt())
+            greetingView.setTextColor(0xFF66707F.toInt())
             return
         }
         greetingView.setTextIsSelectable(true)

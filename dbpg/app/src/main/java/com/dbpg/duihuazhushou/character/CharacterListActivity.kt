@@ -1,5 +1,7 @@
 package com.dbpg.duihuazhushou.character
 
+import com.dbpg.duihuazhushou.Insets
+
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
@@ -24,7 +26,7 @@ class CharacterListActivity : Activity() {
 
     private companion object {
         const val REQ_IMPORT = 2001
-        const val BG = 0xFF0F1115.toInt()
+        const val BG = 0xFFF4F6FA.toInt()
     }
 
     private lateinit var repo: CharacterRepository
@@ -34,6 +36,7 @@ class CharacterListActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_character_list)
+        Insets.applyTop(this)
         repo = CharacterRepository(this)
 
         findViewById<TextView>(R.id.char_back).setOnClickListener { finish() }

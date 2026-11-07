@@ -26,7 +26,7 @@
             android:id="@+id/msg_text"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textColor="#E6ECF7"
+            android:textColor="#1A2230"
             android:textSize="15sp"
             android:lineSpacingExtra="2dp" />
 

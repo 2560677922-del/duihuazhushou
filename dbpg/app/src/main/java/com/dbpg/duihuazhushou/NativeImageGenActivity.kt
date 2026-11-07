@@ -33,6 +33,7 @@ class NativeImageGenActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_native_image_gen)
+        Insets.applyTop(this)
 
         urlInput = findViewById(R.id.gen_url)
         keyInput = findViewById(R.id.gen_key)
@@ -70,20 +71,20 @@ class NativeImageGenActivity : Activity() {
         val tagStatus = findViewById<TextView>(R.id.gen_tag_status)
         TagLibrary.load(this)
         tagStatus.text = if (TagLibrary.size() > 0) "标签库 ${TagLibrary.size()} 条" else "标签库未随包发布（web 构建产物缺失）"
-        tagSearch.setOnEditorActionListener { _, _, _ ->
-            renderTags(tagBox, tagStatus, tagSearch.text.toString())
-            true
-        }
-        tagSearch.setOnKeyListener { _, _, event ->
-            if (event.action == android.view.KeyEvent.ACTION_DOWN &&
-                event.keyCode == android.view.KeyEvent.KEYCODE_ENTER
-            ) {
-                renderTags(tagBox, tagStatus, tagSearch.text.toString())
-                true
-            } else {
-                false
+        // 边输入边搜（对齐网页 Tags 页的即时筛选），300ms 防抖
+        var tagDebounce: Runnable? = null
+        tagSearch.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                tagDebounce?.let { tagSearch.removeCallbacks(it) }
+                val r = Runnable { renderTags(tagBox, tagStatus, s?.toString() ?: "") }
+                tagDebounce = r
+                tagSearch.postDelayed(r, 300)
             }
-        }
+        })
+        // 首次给一批常用标签，不用打字也能点
+        renderTags(tagBox, tagStatus, "")
 
         // 从引擎配置回填（用户在生图接口配置页存的地址/密钥/模型）
         com.dbpg.duihuazhushou.settings.EngineBridge.fetch(this, "getImageConfig") { obj ->
@@ -98,7 +99,7 @@ class NativeImageGenActivity : Activity() {
     /** 标签搜索结果：每行两个 chip，点一下追加进提示词（纯原生数据）。 */
     private fun renderTags(box: LinearLayout, status: TextView, query: String) {
         box.removeAllViews()
-        val hits = TagLibrary.search(query)
+        val hits = TagLibrary.search(query, if (query.isBlank()) 12 else 40)
         status.text = if (hits.isEmpty()) "没有匹配的标签" else "匹配 ${hits.size} 条"
         var row: LinearLayout? = null
         for ((i, t) in hits.withIndex()) {
@@ -112,7 +113,7 @@ class NativeImageGenActivity : Activity() {
             val chip = TextView(this).apply {
                 text = "${t.zh}（${t.tag}）"
                 textSize = 12f
-                setTextColor(0xFFB9C4D6.toInt())
+                setTextColor(0xFF3A4353.toInt())
                 background = getDrawable(R.drawable.bg_btn_soft)
                 setPadding(24, 16, 24, 16)
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {

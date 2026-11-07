@@ -1,5 +1,7 @@
 package com.dbpg.duihuazhushou.imagegen
 
+import com.dbpg.duihuazhushou.Insets
+
 import android.app.Activity
 import android.app.AlertDialog
 import android.graphics.Typeface
@@ -37,6 +39,7 @@ class ImageGenConfigActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_image_config)
+        Insets.applyTop(this)
 
         baseEdit = findViewById(R.id.imgconf_base)
         keyEdit = findViewById(R.id.imgconf_key)
@@ -120,14 +123,14 @@ class ImageGenConfigActivity : Activity() {
             }
             row.addView(TextView(this).apply {
                 text = if (current) "✓ " else ""
-                setTextColor(0xFF7FB2FF.toInt())
+                setTextColor(0xFF2F66D8.toInt())
                 textSize = 13f
             })
             row.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(TextView(this@ImageGenConfigActivity).apply {
                     text = model.ifBlank { name.ifBlank { "(未选模型)" } }
-                    setTextColor(if (current) 0xFF7FB2FF.toInt() else 0xFFE6EAF2.toInt())
+                    setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF1A2230.toInt())
                     textSize = 13.5f
                     if (current) setTypeface(typeface, Typeface.BOLD)
                 })
@@ -136,7 +139,7 @@ class ImageGenConfigActivity : Activity() {
                         append(baseUrl.ifBlank { "(未填地址)" })
                         if (!a.optBoolean("hasKey")) append(" · 未填密钥")
                     }
-                    setTextColor(0xFF6C7A90.toInt())
+                    setTextColor(0xFF66707F.toInt())
                     textSize = 11f
                     setPadding(0, dp(2), 0, 0)
                     maxLines = 1
@@ -144,7 +147,7 @@ class ImageGenConfigActivity : Activity() {
             }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             row.addView(TextView(this).apply {
                 text = if (current) "使用中" else "使用"
-                setTextColor(if (current) 0xFF7FB2FF.toInt() else 0xFF6C7A90.toInt())
+                setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF66707F.toInt())
                 textSize = 12f
             })
             row.setOnClickListener {
@@ -175,13 +178,13 @@ class ImageGenConfigActivity : Activity() {
         }
         box.addView(TextView(this).apply {
             text = title
-            setTextColor(0xFF8FA6C8.toInt())
+            setTextColor(0xFF5A6B85.toInt())
             textSize = 14f
             gravity = Gravity.CENTER
         })
         box.addView(TextView(this).apply {
             text = sub
-            setTextColor(0xFF4E5A6B.toInt())
+            setTextColor(0xFF9AA4B2.toInt())
             textSize = 12f
             gravity = Gravity.CENTER
             setPadding(0, dp(6), 0, 0)

@@ -57,9 +57,9 @@ class ChatAdapter(
             override fun areItemsTheSame(oldItem: ChatItem, newItem: ChatItem) = oldItem.id == newItem.id
             override fun areContentsTheSame(oldItem: ChatItem, newItem: ChatItem) = oldItem == newItem
         }
-        private const val COLOR_USER = 0xFF2A4B7C.toInt()
-        private const val COLOR_AI = 0xFF232A3A.toInt()
-        private const val COLOR_SYS = 0xFF2E3440.toInt()
+        private const val COLOR_USER = 0xFFDCE9FF.toInt()
+        private const val COLOR_AI = 0xFFE8EEF8.toInt()
+        private const val COLOR_SYS = 0xFFEEF1F6.toInt()
         private const val COLOR_DIM = 0xFF7F8DA6.toInt()
     }
 
@@ -119,6 +119,7 @@ class ChatAdapter(
 
         // 2) 文本：maxWidth 封顶 + Spannable 渲染（字号/行距跟随外观设置）
         holder.text.maxWidth = bubbleMaxWidthPx
+        holder.text.setTextColor(0xFF1A2230.toInt())
         holder.text.textSize = config.textSizeSp
         holder.text.setLineSpacing(0f, config.lineSpacing)
         val content = if (item.streaming) item.content + "▍" else item.content
@@ -180,7 +181,9 @@ class ChatAdapter(
     private fun roundedBackground(color: Int, density: Float): GradientDrawable =
         GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadius = 14 * density
+            cornerRadius = 18 * density
             setColor(color)
+            // AI 气泡是白底，需要一条浅描边把自己和页面背景分开
+            if (color == COLOR_AI) setStroke((1 * density).toInt(), 0xFFE4E9F2.toInt())
         }
 }

@@ -741,6 +741,111 @@ async function apiCommand(raw: string): Promise<void> {
         return;
       }
 
+      // ─────────── 资产子条目编辑（世界书条目 / 预设 prompts） ───────────
+
+      /** 世界书条目保存（ST 字段全集：触发关键词 / 选择性触发 / 常驻 / 概率 / 深度 / 位置 / 角色）。 */
+      case 'wbSaveEntry': {
+        const a = useAssetsStore();
+        const book: any = (a.worldBooks || []).find((w: any) => w._uid === req.bookId);
+        const list = book?.data?.entries || book?.entries;
+        if (!list) throw new Error('找不到世界书');
+        const e: any = list.find((x: any) => Number(x.uid) === Number(req.uid));
+        if (!e) throw new Error('找不到条目');
+        const p = req.entry || {};
+        const splitKeys = (s: string) =>
+          s.split(/[,，\n]/).map((x: string) => x.trim()).filter(Boolean);
+        if (typeof p.comment === 'string') e.comment = p.comment;
+        if (typeof p.content === 'string') e.content = p.content;
+        if (typeof p.keys === 'string') e.keys = splitKeys(p.keys);
+        if (typeof p.secondary === 'string') e.secondary_keys = splitKeys(p.secondary);
+        if (typeof p.constant === 'boolean') e.constant = p.constant;
+        if (typeof p.selective === 'boolean') e.selective = p.selective;
+        if (p.selectiveLogic !== undefined) e.selectiveLogic = Number(p.selectiveLogic);
+        if (typeof p.enabled === 'boolean') e.enabled = p.enabled;
+        if (p.probability !== undefined) e.probability = Number(p.probability);
+        if (p.useProbability !== undefined) e.useProbability = !!p.useProbability;
+        if (p.depth !== undefined) e.depth = Number(p.depth);
+        if (p.position !== undefined) e.position = Number(p.position);
+        if (p.role !== undefined) e.role = p.role === null ? null : Number(p.role);
+        if (p.insertion_order !== undefined) e.insertion_order = Number(p.insertion_order);
+        await a.save();
+        break;
+      }
+      /** 世界书新建条目（uid 取现有最大值 +1）。 */
+      case 'wbAddEntry': {
+        const a = useAssetsStore();
+        const book: any = (a.worldBooks || []).find((w: any) => w._uid === req.bookId);
+        const list = book?.data?.entries || book?.entries;
+        if (!list) throw new Error('找不到世界书');
+        const maxUid = list.reduce((m: number, x: any) => Math.max(m, Number(x.uid) || 0), -1);
+        list.push({
+          uid: maxUid + 1,
+          comment: '新条目',
+          keys: [],
+          secondary_keys: [],
+          content: '',
+          constant: false,
+          selective: true,
+          selectiveLogic: 0,
+          enabled: true,
+          insertion_order: 100,
+          position: 0,
+          depth: 4,
+          probability: 100,
+          useProbability: false,
+        });
+        await a.save();
+        break;
+      }
+      /** 世界书删除条目。 */
+      case 'wbRemoveEntry': {
+        const a = useAssetsStore();
+        const book: any = (a.worldBooks || []).find((w: any) => w._uid === req.bookId);
+        const list = book?.data?.entries || book?.entries;
+        if (!list) throw new Error('找不到世界书');
+        const i = list.findIndex((x: any) => Number(x.uid) === Number(req.uid));
+        if (i >= 0) list.splice(i, 1);
+        await a.save();
+        break;
+      }
+      /** 预设子条目（prompt）保存：内容 / 名称 / 角色。 */
+      case 'presetSavePrompt': {
+        const a = useAssetsStore();
+        const ps: any = (a.presets || []).find((x: any) => x._uid === req.presetId);
+        const list = ps?.data?.prompts || ps?.prompts;
+        if (!list) throw new Error('找不到预设');
+        const it: any = list.find((x: any, i: number) => String(x.identifier || `#${i}`) === req.identifier);
+        if (!it) throw new Error('找不到子条目');
+        const p = req.prompt || {};
+        if (typeof p.name === 'string') it.name = p.name;
+        if (typeof p.content === 'string') it.content = p.content;
+        if (typeof p.role === 'string') it.role = p.role;
+        await a.save();
+        break;
+      }
+      /** 预设新建子条目。 */
+      case 'presetAddPrompt': {
+        const a = useAssetsStore();
+        const ps: any = (a.presets || []).find((x: any) => x._uid === req.presetId);
+        const list = ps?.data?.prompts || ps?.prompts;
+        if (!list) throw new Error('找不到预设');
+        const id = `native-${Date.now()}`;
+        list.push({ identifier: id, name: '新子条目', content: '', role: 'system', system_prompt: true });
+        await a.save();
+        break;
+      }
+      /** 预设删除子条目。 */
+      case 'presetRemovePrompt': {
+        const a = useAssetsStore();
+        const ps: any = (a.presets || []).find((x: any) => x._uid === req.presetId);
+        const list = ps?.data?.prompts || ps?.prompts;
+        if (!list) throw new Error('找不到预设');
+        const i = list.findIndex((x: any, j: number) => String(x.identifier || `#${j}`) === req.identifier);
+        if (i >= 0) list.splice(i, 1);
+        await a.save();
+        break;
+      }
+
       default:
         throw new Error(`未知命令：${cmd}`);
     }
@@ -794,12 +899,29 @@ function assetsDetail(): string {
       content: e.content || '',
       constant: !!e.constant,
       enabled: e.enabled !== false && e.disable !== true,
+      // ST 触发字段全集（原生编辑器要能原样展示与回写）
+      selective: e.selective !== false,
+      selectiveLogic: e.selectiveLogic ?? 0,
+      probability: e.probability ?? 100,
+      useProbability: !!e.useProbability,
+      depth: e.depth ?? 4,
+      position: e.position ?? 0,
+      role: e.role === null || e.role === undefined ? -1 : e.role,
+      insertion_order: e.insertion_order ?? 100,
     })),
   }));
   const presets = (a.presets || []).map((p: any) => ({
     id: p._uid || '',
     name: p.name || p.data?.name || '未命名',
     current: p._uid === a.currentPresetId,
+    prompts: (p.data?.prompts || p.prompts || []).map((x: any, i: number) => ({
+      identifier: x.identifier || `#${i}`,
+      name: x.name || x.identifier || `#${i}`,
+      content: x.content || '',
+      role: x.role || '',
+      system: x.system_prompt !== false,
+      idx: i,
+    })),
   }));
   const regexGroups = (a.regexGroups || []).map((g: any) => ({
     id: g._uid || '',

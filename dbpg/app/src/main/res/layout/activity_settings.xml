@@ -3,7 +3,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0F1115"
+    android:background="#F4F6FA"
     android:fillViewport="true">
 
     <LinearLayout
@@ -28,7 +28,7 @@
                 android:layout_height="wrap_content"
                 android:padding="10dp"
                 android:text="返回"
-                android:textColor="#8FA6C8"
+                android:textColor="#5A6B85"
                 android:textSize="14sp" />
 
             <TextView
@@ -37,7 +37,7 @@
                 android:layout_weight="1"
                 android:gravity="center"
                 android:text="外观设置"
-                android:textColor="#E6EAF2"
+                android:textColor="#1A2230"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -54,22 +54,22 @@
             android:id="@+id/set_preview"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
             android:layout_marginTop="6dp"
-            android:background="#232A3A"
+            android:background="#E8EEF8"
             android:padding="14dp"
             android:text="「欢迎光临……外面雨很大吧。」\n这是一段用来预览字号、行距和气泡宽度的示例文字。"
-            android:textColor="#E6EAF2"
+            android:textColor="#1A2230"
             android:lineSpacingMultiplier="1.4" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
+            android:layout_marginStart="12dp"
             android:layout_marginTop="20dp"
             android:text="正文字号"
-            android:textColor="#8FA6C8"
+            android:textColor="#5A6B85"
             android:textSize="13sp" />
 
         <SeekBar
@@ -83,18 +83,18 @@
             android:id="@+id/set_size_value"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
+            android:layout_marginStart="12dp"
             android:text="16.5 sp"
-            android:textColor="#6C7A90"
+            android:textColor="#66707F"
             android:textSize="12sp" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
+            android:layout_marginStart="12dp"
             android:layout_marginTop="16dp"
             android:text="行距"
-            android:textColor="#8FA6C8"
+            android:textColor="#5A6B85"
             android:textSize="13sp" />
 
         <SeekBar
@@ -108,18 +108,18 @@
             android:id="@+id/set_line_value"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
+            android:layout_marginStart="12dp"
             android:text="1.4 倍"
-            android:textColor="#6C7A90"
+            android:textColor="#66707F"
             android:textSize="12sp" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
+            android:layout_marginStart="12dp"
             android:layout_marginTop="16dp"
             android:text="气泡宽度（占屏幕）"
-            android:textColor="#8FA6C8"
+            android:textColor="#5A6B85"
             android:textSize="13sp" />
 
         <SeekBar
@@ -133,9 +133,9 @@
             android:id="@+id/set_width_value"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
+            android:layout_marginStart="12dp"
             android:text="86%"
-            android:textColor="#6C7A90"
+            android:textColor="#66707F"
             android:textSize="12sp" />
 
         <LinearLayout
@@ -157,7 +157,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="隐藏思维链"
-                    android:textColor="#E6EAF2"
+                    android:textColor="#1A2230"
                     android:textSize="15sp" />
 
                 <TextView
@@ -165,7 +165,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
                     android:text="原生聊天气泡里不显示 &lt;thinking&gt; / 正文前的推理段"
-                    android:textColor="#6C7A90"
+                    android:textColor="#66707F"
                     android:textSize="12sp" />
             </LinearLayout>
 
@@ -183,7 +183,7 @@
             android:gravity="center"
             android:padding="14dp"
             android:text="恢复默认"
-            android:textColor="#7FB2FF"
+            android:textColor="#2F66D8"
             android:textSize="14sp" />
 
         <TextView
@@ -191,10 +191,10 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="22dp"
-            android:background="#161A22"
+            android:background="#FFFFFF"
             android:padding="14dp"
             android:text="数据迁移（网页 → 原生）"
-            android:textColor="#8FA6C8"
+            android:textColor="#5A6B85"
             android:textSize="14sp" />
 
         <TextView
@@ -205,7 +205,7 @@
             android:paddingStart="24dp"
             android:paddingEnd="24dp"
             android:text="设置只影响原生界面；预设 / 正则 / 角色卡 / 世界书 / 变量的 ST 兼容层不受影响。"
-            android:textColor="#4E5A6B"
+            android:textColor="#9AA4B2"
             android:textSize="11sp" />
     </LinearLayout>
 </ScrollView>

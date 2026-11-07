@@ -1,5 +1,7 @@
 package com.dbpg.duihuazhushou.settings
 
+import com.dbpg.duihuazhushou.Insets
+
 import android.app.Activity
 import android.os.Bundle
 import android.widget.EditText
@@ -34,6 +36,7 @@ class DisplayActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_display)
+        Insets.applyTop(this)
 
         hide = findViewById(R.id.disp_hide)
         llmRaw = findViewById(R.id.disp_llm_raw)

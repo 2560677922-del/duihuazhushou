@@ -1,5 +1,7 @@
 package com.dbpg.duihuazhushou.data
 
+import com.dbpg.duihuazhushou.Insets
+
 import android.app.Activity
 import android.os.Bundle
 import android.widget.TextView
@@ -21,6 +23,7 @@ class MigrationActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_migration)
+        Insets.applyTop(this)
 
         progress = findViewById(R.id.mig_progress)
         startBtn = findViewById(R.id.mig_start)

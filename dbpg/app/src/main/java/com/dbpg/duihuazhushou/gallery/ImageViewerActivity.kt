@@ -1,5 +1,7 @@
 package com.dbpg.duihuazhushou.gallery
 
+import com.dbpg.duihuazhushou.Insets
+
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
@@ -78,6 +80,7 @@ class ImageViewerActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_image_viewer)
+        Insets.applyTop(this)
 
         val path = intent.getStringExtra(EXTRA_PATH).orEmpty()
         file = File(path)

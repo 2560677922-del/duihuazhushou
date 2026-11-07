@@ -62,6 +62,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_native_chat)
+        Insets.applyAll(this)
         SessionRepo.init(this)
 
         list = findViewById(R.id.chat_list)

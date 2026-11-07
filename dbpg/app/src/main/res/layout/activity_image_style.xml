@@ -3,7 +3,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0F1115"
+    android:background="#F4F6FA"
     android:fillViewport="true">
 
     <LinearLayout
@@ -28,7 +28,7 @@
                 android:layout_height="wrap_content"
                 android:padding="10dp"
                 android:text="返回"
-                android:textColor="#8FA6C8"
+                android:textColor="#5A6B85"
                 android:textSize="14sp" />
 
             <TextView
@@ -38,7 +38,7 @@
                 android:layout_weight="1"
                 android:gravity="center"
                 android:text="生图风格"
-                android:textColor="#E6EAF2"
+                android:textColor="#1A2230"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -48,7 +48,7 @@
                 android:layout_height="wrap_content"
                 android:padding="10dp"
                 android:text="刷新"
-                android:textColor="#7FB2FF"
+                android:textColor="#2F66D8"
                 android:textSize="14sp" />
         </LinearLayout>
 
@@ -58,15 +58,15 @@
             android:layout_marginStart="20dp"
             android:layout_marginTop="8dp"
             android:text="固定画师串（排在提示词最前）"
-            android:textColor="#8FA6C8"
+            android:textColor="#5A6B85"
             android:textSize="12sp" />
 
         <EditText
             android:id="@+id/style_artist"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
             android:layout_marginTop="6dp"
             android:background="@drawable/bg_input"
             android:hint="artist:xxx, yyy"
@@ -74,8 +74,8 @@
             android:inputType="textMultiLine"
             android:minLines="2"
             android:padding="12dp"
-            android:textColor="#E6EAF2"
-            android:textColorHint="#4E5A6B"
+            android:textColor="#1A2230"
+            android:textColorHint="#9AA4B2"
             android:textSize="13sp" />
 
         <TextView
@@ -84,15 +84,15 @@
             android:layout_marginStart="20dp"
             android:layout_marginTop="12dp"
             android:text="质量串"
-            android:textColor="#8FA6C8"
+            android:textColor="#5A6B85"
             android:textSize="12sp" />
 
         <EditText
             android:id="@+id/style_quality"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
             android:layout_marginTop="6dp"
             android:background="@drawable/bg_input"
             android:hint="best quality, masterpiece"
@@ -100,8 +100,8 @@
             android:inputType="textMultiLine"
             android:minLines="2"
             android:padding="12dp"
-            android:textColor="#E6EAF2"
-            android:textColorHint="#4E5A6B"
+            android:textColor="#1A2230"
+            android:textColorHint="#9AA4B2"
             android:textSize="13sp" />
 
         <TextView
@@ -110,15 +110,15 @@
             android:layout_marginStart="20dp"
             android:layout_marginTop="12dp"
             android:text="负面提示词"
-            android:textColor="#8FA6C8"
+            android:textColor="#5A6B85"
             android:textSize="12sp" />
 
         <EditText
             android:id="@+id/style_negative"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
             android:layout_marginTop="6dp"
             android:background="@drawable/bg_input"
             android:hint="lowres, bad anatomy…"
@@ -126,8 +126,8 @@
             android:inputType="textMultiLine"
             android:minLines="2"
             android:padding="12dp"
-            android:textColor="#E6EAF2"
-            android:textColorHint="#4E5A6B"
+            android:textColor="#1A2230"
+            android:textColorHint="#9AA4B2"
             android:textSize="13sp" />
 
         <TextView
@@ -136,29 +136,29 @@
             android:layout_marginStart="20dp"
             android:layout_marginTop="12dp"
             android:text="LLM 转标签模板（{{contextText}} 为正文占位）"
-            android:textColor="#8FA6C8"
+            android:textColor="#5A6B85"
             android:textSize="12sp" />
 
         <EditText
             android:id="@+id/style_template"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
             android:layout_marginTop="6dp"
             android:background="@drawable/bg_input"
             android:importantForAutofill="no"
             android:inputType="textMultiLine"
             android:minLines="2"
             android:padding="12dp"
-            android:textColor="#E6EAF2"
+            android:textColor="#1A2230"
             android:textSize="13sp" />
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
             android:layout_marginTop="12dp"
             android:orientation="horizontal">
 
@@ -173,7 +173,7 @@
                 android:importantForAutofill="no"
                 android:inputType="number"
                 android:padding="12dp"
-                android:textColor="#E6EAF2"
+                android:textColor="#1A2230"
                 android:textSize="13sp" />
 
             <EditText
@@ -187,7 +187,7 @@
                 android:importantForAutofill="no"
                 android:inputType="number"
                 android:padding="12dp"
-                android:textColor="#E6EAF2"
+                android:textColor="#1A2230"
                 android:textSize="13sp" />
         </LinearLayout>
 
@@ -195,14 +195,14 @@
             android:id="@+id/style_save"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
             android:layout_marginTop="16dp"
             android:background="@drawable/bg_btn_accent"
             android:gravity="center"
             android:padding="13dp"
             android:text="保存"
-            android:textColor="#CFE0FF"
+            android:textColor="#2F66D8"
             android:textSize="14sp"
             android:textStyle="bold" />
     </LinearLayout>

@@ -7,7 +7,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0F1115"
+    android:background="#F4F6FA"
     android:fillViewport="true">
 
     <LinearLayout
@@ -32,7 +32,7 @@
                 android:layout_height="wrap_content"
                 android:padding="10dp"
                 android:text="返回"
-                android:textColor="#8FA6C8"
+                android:textColor="#5A6B85"
                 android:textSize="14sp" />
 
             <TextView
@@ -41,7 +41,7 @@
                 android:layout_weight="1"
                 android:gravity="center"
                 android:text="生图接口"
-                android:textColor="#E6EAF2"
+                android:textColor="#1A2230"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -51,7 +51,7 @@
                 android:layout_height="wrap_content"
                 android:padding="10dp"
                 android:text="刷新"
-                android:textColor="#7FB2FF"
+                android:textColor="#2F66D8"
                 android:textSize="14sp" />
         </LinearLayout>
 
@@ -62,24 +62,25 @@
             android:layout_marginTop="8dp"
             android:paddingBottom="6dp"
             android:text="连接"
-            android:textColor="#5E6E85"
+            android:textColor="#8A94A6"
             android:textSize="12sp"
             android:textStyle="bold" />
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
             android:background="@drawable/bg_card"
             android:orientation="vertical"
-            android:padding="14dp">
+            android:padding="14dp"
+            android:elevation="1dp">
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="请求地址（Base URL，中转 / OpenAI 兼容）"
-                android:textColor="#8FA6C8"
+                android:textColor="#5A6B85"
                 android:textSize="12sp" />
 
             <EditText
@@ -92,8 +93,8 @@
                 android:importantForAutofill="no"
                 android:inputType="textUri"
                 android:padding="12dp"
-                android:textColor="#E6EAF2"
-                android:textColorHint="#4E5A6B"
+                android:textColor="#1A2230"
+                android:textColorHint="#9AA4B2"
                 android:textSize="14sp" />
 
             <TextView
@@ -101,7 +102,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="14dp"
                 android:text="API 密钥 / NovelAI Token"
-                android:textColor="#8FA6C8"
+                android:textColor="#5A6B85"
                 android:textSize="12sp" />
 
             <EditText
@@ -114,8 +115,8 @@
                 android:importantForAutofill="no"
                 android:inputType="textVisiblePassword"
                 android:padding="12dp"
-                android:textColor="#E6EAF2"
-                android:textColorHint="#4E5A6B"
+                android:textColor="#1A2230"
+                android:textColorHint="#9AA4B2"
                 android:textSize="14sp" />
 
             <TextView
@@ -127,7 +128,7 @@
                 android:gravity="center"
                 android:padding="13dp"
                 android:text="拉取模型列表"
-                android:textColor="#CFE0FF"
+                android:textColor="#2F66D8"
                 android:textSize="14sp"
                 android:textStyle="bold" />
 
@@ -137,7 +138,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text=""
-                android:textColor="#6C7A90"
+                android:textColor="#66707F"
                 android:textSize="12sp" />
         </LinearLayout>
 
@@ -148,7 +149,7 @@
             android:layout_marginTop="18dp"
             android:paddingBottom="6dp"
             android:text="已保存的接口"
-            android:textColor="#5E6E85"
+            android:textColor="#8A94A6"
             android:textSize="12sp"
             android:textStyle="bold" />
 
@@ -156,8 +157,8 @@
             android:id="@+id/imgconf_apis_box"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
             android:orientation="vertical" />
 
         <TextView
@@ -168,7 +169,7 @@
             android:paddingStart="24dp"
             android:paddingEnd="24dp"
             android:text="点「使用」切换当前接口，长按删除。\n多选拉取的模型会各建一条记录（同地址密钥）。"
-            android:textColor="#4E5A6B"
+            android:textColor="#9AA4B2"
             android:textSize="11sp" />
     </LinearLayout>
 </ScrollView>

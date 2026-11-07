@@ -2,7 +2,7 @@
 <!-- 消息气泡圆角背景。颜色在代码里按角色设置（user=蓝、assistant=灰），这里只给形状与内边距。 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="#232A3A" />
+    <solid android:color="#E8EEF8" />
     <corners android:radius="14dp" />
     <padding
         android:left="0dp"

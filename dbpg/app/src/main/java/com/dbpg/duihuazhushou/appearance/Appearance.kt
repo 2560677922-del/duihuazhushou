@@ -14,7 +14,7 @@ data class AppearanceConfig(
     /** 行距倍数 */
     val lineSpacing: Float = 1.4f,
     /** 气泡最大宽度，占屏宽的百分比（60~92） */
-    val bubbleWidthPercent: Int = 86,
+    val bubbleWidthPercent: Int = 90,
     /** 原生侧也隐藏思维链（网页快照里也有这个开关，这里优先） */
     val hideReasoning: Boolean = true,
 )
@@ -32,7 +32,7 @@ object Appearance {
         return AppearanceConfig(
             textSizeSp = p.getFloat(K_TEXT_SIZE, 16.5f).coerceIn(12f, 24f),
             lineSpacing = p.getFloat(K_LINE, 1.4f).coerceIn(1.0f, 2.0f),
-            bubbleWidthPercent = p.getInt(K_WIDTH, 86).coerceIn(60, 94),
+            bubbleWidthPercent = p.getInt(K_WIDTH, 90).coerceIn(60, 94),
             hideReasoning = p.getBoolean(K_HIDE_REASONING, true),
         )
     }

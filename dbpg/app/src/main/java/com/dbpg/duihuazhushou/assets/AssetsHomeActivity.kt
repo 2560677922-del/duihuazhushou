@@ -1,5 +1,7 @@
 package com.dbpg.duihuazhushou.assets
 
+import com.dbpg.duihuazhushou.Insets
+
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
@@ -9,7 +11,10 @@ import android.os.Bundle
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import com.dbpg.duihuazhushou.NativeBridge
@@ -44,6 +49,7 @@ class AssetsHomeActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_assets_home)
+        Insets.applyTop(this)
 
         bindTabs()
         findViewById<TextView>(R.id.assets_import).setOnClickListener { pickImportFile() }
@@ -79,8 +85,8 @@ class AssetsHomeActivity : Activity() {
     }
 
     private fun paintTabs() {
-        val active = 0xFF7FB2FF.toInt()
-        val idle = 0xFF8FA6C8.toInt()
+        val active = 0xFF2F66D8.toInt()
+        val idle = 0xFF5A6B85.toInt()
         val map = mapOf(
             R.id.tab_character to TAB_CHARACTER,
             R.id.tab_preset to TAB_PRESET,
@@ -125,14 +131,10 @@ class AssetsHomeActivity : Activity() {
             }
             TAB_PRESET -> {
                 val arr = a.optJSONArray("presets") ?: JSONArray()
-                status.text = "共 ${arr.length()} 个预设，点一下启用（再点当前 = 保持）"
+                status.text = "共 ${arr.length()} 个预设，点名称启用；展开可编辑子条目"
                 for (i in 0 until arr.length()) {
                     val p = arr.getJSONObject(i)
-                    box.addView(assetRow(p, titleOf = { it.optString("name").ifBlank { "未命名" } },
-                        currentOf = { it.optBoolean("current") },
-                        currentLabel = "使用中", actionLabel = "启用",
-                        onUse = { commandSetAssets(JSONObject().put("presetId", p.optString("id"))) },
-                        onExport = { exportAsset(p.optString("id")) }))
+                    renderPreset(box, a, p)
                 }
                 if (arr.length() == 0) box.addView(emptyCard("还没有预设", "点右上角「导入」选 ST 的预设 .json"))
             }
@@ -165,6 +167,320 @@ class AssetsHomeActivity : Activity() {
         }
     }
 
+    // ------------------------------------------------------------ 预设（子条目展开/编辑/新建/删除）
+
+    private fun renderPreset(box: LinearLayout, a: JSONObject, p: JSONObject) {
+        val id = p.optString("id")
+        val name = p.optString("name").ifBlank { "未命名" }
+        val current = p.optBoolean("current")
+        val prompts = p.optJSONArray("prompts") ?: JSONArray()
+        val open = openBooks.contains("preset:$id")
+
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = getDrawable(R.drawable.bg_card)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(8)
+            setOnClickListener {
+                if (open) openBooks.remove("preset:$id") else openBooks.add("preset:$id")
+                lastAssets?.let { render(it) }
+            }
+            setOnLongClickListener { exportAsset(id); true }
+        }
+        head.addView(TextView(this).apply {
+            text = (if (current) "✓ " else "") + name
+            setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF1A2230.toInt())
+            textSize = 14f
+            if (current) setTypeface(typeface, Typeface.BOLD)
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(TextView(this).apply {
+            text = "${prompts.length()} 条"
+            setTextColor(0xFF66707F.toInt())
+            textSize = 11f
+        })
+        head.addView(TextView(this).apply {
+            text = if (open) "▾" else "▸"
+            setTextColor(0xFF8A94A6.toInt())
+            textSize = 14f
+            setPadding(dp(8), 0, 0, 0)
+        })
+        box.addView(head)
+
+        val toggle = TextView(this).apply {
+            text = if (current) "停用这个预设" else "启用这个预设"
+            setTextColor(0xFF5A6B85.toInt())
+            textSize = 12f
+            gravity = Gravity.CENTER
+            background = getDrawable(R.drawable.bg_btn_soft)
+            setPadding(0, dp(9), 0, dp(9))
+            (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(6)
+            setOnClickListener {
+                commandSetAssets(
+                    JSONObject()
+                        .put("presetId", if (current) "" else id),
+                )
+            }
+        }
+        box.addView(toggle)
+
+        if (!open) return
+
+        // 新建子条目
+        box.addView(actionRow("＋ 新建子条目") {
+            EngineBridge.command(
+                JSONObject().put("cmd", "presetAddPrompt").put("presetId", id),
+            )
+            toast("已新建，展开后可编辑")
+        })
+
+        for (j in 0 until prompts.length()) {
+            val it0 = prompts.getJSONObject(j)
+            val identifier = it0.optString("identifier")
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = getDrawable(R.drawable.bg_btn_soft)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(6)
+                setOnClickListener {
+                    editDialog(
+                        title = "编辑子条目",
+                        fields = listOf("名称" to (it0.optString("name")), "内容" to (it0.optString("content"))),
+                    ) { values ->
+                        EngineBridge.command(
+                            JSONObject()
+                                .put("cmd", "presetSavePrompt")
+                                .put("presetId", id)
+                                .put("identifier", identifier)
+                                .put("prompt", JSONObject().put("name", values[0]).put("content", values[1])),
+                        )
+                    }
+                }
+                setOnLongClickListener {
+                    AlertDialog.Builder(this@AssetsHomeActivity)
+                        .setTitle("删除子条目")
+                        .setMessage(it0.optString("name").ifBlank { identifier })
+                        .setPositiveButton("删除") { _, _ ->
+                            EngineBridge.command(
+                                JSONObject()
+                                    .put("cmd", "presetRemovePrompt")
+                                    .put("presetId", id)
+                                    .put("identifier", identifier),
+                            )
+                        }
+                        .setNegativeButton("取消", null)
+                        .show()
+                    true
+                }
+            }
+            row.addView(TextView(this).apply {
+                text = it0.optString("name").ifBlank { identifier }
+                setTextColor(0xFF1A2230.toInt())
+                textSize = 13f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+            })
+            row.addView(TextView(this).apply {
+                text = it0.optString("content").ifBlank { "（空内容，点开编辑）" }
+                setTextColor(0xFF66707F.toInt())
+                textSize = 11f
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(0, dp(2), 0, 0)
+            })
+            box.addView(row)
+        }
+    }
+
+    private fun actionRow(label: String, onClick: () -> Unit): View =
+        TextView(this).apply {
+            text = label
+            setTextColor(0xFF2F66D8.toInt())
+            textSize = 13f
+            gravity = Gravity.CENTER
+            background = getDrawable(R.drawable.bg_btn_soft)
+            setPadding(0, dp(10), 0, dp(10))
+            (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(6)
+            setOnClickListener { onClick() }
+        }
+
+    /**
+     * 通用编辑对话框：labels/values 成对出现，最后一个当大输入框。
+     * 确认后回调 values（与 labels 同序），命令由调用方发。
+     */
+    private fun editDialog(
+        title: String,
+        fields: List<Pair<String, String>>,
+        onConfirm: (List<String>) -> Unit,
+    ) {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        val inputs = fields.map { (label, value) ->
+            box.addView(TextView(this).apply {
+                text = label
+                setTextColor(0xFF5A6B85.toInt())
+                textSize = 12f
+                setPadding(0, dp(10), 0, dp(2))
+            })
+            EditText(this).apply {
+                setText(value)
+                setTextSize(13f)
+                setTextColor(0xFF1A2230.toInt())
+                background = getDrawable(R.drawable.bg_input)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                if (label == "内容") minLines = 6
+                box.addView(this)
+            }
+        }
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(box)
+            .setPositiveButton("保存") { _, _ -> onConfirm(inputs.map { it.text?.toString() ?: "" }) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * 世界书条目完整编辑器：ST 的触发字段全集。
+     *
+     * 覆盖：标题/备注、主关键词、次要关键词、内容、常驻（蓝灯）、
+     * 选择性触发 + 触发逻辑、启用、概率 + 启用概率、深度、插入位置、角色。
+     * 这些字段引擎（assembler）已经在用，这里补齐的是"能改"。
+     */
+    private fun editEntryDialog(bookId: String, e: JSONObject) {
+        fun keysOf(arr: JSONArray?): String =
+            (0 until (arr?.length() ?: 0)).joinToString(",") { arr!!.optString(it) }
+
+        val ctx = this
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(6), dp(18), dp(6))
+        }
+        fun label(t: String) {
+            box.addView(TextView(ctx).apply {
+                text = t
+                setTextColor(0xFF5A6B85.toInt())
+                textSize = 12f
+                setPadding(0, dp(10), 0, dp(2))
+            })
+        }
+        fun input(value: String, multiline: Boolean = false, numeric: Boolean = false): EditText =
+            EditText(ctx).apply {
+                setText(value)
+                setTextSize(13f)
+                setTextColor(0xFF1A2230.toInt())
+                background = getDrawable(R.drawable.bg_input)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                if (multiline) minLines = 5
+                inputType = if (numeric) android.text.InputType.TYPE_CLASS_NUMBER
+                else if (multiline) android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                else android.text.InputType.TYPE_CLASS_TEXT
+            }.also { box.addView(it) }
+
+        label("标题 / 备注")
+        val comment = input(e.optString("comment"))
+        label("主关键词（逗号分隔，命中即触发）")
+        val keys = input(keysOf(e.optJSONArray("keys")))
+        label("次要关键词（选择性触发时与主关键词配合）")
+        val secondary = input(keysOf(e.optJSONArray("secondary")))
+        label("内容")
+        val content = input(e.optString("content"), multiline = true)
+
+        fun switchRow(text: String, checked: Boolean): Switch {
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(6), 0, dp(6))
+            }
+            row.addView(TextView(ctx).apply {
+                setText(text)
+                setTextColor(0xFF1A2230.toInt())
+                textSize = 13f
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            val sw = Switch(ctx).apply { isChecked = checked }
+            row.addView(sw)
+            box.addView(row)
+            return sw
+        }
+
+        label("触发方式")
+        val constant = switchRow("常驻（蓝灯：不靠关键词，一直注入）", e.optBoolean("constant"))
+        val enabled = switchRow("启用此条目", e.optBoolean("enabled", true))
+
+        label("选择性触发逻辑（仅次要关键词生效时）")
+        val logicNames = arrayOf("与任意一个（AND ANY）", "非所有（NOT ALL）", "非任何（NOT ANY）", "与所有（AND ALL）")
+        val logic = android.widget.Spinner(ctx).apply {
+            adapter = android.widget.ArrayAdapter(
+                ctx, android.R.layout.simple_spinner_dropdown_item, logicNames,
+            )
+            setSelection((e.optInt("selectiveLogic", 0)).coerceIn(0, 3))
+        }
+        box.addView(logic)
+
+        label("插入位置")
+        val posNames = arrayOf(
+            "角色定义之前", "角色定义之后", "示例消息之前", "示例消息之后",
+            "聊天记录顶部", "聊天记录底部", "@D 按深度插入",
+        )
+        val position = android.widget.Spinner(ctx).apply {
+            adapter = android.widget.ArrayAdapter(
+                ctx, android.R.layout.simple_spinner_dropdown_item, posNames,
+            )
+            setSelection((e.optInt("position", 0)).coerceIn(0, 6))
+        }
+        box.addView(position)
+
+        label("插入深度（position=@D 时生效，0=最后一条）")
+        val depth = input(e.optInt("depth", 4).toString(), numeric = true)
+
+        label("角色（该条以谁的身份插入）")
+        val roleNames = arrayOf("默认（系统）", "系统", "用户", "AI")
+        val role = android.widget.Spinner(ctx).apply {
+            adapter = android.widget.ArrayAdapter(
+                ctx, android.R.layout.simple_spinner_dropdown_item, roleNames,
+            )
+            setSelection((e.optInt("role", -1) + 1).coerceIn(0, 3))
+        }
+        box.addView(role)
+
+        label("触发概率（%）")
+        val probability = input(e.optInt("probability", 100).toString(), numeric = true)
+        val useProbability = switchRow("启用概率（按概率决定是否触发）", e.optBoolean("useProbability"))
+
+        val scroll = android.widget.ScrollView(ctx).apply { addView(box) }
+
+        AlertDialog.Builder(ctx)
+            .setTitle("编辑条目")
+            .setView(scroll)
+            .setPositiveButton("保存") { _, _ ->
+                val entry = JSONObject()
+                    .put("comment", comment.text?.toString() ?: "")
+                    .put("keys", keys.text?.toString() ?: "")
+                    .put("secondary", secondary.text?.toString() ?: "")
+                    .put("content", content.text?.toString() ?: "")
+                    .put("constant", constant.isChecked)
+                    .put("enabled", enabled.isChecked)
+                    .put("selectiveLogic", logic.selectedItemPosition)
+                    .put("position", position.selectedItemPosition)
+                    .put("depth", depth.text?.toString()?.toIntOrNull() ?: 4)
+                    .put("role", role.selectedItemPosition - 1)
+                    .put("probability", probability.text?.toString()?.toIntOrNull() ?: 100)
+                    .put("useProbability", useProbability.isChecked)
+                EngineBridge.command(
+                    JSONObject()
+                        .put("cmd", "wbSaveEntry")
+                        .put("bookId", bookId)
+                        .put("uid", e.optInt("uid"))
+                        .put("entry", entry),
+                )
+                toast("已保存")
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
     // ------------------------------------------------------------ 世界书
 
     private fun renderWorldBooks(a: JSONObject, box: LinearLayout, status: TextView) {
@@ -191,18 +507,18 @@ class AssetsHomeActivity : Activity() {
             }
             head.addView(TextView(this).apply {
                 text = (if (current) "✓ " else "") + name
-                setTextColor(if (current) 0xFF7FB2FF.toInt() else 0xFFE6EAF2.toInt())
+                setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF1A2230.toInt())
                 textSize = 14f
                 if (current) setTypeface(typeface, Typeface.BOLD)
             }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             head.addView(TextView(this).apply {
                 text = "${entries.length()} 条"
-                setTextColor(0xFF6C7A90.toInt())
+                setTextColor(0xFF66707F.toInt())
                 textSize = 11f
             })
             head.addView(TextView(this).apply {
                 text = if (open) "▾" else "▸"
-                setTextColor(0xFF5E6E85.toInt())
+                setTextColor(0xFF8A94A6.toInt())
                 textSize = 14f
                 setPadding(dp(8), 0, 0, 0)
             })
@@ -210,7 +526,7 @@ class AssetsHomeActivity : Activity() {
 
             val toggle = TextView(this).apply {
                 text = if (current) "停用这本书" else "启用这本书"
-                setTextColor(0xFF8FA6C8.toInt())
+                setTextColor(0xFF5A6B85.toInt())
                 textSize = 12f
                 gravity = Gravity.CENTER
                 background = getDrawable(R.drawable.bg_btn_soft)
@@ -229,8 +545,24 @@ class AssetsHomeActivity : Activity() {
             }
             box.addView(toggle)
 
-            if (!open) continue
-            for (j in 0 until entries.length()) {
+        if (!open) continue
+
+        // 新建条目
+        box.addView(
+            actionRow("＋ 新建条目") {
+                EngineBridge.command(
+                    JSONObject().put("cmd", "wbAddEntry").put("bookId", id),
+                )
+                openEntries.add("$id:${Int.MAX_VALUE}") // 无意义占位，刷新后看得到新条目
+                lastAssets?.let { render(it) }
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(6) },
+        )
+
+        for (j in 0 until entries.length()) {
                 val e = entries.getJSONObject(j)
                 val ekey = "$id:${e.optInt("uid")}"
                 val entryOpen = openEntries.contains(ekey)
@@ -254,14 +586,14 @@ class AssetsHomeActivity : Activity() {
                         val keys = e.optJSONArray("keys") ?: JSONArray()
                         (0 until keys.length()).joinToString("、") { keys.optString(it) }.ifBlank { "(无标题条目)" }
                     }
-                    setTextColor(0xFFE6EAF2.toInt())
+                    setTextColor(0xFF1A2230.toInt())
                     textSize = 13f
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
                 }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
                 line.addView(TextView(this).apply {
                     text = if (entryOpen) "▾" else "▸"
-                    setTextColor(0xFF5E6E85.toInt())
+                    setTextColor(0xFF8A94A6.toInt())
                     textSize = 13f
                 })
                 row.addView(line)
@@ -279,7 +611,7 @@ class AssetsHomeActivity : Activity() {
                                 append("）")
                             }
                         }
-                        setTextColor(0xFF6C7A90.toInt())
+                        setTextColor(0xFF66707F.toInt())
                         textSize = 11f
                         maxLines = 2
                         ellipsize = TextUtils.TruncateAt.END
@@ -289,11 +621,51 @@ class AssetsHomeActivity : Activity() {
                 if (entryOpen) {
                     row.addView(TextView(this).apply {
                         text = e.optString("content").ifBlank { "（空条目）" }
-                        setTextColor(0xFFB9C4D6.toInt())
+                        setTextColor(0xFF3A4353.toInt())
                         textSize = 12.5f
                         setLineSpacing(0f, 1.25f)
                         setPadding(0, dp(8), 0, 0)
                     })
+                    // 编辑 / 删除：展开态下的操作行
+                    val ops = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(8)
+                    }
+                    ops.addView(TextView(this).apply {
+                        text = "✏️ 编辑"
+                        setTextColor(0xFF2F66D8.toInt())
+                        textSize = 12f
+                        background = getDrawable(R.drawable.bg_btn_soft)
+                        gravity = Gravity.CENTER
+                        setPadding(0, dp(8), 0, dp(8))
+                    }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 6 })
+                    ops.addView(TextView(this).apply {
+                        text = "🗑️ 删除"
+                        setTextColor(0xFFC24141.toInt())
+                        textSize = 12f
+                        background = getDrawable(R.drawable.bg_btn_soft)
+                        gravity = Gravity.CENTER
+                        setPadding(0, dp(8), 0, dp(8))
+                    }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                    ops.getChildAt(0).setOnClickListener {
+                        editEntryDialog(id, e)
+                    }
+                    ops.getChildAt(1).setOnClickListener {
+                        AlertDialog.Builder(this@AssetsHomeActivity)
+                            .setTitle("删除条目")
+                            .setMessage(e.optString("comment").ifBlank { "uid ${e.optInt("uid")}" })
+                            .setPositiveButton("删除") { _, _ ->
+                                EngineBridge.command(
+                                    JSONObject()
+                                        .put("cmd", "wbRemoveEntry")
+                                        .put("bookId", id)
+                                        .put("uid", e.optInt("uid")),
+                                )
+                            }
+                            .setNegativeButton("取消", null)
+                            .show()
+                    }
+                    row.addView(ops)
                 }
                 row.setOnClickListener {
                     if (entryOpen) openEntries.remove(ekey) else openEntries.add(ekey)
@@ -330,7 +702,7 @@ class AssetsHomeActivity : Activity() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(TextView(this).apply {
             text = (if (current) "✓ " else "") + titleOf(data)
-            setTextColor(if (current) 0xFF7FB2FF.toInt() else 0xFFE6EAF2.toInt())
+            setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF1A2230.toInt())
             textSize = 14f
             if (current) setTypeface(typeface, Typeface.BOLD)
         })
@@ -338,7 +710,7 @@ class AssetsHomeActivity : Activity() {
         if (sub.isNotBlank() && sub != titleOf(data)) {
             col.addView(TextView(this).apply {
                 text = sub
-                setTextColor(0xFF6C7A90.toInt())
+                setTextColor(0xFF66707F.toInt())
                 textSize = 11f
                 setPadding(0, dp(2), 0, 0)
             })
@@ -346,7 +718,7 @@ class AssetsHomeActivity : Activity() {
         card.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         card.addView(TextView(this).apply {
             text = if (current) currentLabel else actionLabel
-            setTextColor(if (current) 0xFF7FB2FF.toInt() else 0xFF6C7A90.toInt())
+            setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF66707F.toInt())
             textSize = 12f
         })
         return card
@@ -361,12 +733,12 @@ class AssetsHomeActivity : Activity() {
         }
         card.addView(TextView(this).apply {
             text = title
-            setTextColor(0xFFE6EAF2.toInt())
+            setTextColor(0xFF1A2230.toInt())
             textSize = 15f
         })
         card.addView(TextView(this).apply {
             text = sub
-            setTextColor(0xFF6C7A90.toInt())
+            setTextColor(0xFF66707F.toInt())
             textSize = 12f
             setPadding(0, dp(4), 0, 0)
         })
@@ -381,13 +753,13 @@ class AssetsHomeActivity : Activity() {
         }
         card.addView(TextView(this).apply {
             text = title
-            setTextColor(0xFF8FA6C8.toInt())
+            setTextColor(0xFF5A6B85.toInt())
             textSize = 14f
             gravity = Gravity.CENTER
         })
         card.addView(TextView(this).apply {
             text = sub
-            setTextColor(0xFF4E5A6B.toInt())
+            setTextColor(0xFF9AA4B2.toInt())
             textSize = 12f
             gravity = Gravity.CENTER
             setPadding(0, dp(6), 0, 0)

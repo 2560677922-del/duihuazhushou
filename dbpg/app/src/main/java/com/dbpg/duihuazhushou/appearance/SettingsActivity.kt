@@ -1,5 +1,7 @@
 package com.dbpg.duihuazhushou.appearance
 
+import com.dbpg.duihuazhushou.Insets
+
 import android.app.Activity
 import android.os.Bundle
 import android.widget.SeekBar
@@ -28,6 +30,7 @@ class SettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
+        Insets.applyTop(this)
         cfg = Appearance.load(this)
 
         preview = findViewById(R.id.set_preview)

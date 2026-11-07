@@ -1,5 +1,7 @@
 package com.dbpg.duihuazhushou.settings
 
+import com.dbpg.duihuazhushou.Insets
+
 import android.app.Activity
 import android.os.Bundle
 import android.widget.EditText
@@ -36,6 +38,7 @@ class ImageStyleActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_image_style)
+        Insets.applyTop(this)
 
         artist = findViewById(R.id.style_artist)
         quality = findViewById(R.id.style_quality)

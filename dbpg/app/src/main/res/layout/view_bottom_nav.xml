@@ -13,13 +13,13 @@
     android:layout_width="match_parent"
     android:layout_height="60dp"
     android:orientation="horizontal"
-    android:background="#12151C">
+    android:background="@drawable/bg_nav">
 
     <TextView
         android:id="@+id/nav_adventure"
         style="@style/BottomNavItem"
         android:text="🏕️\n冒险"
-        android:textColor="#7FB2FF" />
+        android:textColor="#2F66D8" />
 
     <TextView
         android:id="@+id/nav_assets"

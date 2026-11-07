@@ -25,8 +25,8 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="原生生图（试验）"
-            android:textColor="#E6ECF7"
+            android:text="生图"
+            android:textColor="#1A2230"
             android:textSize="17sp"
             android:textStyle="bold" />
 
@@ -36,7 +36,7 @@
             android:layout_height="wrap_content"
             android:padding="8dp"
             android:text="配置"
-            android:textColor="#7FB2FF"
+            android:textColor="#2F66D8"
             android:textSize="14sp" />
 
         <TextView
@@ -45,7 +45,7 @@
             android:layout_height="wrap_content"
             android:padding="8dp"
             android:text="图片库"
-            android:textColor="#7FB2FF"
+            android:textColor="#2F66D8"
             android:textSize="14sp" />
 
         <TextView
@@ -54,7 +54,7 @@
             android:layout_height="wrap_content"
             android:padding="8dp"
             android:text="关闭"
-            android:textColor="#8FA6C8"
+            android:textColor="#5A6B85"
             android:textSize="14sp" />
     </LinearLayout>
 
@@ -75,41 +75,49 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="中转站地址，如 https://api.xxx.com/v1/images/generations"
-                android:textColorHint="#5C6678"
-                android:textColor="#E6ECF7"
+                android:textColorHint="#9AA4B2"
+                android:textColor="#1A2230"
                 android:textSize="14sp"
                 android:inputType="textUri"
-                android:maxLines="2" />
+                android:maxLines="2"
+                android:background="@drawable/bg_input"
+                android:padding="12dp" />
 
             <EditText
                 android:id="@+id/gen_key"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="API Key（可留空）"
-                android:textColorHint="#5C6678"
-                android:textColor="#E6ECF7"
+                android:textColorHint="#9AA4B2"
+                android:textColor="#1A2230"
                 android:textSize="14sp"
-                android:inputType="text" />
+                android:inputType="text"
+                android:background="@drawable/bg_input"
+                android:padding="12dp" />
 
             <EditText
                 android:id="@+id/gen_model"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="模型，如 flux / dall-e-3"
-                android:textColorHint="#5C6678"
-                android:textColor="#E6ECF7"
+                android:textColorHint="#9AA4B2"
+                android:textColor="#1A2230"
                 android:textSize="14sp"
-                android:inputType="text" />
+                android:inputType="text"
+                android:background="@drawable/bg_input"
+                android:padding="12dp" />
 
             <EditText
                 android:id="@+id/gen_size"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="尺寸，如 1024x1024"
-                android:textColorHint="#5C6678"
-                android:textColor="#E6ECF7"
+                android:textColorHint="#9AA4B2"
+                android:textColor="#1A2230"
                 android:textSize="14sp"
-                android:inputType="text" />
+                android:inputType="text"
+                android:background="@drawable/bg_input"
+                android:padding="12dp" />
 
             <EditText
                 android:id="@+id/gen_prompt"
@@ -118,10 +126,12 @@
                 android:minLines="3"
                 android:gravity="top|start"
                 android:hint="标签 / 提示词"
-                android:textColorHint="#5C6678"
-                android:textColor="#E6ECF7"
+                android:textColorHint="#9AA4B2"
+                android:textColor="#1A2230"
                 android:textSize="14sp"
-                android:inputType="textMultiLine|textCapSentences" />
+                android:inputType="textMultiLine|textCapSentences"
+                android:background="@drawable/bg_input"
+                android:padding="12dp" />
 
             <!-- 快捷标签：搜标签库，点一下追加到提示词（对齐网页 Tags 页） -->
             <EditText
@@ -130,11 +140,13 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:hint="搜索标签（点结果追加到提示词）"
-                android:textColorHint="#5C6678"
-                android:textColor="#E6ECF7"
+                android:textColorHint="#9AA4B2"
+                android:textColor="#1A2230"
                 android:textSize="13sp"
                 android:inputType="text"
-                android:importantForAutofill="no" />
+                android:importantForAutofill="no"
+                android:background="@drawable/bg_input"
+                android:padding="12dp" />
 
             <TextView
                 android:id="@+id/gen_tag_status"
@@ -142,7 +154,7 @@
                 android:layout_height="wrap_content"
                 android:paddingTop="2dp"
                 android:text=""
-                android:textColor="#5C6678"
+                android:textColor="#9AA4B2"
                 android:textSize="11sp" />
 
             <LinearLayout
@@ -169,7 +181,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:textColor="#8FA6C8"
+                android:textColor="#5A6B85"
                 android:textSize="13sp" />
 
             <!-- 结果：本地路径解码出来的缩略图 -->

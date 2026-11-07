@@ -28,7 +28,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="原生聊天"
-            android:textColor="#E6ECF7"
+            android:textColor="#1A2230"
             android:textSize="17sp"
             android:textStyle="bold" />
 
@@ -38,7 +38,7 @@
             android:layout_height="wrap_content"
             android:padding="8dp"
             android:text="引擎"
-            android:textColor="#8FA6C8"
+            android:textColor="#5A6B85"
             android:textSize="14sp" />
 
         <TextView
@@ -47,7 +47,7 @@
             android:layout_height="wrap_content"
             android:padding="8dp"
             android:text="生图"
-            android:textColor="#8FA6C8"
+            android:textColor="#5A6B85"
             android:textSize="14sp" />
 
         <TextView
@@ -56,7 +56,7 @@
             android:layout_height="wrap_content"
             android:padding="8dp"
             android:text="导入记录"
-            android:textColor="#8FA6C8"
+            android:textColor="#5A6B85"
             android:textSize="14sp" />
 
         <TextView
@@ -65,7 +65,7 @@
             android:layout_height="wrap_content"
             android:padding="8dp"
             android:text="返回"
-            android:textColor="#8FA6C8"
+            android:textColor="#5A6B85"
             android:textSize="14sp" />
     </LinearLayout>
 
@@ -97,10 +97,10 @@
             android:layout_weight="1"
             android:minHeight="44dp"
             android:background="@android:color/transparent"
-            android:textColor="#E6ECF7"
+            android:textColor="#1A2230"
             android:textSize="15sp"
             android:hint="说点什么…"
-            android:textColorHint="#5C6678"
+            android:textColorHint="#9AA4B2"
             android:inputType="textMultiLine|textCapSentences"
             android:maxLines="5" />
 

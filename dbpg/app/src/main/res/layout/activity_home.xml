@@ -12,7 +12,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#0F1115">
+    android:background="#F4F6FA">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -29,7 +29,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="冒险"
-            android:textColor="#E6EAF2"
+            android:textColor="#1A2230"
             android:textSize="19sp"
             android:textStyle="bold" />
 
@@ -39,7 +39,7 @@
             android:layout_height="wrap_content"
             android:padding="8dp"
             android:text="导入"
-            android:textColor="#7FB2FF"
+            android:textColor="#2F66D8"
             android:textSize="14sp" />
 
         <TextView
@@ -48,7 +48,7 @@
             android:layout_height="wrap_content"
             android:padding="8dp"
             android:text="新建"
-            android:textColor="#7FB2FF"
+            android:textColor="#2F66D8"
             android:textSize="14sp" />
     </LinearLayout>
 
@@ -76,7 +76,7 @@
             android:lineSpacingExtra="6dp"
             android:padding="32dp"
             android:text="还没有会话\n\n点右上角「新建」开一段新的，\n或「导入」把网页里已有的会话搬过来"
-            android:textColor="#6C7A90"
+            android:textColor="#66707F"
             android:textSize="14sp"
             android:visibility="gone" />
     </FrameLayout>

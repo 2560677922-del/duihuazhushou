@@ -24,7 +24,7 @@
         android:paddingTop="8dp"
         android:paddingBottom="8dp"
         android:text="关闭"
-        android:textColor="#E6EAF2"
+        android:textColor="#1A2230"
         android:textSize="14sp" />
 
     <LinearLayout
@@ -44,7 +44,7 @@
             android:gravity="center"
             android:padding="10dp"
             android:text="保存到相册"
-            android:textColor="#7FB2FF"
+            android:textColor="#2F66D8"
             android:textSize="14sp" />
 
         <TextView

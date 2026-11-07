@@ -23,7 +23,7 @@
             android:layout_height="wrap_content"
             android:ellipsize="end"
             android:maxLines="1"
-            android:textColor="#E6EAF2"
+            android:textColor="#1A2230"
             android:textSize="15sp" />
 
         <TextView
@@ -33,7 +33,7 @@
             android:layout_marginTop="3dp"
             android:ellipsize="end"
             android:maxLines="1"
-            android:textColor="#6C7A90"
+            android:textColor="#66707F"
             android:textSize="12sp" />
     </LinearLayout>
 
@@ -48,7 +48,7 @@
         android:paddingTop="3dp"
         android:paddingBottom="3dp"
         android:text="当前"
-        android:textColor="#7FB2FF"
+        android:textColor="#2F66D8"
         android:textSize="11sp"
         android:visibility="gone" />
 </LinearLayout>

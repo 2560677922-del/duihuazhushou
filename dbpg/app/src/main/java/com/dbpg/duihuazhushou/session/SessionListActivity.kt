@@ -1,5 +1,7 @@
 package com.dbpg.duihuazhushou.session
 
+import com.dbpg.duihuazhushou.Insets
+
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
@@ -28,6 +30,7 @@ class SessionListActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_session_list)
+        Insets.applyTop(this)
         SessionRepo.init(this)
 
         emptyView = findViewById(R.id.session_empty)

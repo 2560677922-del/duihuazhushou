@@ -1,5 +1,7 @@
 package com.dbpg.duihuazhushou.engine
 
+import com.dbpg.duihuazhushou.Insets
+
 import android.app.Activity
 import android.os.Bundle
 import android.view.ViewGroup
@@ -36,6 +38,7 @@ class EngineSettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_engine_settings)
+        Insets.applyTop(this)
 
         presetsBox = findViewById(R.id.engine_presets)
         charactersBox = findViewById(R.id.engine_characters)

@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#0F1115">
+    android:background="#F4F6FA">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -22,7 +22,7 @@
             android:layout_height="wrap_content"
             android:padding="10dp"
             android:text="返回"
-            android:textColor="#8FA6C8"
+            android:textColor="#5A6B85"
             android:textSize="14sp" />
 
         <TextView
@@ -31,7 +31,7 @@
             android:layout_weight="1"
             android:gravity="center"
             android:text="引擎设置"
-            android:textColor="#E6EAF2"
+            android:textColor="#1A2230"
             android:textSize="16sp"
             android:textStyle="bold" />
 
@@ -41,7 +41,7 @@
             android:layout_height="wrap_content"
             android:padding="10dp"
             android:text="重载"
-            android:textColor="#7FB2FF"
+            android:textColor="#2F66D8"
             android:textSize="14sp" />
     </LinearLayout>
 
@@ -53,7 +53,7 @@
         android:paddingBottom="8dp"
         android:lineSpacingExtra="4dp"
         android:text="这里只切「用哪个」。预设、世界书、正则的内容仍然以 SillyTavern 兼容格式存在引擎侧，原生不复制一份。"
-        android:textColor="#6C7A90"
+        android:textColor="#66707F"
         android:textSize="12sp" />
 
     <ScrollView
@@ -107,7 +107,7 @@
                 android:padding="16dp"
                 android:lineSpacingExtra="4dp"
                 android:text="正在读取引擎资产…"
-                android:textColor="#6C7A90"
+                android:textColor="#66707F"
                 android:textSize="13sp" />
         </LinearLayout>
     </ScrollView>

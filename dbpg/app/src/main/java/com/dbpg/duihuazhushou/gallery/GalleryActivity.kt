@@ -1,5 +1,7 @@
 package com.dbpg.duihuazhushou.gallery
 
+import com.dbpg.duihuazhushou.Insets
+
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
@@ -25,6 +27,7 @@ class GalleryActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_gallery)
+        Insets.applyTop(this)
         repo = GalleryRepository(this)
 
         countView = findViewById(R.id.gallery_count)

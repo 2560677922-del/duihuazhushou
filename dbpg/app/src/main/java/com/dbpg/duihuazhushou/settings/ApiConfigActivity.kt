@@ -1,5 +1,7 @@
 package com.dbpg.duihuazhushou.settings
 
+import com.dbpg.duihuazhushou.Insets
+
 import android.app.Activity
 import android.app.AlertDialog
 import android.graphics.Typeface
@@ -60,6 +62,7 @@ class ApiConfigActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_api_config)
+        Insets.applyTop(this)
 
         baseEdit = findViewById(R.id.api_base)
         keyEdit = findViewById(R.id.api_key)
@@ -182,19 +185,19 @@ class ApiConfigActivity : Activity() {
                     append(note.ifBlank { baseUrl.ifBlank { "(未填地址)" } })
                     if (isCurrent) append("  ●")
                 }
-                setTextColor(if (isCurrent) 0xFF7FB2FF.toInt() else 0xFFE6EAF2.toInt())
+                setTextColor(if (isCurrent) 0xFF2F66D8.toInt() else 0xFF1A2230.toInt())
                 textSize = 14f
                 if (isCurrent) setTypeface(typeface, Typeface.BOLD)
             }
             head.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             head.addView(TextView(this).apply {
                 text = "${models.length()} 个模型" + if (!hasKey) " · 未填密钥" else ""
-                setTextColor(0xFF6C7A90.toInt())
+                setTextColor(0xFF66707F.toInt())
                 textSize = 11f
             })
             head.addView(TextView(this).apply {
                 text = if (expanded.contains(key)) "▾" else "▸"
-                setTextColor(0xFF5E6E85.toInt())
+                setTextColor(0xFF8A94A6.toInt())
                 textSize = 14f
                 setPadding(dp(8), 0, 0, 0)
             })
@@ -221,18 +224,18 @@ class ApiConfigActivity : Activity() {
                     }
                     row.addView(TextView(this).apply {
                         text = if (current) "✓ " else ""
-                        setTextColor(0xFF7FB2FF.toInt())
+                        setTextColor(0xFF2F66D8.toInt())
                         textSize = 13f
                     }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
                     row.addView(TextView(this).apply {
                         text = model.ifBlank { name }
-                        setTextColor(if (current) 0xFFCFE0FF.toInt() else 0xFFB9C4D6.toInt())
+                        setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF3A4353.toInt())
                         textSize = 13f
                         ellipsize = null
                     }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
                     row.addView(TextView(this).apply {
                         text = if (current) "使用中" else "使用"
-                        setTextColor(if (current) 0xFF7FB2FF.toInt() else 0xFF6C7A90.toInt())
+                        setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF66707F.toInt())
                         textSize = 12f
                     })
                     row.setOnClickListener {
@@ -268,14 +271,14 @@ class ApiConfigActivity : Activity() {
         if (title.isNotBlank()) {
             box.addView(TextView(this).apply {
                 text = title
-                setTextColor(0xFFE6EAF2.toInt())
+                setTextColor(0xFF1A2230.toInt())
                 textSize = if (small) 12f else 14f
             })
         }
         if (sub.isNotBlank()) {
             box.addView(TextView(this).apply {
                 text = sub
-                setTextColor(0xFF6C7A90.toInt())
+                setTextColor(0xFF66707F.toInt())
                 textSize = if (small) 11f else 12f
                 if (title.isNotBlank()) (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(2)
             })
