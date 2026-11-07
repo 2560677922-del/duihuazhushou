@@ -137,49 +137,102 @@ class ImageStyleActivity : Activity() {
         }
     }
 
+    /**
+     * 风格列表：方块卡片网格（两列）。
+     *
+     * 为什么是方块：风格的价值在"看起来长什么样"，参考图必须是正方形才能
+     * 整齐地铺一排比较；文字列表看不出风格差异（用户反馈）。
+     * 缩略图按需单张取（getStyleThumb），不把所有 base64 一次塞过来。
+     */
     private fun renderStyles(arr: JSONArray) {
         listBox.removeAllViews()
+        val cols = 2
+        val gap = dp(8)
+        val cellW = ((resources.displayMetrics.widthPixels - dp(12) * 2 - gap * (cols - 1)) / cols)
+
+        var row: LinearLayout? = null
         for (i in 0 until arr.length()) {
+            if (i % cols == 0) {
+                row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    (layoutParams as? LinearLayout.LayoutParams)?.topMargin = gap
+                }
+                listBox.addView(row)
+            }
             val s = arr.getJSONObject(i)
             val uid = s.optString("uid")
             val name = s.optString("name").ifBlank { "未命名风格" }
             val current = s.optBoolean("current")
 
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
+            val cell = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
                 background = getDrawable(R.drawable.bg_card)
-                setPadding(dp(14), dp(12), dp(14), dp(12))
-                (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(6)
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                layoutParams = LinearLayout.LayoutParams(cellW, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    marginEnd = gap
+                }
                 setOnClickListener {
                     if (current) return@setOnClickListener
                     EngineBridge.command(JSONObject().put("cmd", "imgUseStyle").put("uid", uid))
                 }
                 setOnLongClickListener {
-                    styleActions(uid, name)
-                    true
+                    styleActions(uid, name); true
                 }
             }
-            row.addView(TextView(this).apply {
+
+            // 方形缩略图（高度 = 宽度），无图时用首字占位
+            val thumbBox = android.widget.FrameLayout(this).apply {
+                layoutParams = LinearLayout.LayoutParams(cellW - dp(16), cellW - dp(16))
+                background = getDrawable(R.drawable.bg_input)
+            }
+            val iv = ImageView(this).apply {
+                layoutParams = android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                )
+                scaleType = ImageView.ScaleType.CENTER_CROP
+            }
+            thumbBox.addView(iv)
+            val initial = TextView(this).apply {
+                text = name.take(1)
+                setTextColor(0xFF2F66D8.toInt())
+                textSize = 22f
+                gravity = Gravity.CENTER
+                layoutParams = android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                )
+            }
+            thumbBox.addView(initial)
+            cell.addView(thumbBox)
+
+            if (s.optBoolean("hasThumb")) {
+                EngineBridge.fetchArg(this, "getStyleThumb", uid) { obj ->
+                    val dataUrl = obj?.optString("thumb").orEmpty()
+                    if (dataUrl.isNotBlank() && dataUrl.contains("base64,")) {
+                        runCatching {
+                            val bytes = Base64.decode(dataUrl.substringAfter("base64,"), Base64.DEFAULT)
+                            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            if (bmp != null) {
+                                iv.setImageBitmap(bmp)
+                                initial.visibility = TextView.GONE
+                            }
+                        }
+                    }
+                }
+            }
+
+            cell.addView(TextView(this).apply {
                 text = (if (current) "✓ " else "") + name
                 setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF1A2230.toInt())
-                textSize = 14f
+                textSize = 12.5f
+                gravity = Gravity.CENTER
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(0, dp(6), 0, dp(2))
                 if (current) setTypeface(typeface, Typeface.BOLD)
-            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            if (s.optBoolean("hasThumb")) {
-                row.addView(TextView(this).apply {
-                    text = "有参考图"
-                    setTextColor(0xFF8A94A6.toInt())
-                    textSize = 11f
-                    setPadding(0, 0, dp(8), 0)
-                })
-            }
-            row.addView(TextView(this).apply {
-                text = if (current) "使用中" else "切换"
-                setTextColor(0xFF2F66D8.toInt())
-                textSize = 12f
             })
-            listBox.addView(row)
+            row?.addView(cell)
         }
     }
 

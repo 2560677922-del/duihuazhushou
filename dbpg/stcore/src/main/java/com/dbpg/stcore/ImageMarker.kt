@@ -156,20 +156,44 @@ fun buildContentBlocks(text: String, attachments: List<NativeImage> = emptyList(
 }
 
 /**
- * 剥离 <script>/<style> 整块（含内容）。
+ * 把美化正则产出的 HTML 变成"人话"。
  *
- * 为什么必须做：美化正则的替换串是一份完整 HTML（<style> + <script>）。
- * web 侧 <style> 会真的生效、<script> 被 v-html 忽略；原生没有 DOM，
- * 不剥就会把 `button.addEventListener(...)` 这类代码当正文渲染出来。
+ * 背景：美化正则的替换串是整份 HTML（嵌套 div + span + style + script）。
+ * web 有 DOM：style 生效、script 忽略、div 排成卡片。
+ * 原生没有 DOM —— 只删 script/style 不够，剩下的 <div> 结构会变成
+ * 一堆空行和零散文字（用户截图："平行事件**" 夹在空白块里）。
+ *
+ * 处理顺序：
+ *   1. script/style 整块删除；
+ *   2. 块级标签换成换行（div/p/details/h1~h6/li/table…），<br> 也换行；
+ *   3. 剩余行内标签（span/b/i/…）直接去掉、保留文字；
+ *   4. 解码常见 HTML 实体；
+ *   5. 丢掉只由装饰符组成的行（**、---、~~ 之类），压缩连续空行。
  */
 fun stripHtmlNoise(text: String): String {
-    if (!text.contains("<")) return text
+    if (!text.contains("<") && !text.contains("&")) return text
     var out = text
-    out = Regex("<script\\b[^>]*>[\\s\\S]*?</script\\s*>", RegexOption.IGNORE_CASE).replace(out, "")
-    out = Regex("<style\\b[^>]*>[\\s\\S]*?</style\\s*>", RegexOption.IGNORE_CASE).replace(out, "")
-    out = Regex("<script\\b[^>]*/?>", RegexOption.IGNORE_CASE).replace(out, "")
-    out = Regex("<style\\b[^>]*/?>", RegexOption.IGNORE_CASE).replace(out, "")
-    return out
+    out = Regex("<(script|style)\\b[^>]*>[\\s\\S]*?</\\1\\s*>", RegexOption.IGNORE_CASE)
+        .replace(out, "")
+    out = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE).replace(out, "\n")
+    out = Regex(
+        "</?(div|p|section|article|details|summary|h[1-6]|li|ul|ol|blockquote|tr|td|table|header|footer|hr)\\b[^>]*>",
+        RegexOption.IGNORE_CASE,
+    ).replace(out, "\n")
+    out = Regex("<[^>]{0,300}>").replace(out, "")
+    out = out
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+    out = out.lines()
+        .map { it.trimEnd() }
+        .filterNot { it.trim().matches(Regex("(\\*{1,3}|-{2,}|~{2,}|#{1,6})")) }
+        .joinToString("\n")
+    out = Regex("\\n{3,}").replace(out, "\n\n")
+    return out.trim()
 }
 
 /**

@@ -1042,6 +1042,17 @@ function imageStyleSummary(): string {
   });
 }
 
+/** 单套风格的参考图（列表卡片按需取，避免一次把所有图都传过去）。 */
+function styleThumb(rawUid: string): string {
+  try {
+    const img = useImageStore();
+    const s: any = (img.styleConfigs || []).find((x) => x._uid === rawUid);
+    return JSON.stringify({ thumb: s?.thumb || '' });
+  } catch {
+    return JSON.stringify({ thumb: '' });
+  }
+}
+
 /** 标签库搜索（原生标签生图的快捷标签）。 */
 function tagSearch(rawQuery: string): string {
   try {
@@ -1087,6 +1098,7 @@ export function installGenerateService(): void {
     getConfig: apiConfigSummary,
     getImageConfig: imageApiSummary,
     getImageStyle: imageStyleSummary,
+    getStyleThumb: styleThumb,
     getDisplaySettings: displaySettingsSummary,
     getAssets: assetsDetail,
     getTags: tagSearch,

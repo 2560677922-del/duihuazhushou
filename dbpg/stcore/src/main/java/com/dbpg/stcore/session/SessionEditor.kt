@@ -82,7 +82,8 @@ object SessionEditor {
         val act = doc.actions.find { it.id == actionId } ?: return doc
         if (act.variants.isEmpty()) return doc
 
-        val cleaned = act.variants.filter { it.ai.trim().isNotEmpty() }
+        // 同上：用户发言非空的版本也要保留（与 web 一致），否则切换后计数器会消失
+        val cleaned = act.variants.filter { it.ai.trim().isNotEmpty() || it.user.trim().isNotEmpty() }
         if (cleaned.isEmpty()) return doc
 
         val at = index.coerceIn(0, cleaned.size - 1)
@@ -241,13 +242,15 @@ object SessionEditor {
      * 把 [next] 记成"最新版本"，旧版本往后排。
      *
      * 与 web 的 pushVariant 一致：
-     *   1. 只保留**有 AI 正文**的版本 —— 「‹ ›」只出现在 AI 气泡上，
-     *      切到一个没有正文的版本等于整条消息凭空消失（历史数据里确实有这种脏数据）；
+     *   1. 只保留**有内容**的版本（AI 正文或用户发言任一非空）。
+     *      注意：只按 AI 非空过滤是错的 —— web 迁移来的历史里存在
+     *      「有用户发言、AI 正文为空」的版本，过滤掉会让 variantCount 骤减，
+     *      「‹ › 2/3」直接消失（用户实测复现）。这里与 web 的 pushVariant 对齐。
      *   2. 去掉与新版完全重复的旧版（模型连出两次相同内容不堆垃圾）；
      *   3. 新版排最前，整体截断到 [MAX_VARIANTS]。
      */
     private fun withVariant(act: SessionAction, next: MessageVariant): SessionAction {
-        val onlyReal = act.variants.filter { it.ai.trim().isNotEmpty() }
+        val onlyReal = act.variants.filter { it.ai.trim().isNotEmpty() || it.user.trim().isNotEmpty() }
         val rest = onlyReal.filterNot { it.user == next.user && it.ai == next.ai }
         return act.copy(
             user = next.user,
