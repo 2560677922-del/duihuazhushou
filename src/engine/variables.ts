@@ -23,9 +23,10 @@
 // 【三条硬红线】
 //   1. 存储扁平：只有 session / global 两张**平级**表，无作用域链、无继承。
 //      同名时 session 优先由调用方传表顺序保证（getvar 只读 session）。
-//   2. 解析单次：一次 String.replace，值**原样插入、不二次解析**。
-//   3. 语法禁嵌套：VAR_RE 的参数部分写死 [^{}]，参数里出现任何花括号
-//      整条宏就不匹配、原样保留 —— 从语法层面杜绝 {{getvar::{{char}}}}。
+//   2. 解析单次：一次线性扫描，值**原样插入、不二次解析**。
+//   3. 语法禁嵌套：块内出现任何花括号，整块原样输出 —— 从语法层面
+//      杜绝 {{getvar::{{char}}}}，也防止内层被单独替换成半成品
+//      （见 scanVariables 的注释）。
 //
 // 【读与写必须分开】
 //   readVariables()        纯只读；遇到写宏抹成空串，**绝不改状态**。
@@ -58,11 +59,13 @@ export function emptyVariableTables(): VariableTables {
 /**
  * 只认 `{{名字::参数}}` 这一种形式。
  *
- * [^{}] 是"不搞嵌套"的关键：参数里出现花括号就整条不匹配，
- * 也不会去吃别人的宏。名字限定字母，避免误伤 {{roll::1d20}} 之类
- * 由别的系统处理的宏 —— 不认识的宏一律原样保留。
+ * 名字限定字母，避免误伤 {{roll::1d20}} 之类由别的系统处理的宏 ——
+ * 不认识的宏一律原样保留。
+ *
+ * ★ 这个正则只用来**判断结构**（配好 `^...$` 后跑在单个块的内部），
+ *   不再直接对整段文本做 replace。原因见 [scanVariables]。
  */
-const VAR_RE = /\{\{\s*([a-z]+)\s*::\s*([^{}]*?)\s*\}\}/gi;
+const VAR_SHAPE = /^\s*([a-z]+)\s*::\s*([^{}]*?)\s*$/i;
 
 const READ_NAMES = new Set([
   'getvar', 'getglobalvar', 'hasvar', 'hasglobalvar',
@@ -83,8 +86,8 @@ export const VARIABLE_MACRO_HELP: { macro: string; desc: string }[] = [
   { macro: '{{setvar::名称::值}}', desc: '写会话变量（发送 / 落库时执行一次）' },
   { macro: '{{setglobalvar::名称::值}}', desc: '写全局变量' },
   { macro: '{{addvar::名称::增量}}', desc: '数字相加，否则字符串拼接' },
-  { macro: '{{incvar::名称}}', desc: '加 1 并返回新值' },
-  { macro: '{{decvar::名称}}', desc: '减 1 并返回新值' },
+  { macro: '{{incvar::名称}}', desc: '加 1 并返回新值；可写 {{incvar::名称::3}} 加 3' },
+  { macro: '{{decvar::名称}}', desc: '减 1 并返回新值；可写 {{decvar::名称::3}} 减 3' },
   { macro: '{{deletevar::名称}}', desc: '删除变量' },
 ];
 
@@ -108,6 +111,20 @@ function bump(cur: string | undefined, by: number): string {
   const a = numeric(cur);
   if (a === null) return cur && cur.trim() !== '' ? cur : String(by);
   return String(a + by);
+}
+
+/**
+ * inc/dec 的步长（第二个参数）。
+ *
+ * ST 的 `{{incvar::x}}` 只加 1，但用户很自然会把 `{{decvar::体力::3}}`
+ * 写成"减 3"。以前这里把参数**静默丢掉**，用户设 3 只减了 1，
+ * 数值对不上还找不到原因 —— 比报错更难查。现在认这个参数：
+ * 缺省 1，是数字就用它的绝对值（dec 一定是"减"，别让 -3 变成加 3）。
+ */
+function stepOf(raw: string): number {
+  const n = numeric(raw);
+  if (n === null || n === 0) return 1;
+  return Math.abs(n);
 }
 
 function splitArgs(body: string): string[] {
@@ -169,24 +186,102 @@ function resolveOne(
       return '';
     case 'incvar':
     case 'incglobalvar':
-      table[key] = bump(table[key], 1);
+      table[key] = bump(table[key], stepOf(value));
       markChanged();
       return table[key];
     case 'decvar':
     case 'decglobalvar':
-      table[key] = bump(table[key], -1);
+      table[key] = bump(table[key], -stepOf(value));
       markChanged();
       return table[key];
   }
   return full;
 }
 
+/** 找与 `open` 处 `{{` 配对的 `}}` 位置；找不到返回 -1。 */
+function findClose(text: string, open: number): number {
+  let depth = 0;
+  let i = open + 2;
+  while (i < text.length) {
+    if (text.startsWith('{{', i)) {
+      depth++;
+      i += 2;
+      continue;
+    }
+    if (text.startsWith('}}', i)) {
+      if (depth === 0) return i;
+      depth--;
+      i += 2;
+      continue;
+    }
+    i++;
+  }
+  return -1;
+}
+
+/**
+ * 扫描并替换变量宏。
+ *
+ * ★ 为什么不用 `text.replace(VAR_RE, ...)`：
+ *
+ *   VAR_RE 的 `[^{}]*?` 吃不下嵌套，遇到 `{{getvar::{{getvar::a}}}}` 时
+ *   外层匹配失败，正则引擎会往后挪一格，**把内层单独替换掉** ——
+ *   结果是 `{{getvar::AAA}}`。这个半成品在下一轮渲染时又会被解析成
+ *   空串（AAA 未定义），于是「同一条消息渲染两次结果不同」。
+ *   流式渲染每秒重绘好几次，用户看到的就是文字突然闪一下少一块。
+ *
+ *   现在手写扫描：先配对出**最外层**的 `{{...}}` 整块。
+ *     - 块内是 `名字::参数` 且不含花括号 → 解析
+ *     - 否则（嵌套 / {{char}} / 不认识的宏）→ **整块原样输出**，
+ *       并且跳过整块，内层永远不会被单独吃掉
+ *
+ *   这样一次渲染和二次渲染结果一致（幂等），嵌套宏也真的"不实现"了。
+ */
+function scanVariables(
+  text: string,
+  live: VariableTables,
+  allowWrite: boolean,
+  markChanged: () => void,
+): string {
+  const out: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const open = text.indexOf('{{', i);
+    if (open < 0) {
+      out.push(text.slice(i));
+      break;
+    }
+    if (open > i) out.push(text.slice(i, open));
+
+    const close = findClose(text, open);
+    if (close < 0) {
+      // 未闭合：剩下的原样还回去，不要吞掉用户文本
+      out.push(text.slice(open));
+      break;
+    }
+
+    const whole = text.slice(open, close + 2);
+    const inner = text.slice(open + 2, close);
+    // 块内出现花括号 = 嵌套或畸形：整块保留，绝不部分替换
+    if (inner.includes('{') || inner.includes('}')) {
+      out.push(whole);
+    } else {
+      const m = VAR_SHAPE.exec(inner);
+      if (!m) {
+        out.push(whole); // {{char}} / {{time}} 等，交给宏引擎
+      } else {
+        out.push(resolveOne(whole, m[1], m[2], live, allowWrite, markChanged));
+      }
+    }
+    i = close + 2;
+  }
+  return out.join('');
+}
+
 /** 只读展开。写宏被抹成空串，不改表。显示 / 提示词 / 正则替换串都走这里 */
 export function readVariables(text: string, tables: VariableTables): string {
   if (!text || !text.includes('{{')) return text;
-  return text.replace(VAR_RE, (full, name: string, body: string) =>
-    resolveOne(full, name, body, tables, false, () => {}),
-  );
+  return scanVariables(text, tables, false, () => {});
 }
 
 /**
@@ -202,9 +297,7 @@ export function applyVariableWrites(text: string, tables: VariableTables): Varia
   };
   if (!text || !text.includes('{{')) return { text, tables: live, changed: false };
   let changed = false;
-  const out = text.replace(VAR_RE, (full, name: string, body: string) =>
-    resolveOne(full, name, body, live, true, () => { changed = true; }),
-  );
+  const out = scanVariables(text, live, true, () => { changed = true; });
   return { text: out, tables: live, changed };
 }
 

@@ -254,8 +254,15 @@ fun transformForDisplayRich(
         out = msgs.first().content
     }
     if (vars != null) out = readVariables(out, vars)
-    // 保留一份"带 HTML"的版本给消息 WebView（脚本在渲染侧再剥）
-    val richHtml = stripImageMarkers(out)
+    /*
+     * 保留一份"带 HTML"的版本给卡片渲染。
+     *
+     * ★ 必须先过 htmlifyNewlines：HTML 会把 \n 折叠成空格，而角色扮演
+     *   正文靠空行分段（动作 / 对白 / 内心）。不转 <br> 的话，一旦这条消息
+     *   被判定为"像 HTML"交给卡片渲染，整段会挤成一大坨 —— 实测截图
+     *   就是这个现象。<style>/<script>/<pre> 内部原样保留。
+     */
+    val richHtml = htmlifyNewlines(stripImageMarkers(out))
     // 纯文本兜底：美化正则常带 <style>/<script>，文本化时全部清掉
     val plain = stripHtmlNoise(richHtml)
     return DisplayResult(buildContentBlocks(plain, attachments), richHtml)

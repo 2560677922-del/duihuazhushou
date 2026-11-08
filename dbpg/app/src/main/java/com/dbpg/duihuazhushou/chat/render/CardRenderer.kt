@@ -39,6 +39,29 @@ object CardRenderer {
     private const val TAG = "DHP_CARD"
     private const val RENDER_TIMEOUT = 6000L
 
+    /** 量高度的间隔。90ms ≈ 5 帧，足够让一次 reflow 落定。 */
+    private const val POLL_INTERVAL = 90L
+
+    /** 最多量 8 次（约 700ms）；再多说明内容一直在变，取当前帧即可。 */
+    private const val MAX_POLLS = 8
+
+    /**
+     * 单张位图的内存上限（ARGB_8888 = 4 字节/像素）。
+     *
+     * 实测：一条 20 万字的单行卡片，在 340px 宽下高度是 **265,724 px**，
+     * 直接 createBitmap 要 361MB —— 必然 OOM 崩溃（而且崩在渲染线程，
+     * 用户看到的是整页闪退）。社区卡里长表格、长列表很容易上万像素。
+     *
+     * 超过就**降级纯文本**（内容不丢，只是没样式），而不是截断：
+     * 截断会让用户以为内容缺失。
+     */
+    private const val MAX_BITMAP_BYTES = 24L * 1024 * 1024
+
+    private const val HEIGHT_JS =
+        "(function(){var m=document.getElementById('dhp-m');" +
+            "if(!m)return Math.ceil(document.body.scrollHeight);" +
+            "return Math.ceil(m.getBoundingClientRect().height);})()"
+
     /** 渲染参数（跟外观设置走，改了要重新生成位图）。 */
     data class Style(
         val textSizeSp: Float,
@@ -165,24 +188,24 @@ object CardRenderer {
         if (busy) return
         val job = queue.pollFirst() ?: return
         busy = true
-        val w = web
-        if (w == null) {
+        val view = web
+        if (view == null) {
             // 没有宿主（用户还没进聊天页）：直接失败，界面先显示纯文本
             finish(job, null, 0)
             return
         }
 
-        val lp = w.layoutParams
+        val lp = view.layoutParams
         lp.width = job.widthPx
         lp.height = 10
-        w.layoutParams = lp
-        w.measure(
+        view.layoutParams = lp
+        view.measure(
             View.MeasureSpec.makeMeasureSpec(job.widthPx, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(10, View.MeasureSpec.AT_MOST),
         )
-        w.layout(0, 0, job.widthPx, 10)
+        view.layout(0, 0, job.widthPx, 10)
 
-        val density = w.resources.displayMetrics.density
+        val density = view.resources.displayMetrics.density
         var done = false
 
         val timeout = Runnable {
@@ -194,47 +217,26 @@ object CardRenderer {
         }
         main.postDelayed(timeout, RENDER_TIMEOUT)
 
-        w.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(
-                view: WebView,
-                request: android.webkit.WebResourceRequest,
-            ): Boolean = true
-
-            override fun onPageFinished(view: WebView, url: String?) {
-                // 图片/字体可能还没占位，量两次（和原 bindHtml 的教训一致）
-                view.postDelayed({
-                    measureAndCapture(view, job, density) { path, h ->
-                        if (done) return@measureAndCapture
-                        done = true
-                        main.removeCallbacks(timeout)
-                        finish(job, path, h)
-                    }
-                }, 180L)
-            }
-        }
-
-        val safe = if (job.style.allowScript) job.html else sanitize(job.html)
-        w.loadDataWithBaseURL(null, wrap(safe, job.style), "text/html", "utf-8", null)
-    }
-
-    private fun measureAndCapture(
-        view: WebView,
-        job: Job,
-        density: Float,
-        onResult: (String?, Int) -> Unit,
-    ) {
-        view.evaluateJavascript(
-            "(function(){var m=document.getElementById('dhp-m');" +
-                "if(!m)return Math.ceil(document.body.scrollHeight);" +
-                "return Math.ceil(m.getBoundingClientRect().height);})()",
-        ) { raw ->
-            val cssPx = raw?.trim('"')?.toFloatOrNull()?.toInt() ?: 0
-            val px = (cssPx * density).toInt()
+        /** 按已知的 CSS 高度排版 → 绘制 → 落盘。只在主线程调用。 */
+        fun capture(cssHeight: Int) {
+            if (done) return
+            val px = (cssHeight * density).toInt()
             if (px <= 0) {
-                onResult(null, 0)
-                return@evaluateJavascript
+                done = true
+                main.removeCallbacks(timeout)
+                finish(job, null, 0)
+                return
             }
             val w = job.widthPx
+            val budget = (MAX_BITMAP_BYTES / (w.coerceAtLeast(1).toLong() * 4)).toInt()
+            if (px > budget) {
+                Log.w(TAG, "卡片过高 ${px}px（上限 ${budget}px），降级纯文本: ${job.key.take(12)}")
+                done = true
+                main.removeCallbacks(timeout)
+                finish(job, null, 0)
+                return
+            }
+
             view.layoutParams = (view.layoutParams).apply { height = px }
             view.measure(
                 View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
@@ -244,13 +246,49 @@ object CardRenderer {
 
             val path = runCatching {
                 val bmp = Bitmap.createBitmap(w, px, Bitmap.Config.ARGB_8888)
-                val canvas = Canvas(bmp)
                 // 透明底：气泡自己的颜色透出来，卡片只用画自己的内容
-                view.draw(canvas)
+                view.draw(Canvas(bmp))
                 CardStore.save(view.context, job.key, bmp, px)
             }.getOrNull()
-            if (path == null) onResult(null, 0) else onResult(path, px)
+
+            done = true
+            main.removeCallbacks(timeout)
+            if (path == null) finish(job, null, 0) else finish(job, path, px)
         }
+
+        /**
+         * 每 [POLL_INTERVAL] 量一次高度，连续两次相同就认为"长稳了"。
+         *
+         * 为什么不能固定睡一段时间：静态卡片 10ms 就布局完了，多等纯亏；
+         * 带脚本的卡片可能要几百毫秒才把内容画出来，等短了截到空白/半成品。
+         */
+        fun poll(attempt: Int, lastHeight: Int) {
+            if (done) return
+            view.evaluateJavascript(HEIGHT_JS) { raw ->
+                if (done) return@evaluateJavascript
+                val h = raw?.trim('"')?.toFloatOrNull()?.toInt() ?: 0
+                val stable = attempt > 0 && h > 0 && h == lastHeight
+                if (stable || attempt >= MAX_POLLS) {
+                    capture(h)
+                } else {
+                    main.postDelayed({ poll(attempt + 1, h) }, POLL_INTERVAL)
+                }
+            }
+        }
+
+        view.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                view: WebView,
+                request: android.webkit.WebResourceRequest,
+            ): Boolean = true
+
+            override fun onPageFinished(v: WebView, url: String?) {
+                poll(attempt = 0, lastHeight = -1)
+            }
+        }
+
+        val safe = if (job.style.allowScript) job.html else sanitize(job.html)
+        view.loadDataWithBaseURL(null, wrap(safe, job.style), "text/html", "utf-8", null)
     }
 
     private fun finish(job: Job, path: String?, heightPx: Int) {

@@ -142,7 +142,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
                     android:lineSpacingExtra="2dp"
-                    android:text="只有社区美化卡需要（状态栏、按钮、模板逻辑）。默认关闭：模型输出不可信，脚本能读本地存储。"
+                    android:text="只有社区美化卡需要（状态栏、进度条、模板逻辑）。默认关闭：模型输出不可信，脚本能读本地存储。开了之后卡片里的 JS 会在渲染时跑一次，画出来的结果才截成图。"
                     android:textColor="#66707F"
                     android:textSize="12sp" />
             </LinearLayout>
@@ -164,7 +164,7 @@
             android:background="@drawable/bg_card"
             android:lineSpacingExtra="3dp"
             android:padding="14dp"
-            android:text="为什么这样更顺：老做法是每条消息塞一个网页控件，滚出屏幕再滚回来就重新加载一次，内存和帧率都吃不消。现在改成「离屏画一张图 → 列表里只是图片」，同屏一个网页控件都没有。点开卡片才进全屏网页，可以选中文字、跑脚本。"
+            android:text="为什么这样更顺：老做法是每条消息塞一个网页控件，滚出屏幕再滚回来就重新加载一次，内存和帧率都吃不消。现在改成「离屏画一张图 → 列表里只是图片」，同屏一个网页控件都没有。\n\n关于动态效果：列表里看到的是一张截图，所以循环动画、数字滚动这类会定格在某一帧。想看真正动起来、想选中文字，点开卡片即可 —— 那里是活的网页，脚本也会按上面的开关执行。"
             android:textColor="#66707F"
             android:textSize="12sp" />
 
