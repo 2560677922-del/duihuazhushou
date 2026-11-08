@@ -14,6 +14,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -119,7 +120,30 @@ class AssetsHomeActivity : Activity() {
             }
             lastAssets = obj
             render(obj)
+            restoreScroll()
         }
+    }
+
+    /**
+     * 命令成功后会整页重绘（onApiResult 默认分支）。
+     *
+     * 预设动辄 50 条，改第 30 条的开关/顺序后如果跳回顶部，等于每改一次就要重新找位置。
+     * 这里在重绘前记一下滚动位置，重绘后还原 —— 只对"就地修改"生效；
+     * 导入是看新资产，仍然回到顶部。
+     */
+    private var pendingScrollY = -1
+
+    private fun reloadKeepingScroll() {
+        pendingScrollY = findViewById<ScrollView>(R.id.assets_scroll).scrollY
+        load()
+    }
+
+    private fun restoreScroll() {
+        if (pendingScrollY < 0) return
+        val sv = findViewById<ScrollView>(R.id.assets_scroll)
+        val y = pendingScrollY
+        pendingScrollY = -1
+        sv.post { sv.scrollTo(0, y) }
     }
 
     private fun render(a: JSONObject) {
@@ -141,7 +165,7 @@ class AssetsHomeActivity : Activity() {
                 val arr = a.optJSONArray("presets") ?: JSONArray()
                 var total = 0
                 for (i in 0 until arr.length()) total += arr.optJSONObject(i)?.optJSONArray("prompts")?.length() ?: 0
-                status.text = "共 ${arr.length()} 个预设 / $total 条子条目；点名称展开，每条可单独开关、编辑；长按组名可改名 / 导出"
+                status.text = "共 ${arr.length()} 个预设 / $total 条子条目；顺序与 ST 一致（↑↓ 微调），未激活条目单列；长按组名可改名 / 导出"
                 for (i in 0 until arr.length()) {
                     val p = arr.getJSONObject(i)
                     renderPreset(box, a, p)
@@ -291,6 +315,13 @@ class AssetsHomeActivity : Activity() {
         val current = p.optBoolean("current")
         val prompts = p.optJSONArray("prompts") ?: JSONArray()
         val open = openBooks.contains("preset:$id")
+        // 组头计数要区分「会发的」和「未激活的」：以前统一显示总数，
+        // 用户拿着 54 条的数字去 ST 对数只有 52 条，会以为丢了条目。
+        var activeCount = 0
+        for (j in 0 until prompts.length()) {
+            if (prompts.optJSONObject(j)?.optBoolean("ordered", true) == true) activeCount++
+        }
+        val inactiveCount = prompts.length() - activeCount
 
         val head = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -324,7 +355,7 @@ class AssetsHomeActivity : Activity() {
             if (current) setTypeface(typeface, Typeface.BOLD)
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         head.addView(TextView(this).apply {
-            text = "${prompts.length()} 条"
+            text = if (inactiveCount > 0) "$activeCount 条 · $inactiveCount 未激活" else "${prompts.length()} 条"
             setTextColor(0xFF66707F.toInt())
             textSize = 11f
         })
@@ -351,69 +382,189 @@ class AssetsHomeActivity : Activity() {
             toast("已新建，展开后可编辑")
         })
 
+        // ---- 分区：顺序 = 发送顺序 ----
+        //
+        // `ordered` / `position` 由引擎 assetsDetail 给出（见 engine/presetOrder.ts）：
+        //   ordered=true  → 在 prompt_order 里，按 position 排列，会参与生成；
+        //   ordered=false → ST 的「未激活提示词」，不参与生成，单独排在下面。
+        // prompts[] 数组顺序只是历史插入顺序，导入后跟 ST 对不上，不能拿来显示。
+        val ordered = ArrayList<JSONObject>()
+        val inactive = ArrayList<JSONObject>()
         for (j in 0 until prompts.length()) {
-            val it0 = prompts.getJSONObject(j)
-            val identifier = it0.optString("identifier")
-            val enabled = it0.optBoolean("enabled", true)
-            val system = it0.optBoolean("system", true)
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                background = getDrawable(R.drawable.bg_card)
-                setPadding(dp(12), dp(10), dp(12), dp(10))
-                setOnClickListener { editPresetPromptDialog(id, it0) }
-                setOnLongClickListener { confirmDeletePrompt(id, identifier, it0.optString("name")); true }
-            }
-            val line = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-            line.addView(TextView(this).apply {
-                text = if (enabled) "🟢 " else "⛔ "
-                textSize = 12f
-            })
-            line.addView(TextView(this).apply {
-                text = it0.optString("name").ifBlank { identifier }
-                setTextColor(0xFF1A2230.toInt())
-                textSize = 13f
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            line.addView(TextView(this).apply { text = "✏️"; textSize = 12f })
-            row.addView(line)
-            row.addView(TextView(this).apply {
-                text = it0.optString("content").ifBlank { "（空内容，点开编辑）" }
-                setTextColor(0xFF66707F.toInt())
-                textSize = 11f
-                maxLines = 2
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, dp(3), 0, 0)
-            })
-            // 快捷开关：不展开也能一条条关，且不会误触整行的编辑器
-            val quick = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(0, dp(6), 0, 0)
-            }
-            quick.addView(chipToggle(
-                if (enabled) "☑ 已启用" else "☐ 已停用", enabled,
-            ) {
-                EngineBridge.command(
-                    JSONObject().put("cmd", "presetSavePrompt")
-                        .put("presetId", id).put("identifier", identifier)
-                        .put("prompt", JSONObject().put("enabled", !enabled)),
-                )
-            })
-            quick.addView(chipToggle(
-                if (system) "🔵 系统提示词" else "👤 角色提示词", true,
-            ) {
-                EngineBridge.command(
-                    JSONObject().put("cmd", "presetSavePrompt")
-                        .put("presetId", id).put("identifier", identifier)
-                        .put("prompt", JSONObject().put("system", !system)),
-                )
-            })
-            row.addView(quick)
-            box.addView(row, cardParams())
+            val it0 = prompts.optJSONObject(j) ?: continue
+            if (it0.optBoolean("ordered", true)) ordered.add(it0) else inactive.add(it0)
         }
+        ordered.sortBy { it.optInt("position", 0) }
+
+        if (ordered.isNotEmpty()) {
+            box.addView(sectionLabel("提示词 · 按 ST 发送顺序（${ordered.size} 条）"))
+            for (it0 in ordered) box.addView(promptRow(id, it0, ordered.size), cardParams())
+        }
+        if (inactive.isNotEmpty()) {
+            box.addView(sectionLabel("未激活提示词 · 不参与生成（${inactive.size} 条）"))
+            for (it0 in inactive) box.addView(inactivePromptRow(id, it0), cardParams())
+        }
+    }
+
+    /** 分区标题：小一号、加粗、带一点上间距，和卡片本身区分开。 */
+    private fun sectionLabel(t: String): TextView = TextView(this).apply {
+        text = t
+        setTextColor(0xFF5A6B85.toInt())
+        textSize = 11f
+        setTypeface(typeface, Typeface.BOLD)
+        setPadding(dp(4), dp(14), 0, dp(2))
+    }
+
+    /**
+     * 有序提示词一行：序号 / 状态点 / 名称 / 上下移。
+     *
+     * 序号不是装饰：导入后「顺序有没有变」是用户最关心的事，把 position 直接摆出来，
+     * 一眼就能和 ST 对照。上下移只改 prompt_order，不重排提示词库（见 presetMovePrompt）。
+     */
+    private fun promptRow(presetId: String, p: JSONObject, total: Int): View {
+        val identifier = p.optString("identifier")
+        val enabled = p.optBoolean("enabled", true)
+        val pos = p.optInt("position", 0)
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = getDrawable(R.drawable.bg_card)
+            setPadding(dp(10), dp(10), dp(8), dp(10))
+            setOnClickListener { editPresetPromptDialog(presetId, p) }
+            setOnLongClickListener {
+                confirmDeletePrompt(presetId, identifier, p.optString("name"))
+                true
+            }
+        }
+
+        val line = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        line.addView(TextView(this).apply {
+            text = "%02d".format(pos)
+            setTextColor(0xFF9AA4B4.toInt())
+            textSize = 10f
+            typeface = Typeface.MONOSPACE
+        }, LinearLayout.LayoutParams(dp(22), LinearLayout.LayoutParams.WRAP_CONTENT))
+        line.addView(TextView(this).apply {
+            text = if (enabled) "●" else "○"
+            setTextColor(if (enabled) 0xFF2F66D8.toInt() else 0xFFC3CAD6.toInt())
+            textSize = 10f
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            marginEnd = dp(8)
+        })
+        line.addView(TextView(this).apply {
+            text = p.optString("name").ifBlank { identifier }
+            setTextColor(if (enabled) 0xFF1A2230.toInt() else 0xFF8A94A6.toInt())
+            textSize = 13f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        line.addView(miniButton("↑", pos > 1) { movePrompt(presetId, identifier, -1) })
+        line.addView(miniButton("↓", pos in 1 until total) { movePrompt(presetId, identifier, 1) })
+        row.addView(line)
+
+        row.addView(TextView(this).apply {
+            text = p.optString("content").ifBlank { "（空内容，点开编辑）" }
+            setTextColor(0xFF7A8699.toInt())
+            textSize = 11f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(dp(30), dp(2), 0, 0)
+        })
+
+        // 快捷开关：点行是编辑，开关放 chip 上，不会互相误触
+        val quick = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(30), dp(6), 0, 0)
+        }
+        quick.addView(chipToggle(if (enabled) "☑ 已启用" else "☐ 已停用", enabled) {
+            EngineBridge.command(
+                JSONObject().put("cmd", "presetSavePrompt")
+                    .put("presetId", presetId).put("identifier", identifier)
+                    .put("prompt", JSONObject().put("enabled", !enabled)),
+            )
+        })
+        val system = p.optBoolean("system", true)
+        quick.addView(chipToggle(if (system) "🔵 系统" else "👤 角色", true) {
+            EngineBridge.command(
+                JSONObject().put("cmd", "presetSavePrompt")
+                    .put("presetId", presetId).put("identifier", identifier)
+                    .put("prompt", JSONObject().put("system", !system)),
+            )
+        })
+        row.addView(quick)
+        return row
+    }
+
+    /**
+     * 未激活提示词一行：灰显 + 「加入排序」。
+     *
+     * 这些条目不在 prompt_order 里，ST / Tavo 都不发送，所以这里**不给启停开关**
+     * （开关写不进排序表，会变成「显示开了但没用」）。要让它生效只能加进排序表，
+     * 对应 ST 里把它从「未激活」拖进主列表。
+     */
+    private fun inactivePromptRow(presetId: String, p: JSONObject): View {
+        val identifier = p.optString("identifier")
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = getDrawable(R.drawable.bg_card_dim)
+            setPadding(dp(12), dp(10), dp(10), dp(10))
+            setOnClickListener { editPresetPromptDialog(presetId, p) }
+            setOnLongClickListener {
+                confirmDeletePrompt(presetId, identifier, p.optString("name"))
+                true
+            }
+        }
+        val line = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        line.addView(TextView(this).apply {
+            text = p.optString("name").ifBlank { identifier }
+            setTextColor(0xFF8A94A6.toInt())
+            textSize = 13f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        line.addView(chipToggle("＋ 加入排序", false) {
+            EngineBridge.command(
+                JSONObject().put("cmd", "presetActivatePrompt")
+                    .put("presetId", presetId).put("identifier", identifier),
+            )
+            toast("已加入排序末尾并启用")
+        })
+        row.addView(line)
+        row.addView(TextView(this).apply {
+            text = p.optString("content").ifBlank { "（空内容）" }
+            setTextColor(0xFFA0A8B5.toInt())
+            textSize = 11f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, dp(2), 0, 0)
+        })
+        return row
+    }
+
+    /** 28dp 的方形小按钮（↑↓），到边界时变灰且不可点。 */
+    private fun miniButton(label: String, active: Boolean, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = label
+            setTextColor(if (active) 0xFF2F66D8.toInt() else 0xFFC9D0DA.toInt())
+            textSize = 13f
+            gravity = Gravity.CENTER
+            background = getDrawable(R.drawable.bg_btn_soft)
+            layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginStart = dp(4) }
+            isEnabled = active
+            if (active) setOnClickListener { onClick() }
+        }
+
+    private fun movePrompt(presetId: String, identifier: String, dir: Int) {
+        EngineBridge.command(
+            JSONObject().put("cmd", "presetMovePrompt")
+                .put("presetId", presetId).put("identifier", identifier).put("dir", dir),
+        )
     }
 
     private fun confirmDeletePrompt(presetId: String, identifier: String, name: String) {
@@ -454,13 +605,24 @@ class AssetsHomeActivity : Activity() {
             )
         }
         box.addView(role)
-        newLabel(box, "这条提示词的开关")
-        val enabled = newSwitchRow(box, "启用（关掉就不进提示词）", p.optBoolean("enabled", true))
+        // 未激活条目不在 prompt_order 里，开关写了也不会生效（ST 同样不发），
+        // 所以这里禁用并说明；要启用请回列表点「＋ 加入排序」。
+        val ordered = p.optBoolean("ordered", true)
+        newLabel(box, if (ordered) "这条提示词的开关" else "这条提示词未激活（不在排序表中，不参与生成）")
+        val enabled = newSwitchRow(
+            box,
+            if (ordered) "启用（关掉就不进提示词）" else "启用（需先在列表里加入排序）",
+            p.optBoolean("enabled", true),
+        )
+        if (!ordered) {
+            enabled.isEnabled = false
+            enabled.alpha = 0.5f
+        }
         val system = newSwitchRow(box, "系统提示词 system_prompt", p.optBoolean("system", true))
         val marker = newSwitchRow(box, "标记为 marker", p.optBoolean("marker"))
 
         AlertDialog.Builder(ctx)
-            .setTitle("编辑子条目")
+            .setTitle(if (ordered) "编辑子条目" else "编辑子条目（未激活）")
             .setView(android.widget.ScrollView(ctx).apply { addView(box) })
             .setPositiveButton("保存") { _, _ ->
                 val patch = JSONObject()
@@ -473,9 +635,9 @@ class AssetsHomeActivity : Activity() {
                             else -> "system"
                         },
                     )
-                    .put("enabled", enabled.isChecked)
                     .put("system", system.isChecked)
                     .put("marker", marker.isChecked)
+                if (ordered) patch.put("enabled", enabled.isChecked)
                 EngineBridge.command(
                     JSONObject().put("cmd", "presetSavePrompt")
                         .put("presetId", presetId)
@@ -1457,7 +1619,7 @@ class AssetsHomeActivity : Activity() {
                         toast("导出失败：${obj.optString("error")}")
                     }
                 }
-                ok -> load()
+                ok -> reloadKeepingScroll()
                 else -> toast("操作失败：${obj.optString("error")}")
             }
         } catch (_: Throwable) {

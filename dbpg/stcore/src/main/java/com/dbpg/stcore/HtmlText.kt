@@ -27,6 +27,22 @@ private val HTML_CHUNK = Regex(
     RegexOption.IGNORE_CASE,
 )
 
+/**
+ * 这段内容是不是一份**完整 HTML 文档**（而不是普通正文里夹的标签）。
+ *
+ * 判定只依据 web 标准的文档标记，不列标签白名单、不猜预设正则 ——
+ * 美化预设千奇百怪，但「`<!DOCTYPE html` / `<html>` / `<head>`」是浏览器
+ * 认文档的固定记号，不会变。
+ *
+ * 为什么需要它：这类文档要交给 WebView 当**独立文档**渲染（iframe srcdoc）。
+ * 若仍走 [htmlifyNewlines]，会在 `<head>`/`<body>`/`<div>` 之间的排版换行处
+ * 插进一堆 `<br>`，卡片被撑出莫名其妙的空行；而 `<style>`/`<script>` 之外的
+ * 换行本来就属于文档排版，不该变成可见换行。
+ */
+private val FULL_DOC = Regex("<!DOCTYPE\\s+html|<html\\b|<head\\b", RegexOption.IGNORE_CASE)
+
+fun isFullHtmlDocument(text: String): Boolean = FULL_DOC.containsMatchIn(text)
+
 fun htmlifyNewlines(html: String): String {
     if (html.indexOf('\n') < 0) return html
     return HTML_CHUNK.replace(html) { m ->

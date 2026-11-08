@@ -262,7 +262,14 @@ fun transformForDisplayRich(
      *   被判定为"像 HTML"交给卡片渲染，整段会挤成一大坨 —— 实测截图
      *   就是这个现象。<style>/<script>/<pre> 内部原样保留。
      */
-    val richHtml = htmlifyNewlines(stripImageMarkers(out))
+    val stripped = stripImageMarkers(out)
+    /*
+     * 整页 HTML 文档（美化卡片）原样交给 WebView 当独立文档渲染。
+     * 不能过 htmlifyNewlines：它会在 <head>/<body>/<div> 之间的排版换行处
+     * 插 <br>，卡片被撑出一串空行（实测截图里 `<br><script>` 就是这么来的）。
+     * 文档内部靠自己的 CSS 排版，换行折叠是浏览器的正确行为。
+     */
+    val richHtml = if (isFullHtmlDocument(stripped)) stripped else htmlifyNewlines(stripped)
     // 纯文本兜底：美化正则常带 <style>/<script>，文本化时全部清掉
     val plain = stripHtmlNoise(richHtml)
     return DisplayResult(buildContentBlocks(plain, attachments), richHtml)

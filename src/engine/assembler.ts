@@ -5,6 +5,7 @@ import { runRegex } from './regexEngine';
 import { triggerWorldbook } from './worldbook';
 import { countTokens } from './tokenizer';
 import { stripImageMarkers } from './imageMarker';
+import { listRankedPrompts } from './presetOrder';
 
 // 三阶段提示组装引擎：参考 GengBi 的 prompt_assembler.py 用 TS 重写。
 //
@@ -49,40 +50,37 @@ export function assemblePrompt(opts: AssemblyOptions): AssemblyResult {
   } = opts;
 
   // ---- 阶段 1：按 prompt_order 排序 ----
-  // 优先用 parsecard 的 listPromptEntries()（它已处理排序与 enabled），
-  // 回退到原始 ST JSON 的 prompt_order[characterId] + prompts 查找。
+  //
+  // 只认 prompt_order（见 presetOrder.ts）：
+  //   - 顺序 = order[] 的顺序，和 ST / Tavo 的主列表一致；
+  //   - 不在 order[] 里的「未激活提示词」**不进上下文**（ST 本来就不发）；
+  //   - 启停以 order[].enabled 为准，不再「任一为 false 都算关」。
+  //
+  // 以前这里走 parsecard 的 listPromptEntries()，它默认把未激活项追加到末尾，
+  // 「未激活但 enabled=true」的条目会被悄悄发出去 —— 这是与 ST 不一致的隐患。
   const baseMessages: ChatMessage[] = [];
   if (preset) {
-    const entries: any[] = preset.listPromptEntries ? preset.listPromptEntries() : [];
-    if (entries.length > 0) {
-      for (const e of entries) {
-        if (e.enabled === false) continue;
-        const p = e.prompt ?? e;
-        if (!p || p.content == null) continue;
-        baseMessages.push({
-          role: (p.role as ChatMessage['role']) || 'system',
-          content: p.content ?? '',
-          _promptId: p.identifier || e.identifier,
-          _name: p.name,
-          _origin: 'preset',
-        });
+    let inactive = 0;
+    for (const e of listRankedPrompts(preset)) {
+      if (!e.ordered) {
+        inactive += 1;
+        continue;
       }
-    } else {
-      // 原始 ST 预设 JSON 回退路径
-      const charId = String(preset.defaultCharacterId ?? '100001');
-      const order: string[] = preset.prompt_order?.[charId] ?? preset.prompt_order?.['100001'] ?? preset.promptOrder?.[charId] ?? [];
-      for (const id of order) {
-        const p = preset.getPrompt ? preset.getPrompt(id) : findPromptInRaw(preset, id);
-        if (!p) continue;
-        if (p.enabled === false) continue;
-        baseMessages.push({
-          role: (p.role as ChatMessage['role']) || 'system',
-          content: p.content ?? '',
-          _promptId: p.identifier || id,
-          _name: p.name,
-          _origin: 'preset',
-        });
-      }
+      if (!e.enabled) continue;
+      const p = e.prompt;
+      if (!p || p.content == null) continue;
+      baseMessages.push({
+        role: (p.role as ChatMessage['role']) || 'system',
+        content: p.content ?? '',
+        _promptId: p.identifier || e.identifier,
+        _name: p.name,
+        _origin: 'preset',
+      });
+    }
+    if (inactive > 0) {
+      warnings.push(
+        `预设里有 ${inactive} 条未激活提示词（不在排序表中），本次未发送；可在资产页把它们加入排序`,
+      );
     }
   }
 
@@ -284,13 +282,6 @@ function injectCharacterCardIfMissing(
     _name: '角色卡（自动注入）',
   } as ChatMessage);
   return out;
-}
-
-// 从原始 ST 预设 JSON 中按 identifier 找 prompt（不依赖 parsecard 实例方法时用）
-function findPromptInRaw(preset: any, id: string): any | null {
-  const list: any[] = preset?.prompts ?? [];
-  const p = list.find((x) => x.identifier === id);
-  return p ?? null;
 }
 
 function injectWorldbook(

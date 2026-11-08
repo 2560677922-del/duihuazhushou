@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import com.dbpg.duihuazhushou.appearance.AppearanceConfig
 import com.dbpg.duihuazhushou.chat.render.CardRenderer
+import com.dbpg.duihuazhushou.chat.render.HtmlSanitizer
 import com.dbpg.duihuazhushou.chat.render.RenderCache
 import com.dbpg.duihuazhushou.imagegen.AutoImageService
 import com.dbpg.duihuazhushou.session.SessionBindingStore
@@ -19,6 +20,7 @@ import com.dbpg.stcore.imagegen.AutoImageSupport
 import com.dbpg.stcore.render.Hashing
 import com.dbpg.stcore.render.RenderKey
 import com.dbpg.stcore.render.StreamPipeline
+import com.dbpg.stcore.richtext.FoldParser
 import com.dbpg.stcore.session.ActionImage
 import com.dbpg.stcore.session.SessionAction
 import com.dbpg.stcore.session.SessionDoc
@@ -26,6 +28,7 @@ import com.dbpg.stcore.session.SessionEditor
 import com.dbpg.stcore.session.SessionHistory
 import com.dbpg.stcore.session.SummaryBlock
 import com.dbpg.stcore.session.SummaryPlanner
+import com.dbpg.stcore.isFullHtmlDocument
 import com.dbpg.stcore.stripHtmlNoise
 import com.dbpg.stcore.stripImageMarkers
 import com.dbpg.stcore.transformForDisplayRich
@@ -396,13 +399,13 @@ class ChatController(
                 generating = generating,
                 sessionId = d.id,
             )
-            val html = rendered.html
-            if (html != null) {
-                renderedHtml[a.id] = html
+            val webHtml = rendered.html
+            if (webHtml != null) {
+                renderedHtml[a.id] = webHtml
             } else {
                 renderedHtml.remove(a.id)
             }
-            val card = if (html != null) cardRefs[a.id] else null
+            val card = if (webHtml != null) cardRefs[a.id] else null
             out.add(
                 ChatItem(
                     id = "a:${a.id}",
@@ -413,7 +416,10 @@ class ChatController(
                     actionId = a.id,
                     variantIndex = a.variantIndex,
                     variantCount = a.variants.size,
-                    html = html,
+                    html = webHtml,
+                    // 含 <details> 的消息走原生折叠块：可交互、默认展开状态可配，
+                    // 不会像位图卡片那样「默认收起 + 点不动」。
+                    foldHtml = rendered.foldHtml,
                     cardPath = card?.path,
                     cardHeightPx = card?.heightPx ?: 0,
                 ),
@@ -422,13 +428,65 @@ class ChatController(
         return out
     }
 
-    /** AI 正文 → 显示文本 + 本地图片路径（跑 ST 显示变换：思维链/正则/变量/剥标记）。 */
-    /** renderAi 的输出：纯文本 + 图片路径 + 可选的富 HTML（给卡片渲染）。 */
+    /**
+     * renderAi 的输出。
+     *
+     * 三个 HTML 字段刻意分开，因为它们去的地方完全不同：
+     *   rich     —— 跑完正则的完整 HTML（Markdown 未转），也是渲染缓存的存储形态
+     *   html     —— 交给 WebView 真渲染；只有「含结构性标记」时非空
+     *   foldHtml —— 原生折叠块的降级路径；WebView 不可用时才有用
+     *
+     * 为什么 `html` 只判"含不含标记"、不再猜具体标签：
+     *   上一版要求「块级标签 ≥2 或含 <style>」才走 WebView，`<details>` 单开
+     *   标签只命中 1 次，于是被判成普通文本 —— 折叠栏就成了两行裸字。
+     *   预设的正则写法本来就没有边界（div/table/summary/自定义 class），
+     *   按标签白名单追是追不完的，改成"有标记就交给浏览器"。
+     */
     private data class RenderedMsg(
         val plain: String,
         val paths: List<String>,
+        val rich: String,
         val html: String?,
+        val foldHtml: String?,
     )
+
+    /**
+     * 决定一条消息走哪种渲染：
+     *   含结构性标记 → WebView（浏览器怎么渲染就怎么渲染）
+     *   其余         → 单个 TextView（Markdown 走 RichTextParser，最快、可选中复制）
+     */
+    private fun decideRender(
+        plain: String,
+        paths: List<String>,
+        rich: String,
+        appearance: AppearanceConfig,
+    ): RenderedMsg {
+        /*
+         * 先在 Kotlin 侧清洗再判：模型输出可以带 <script>，
+         * 而 WebView 是开着 JS 的（marked + 高度回传都要用）。
+         * 清洗放在判定之前，也顺带避免"只剩一个 <script> 也判成富文本"。
+         */
+        val cleaned = HtmlSanitizer.clean(rich, appearance.allowScript)
+        val web = if (cleaned.isNotBlank() && appearance.htmlRender && hasMarkup(cleaned)) cleaned else null
+        // 用户关掉富渲染时，至少让 <details> 还能用原生折叠块看（只认这一种）
+        val fold = if (web == null && rich.isNotBlank() && FoldParser.hasFold(rich)) rich else null
+        return RenderedMsg(plain, paths, rich, web, fold)
+    }
+
+    /**
+     * 消息里有没有"结构性标记"。
+     *
+     * ★ `<br>` 必须排除：`htmlifyNewlines` 会给每条多行消息插 `<br>`，
+     *   拿它当判据等于所有消息都走 WebView —— 那正是要避免的开销。
+     *
+     * 除 `<br>` 以外的标签一律算（包括 `<xy-card>` 这种作者自定义标签）：
+     * 宁可多花一次 WebView 渲染，也不要因为"没见过这个标签"把内容显示成裸字。
+     */
+    private fun hasMarkup(html: String): Boolean =
+        MARKUP_TAG.findAll(html).any { !it.value.startsWith("<br", ignoreCase = true) }
+
+    /** 匹配任意开/自闭合标签。`<3`、`a<b` 这种不带标签边界的不会命中。 */
+    private val MARKUP_TAG = Regex("<([a-zA-Z][a-zA-Z0-9-]*)(\\s|/?>)")
 
     // ------------------------------------------------------------ 卡片位图
 
@@ -494,7 +552,7 @@ class ChatController(
         generating: Boolean,
         sessionId: String,
     ): RenderedMsg {
-        if (text.isBlank()) return RenderedMsg("", emptyList(), null)
+        if (text.isBlank()) return RenderedMsg("", emptyList(), "", null, null)
         if (generating || sessionId.isEmpty() || !cacheable) {
             return renderAi(text, images, depth, display, appearance)
         }
@@ -515,11 +573,13 @@ class ChatController(
         cache.get(sessionId, key)?.let { e ->
             // 图片文件可能被用户在查看器里删了：过滤掉，但不影响正文
             val live = e.paths.filter { java.io.File(it).exists() }
-            return RenderedMsg(e.plain, live, e.html)
+            // 缓存里存的是富 HTML，卡片/折叠的判定在这里重算 —— 判定依赖
+            // appearance，而它已经进了 lookHash，配置一变缓存自然失效。
+            return decideRender(e.plain, live, e.html ?: "", appearance)
         }
 
         val out = renderAi(text, images, depth, display, appearance)
-        cache.put(sessionId, key, RenderCache.Entry(out.plain, out.html, out.paths))
+        cache.put(sessionId, key, RenderCache.Entry(out.plain, out.rich, out.paths))
         return out
     }
 
@@ -530,7 +590,7 @@ class ChatController(
         display: DisplayConfig,
         appearance: AppearanceConfig,
     ): RenderedMsg {
-        if (text.isBlank()) return RenderedMsg("", emptyList(), null)
+        if (text.isBlank()) return RenderedMsg("", emptyList(), "", null, null)
 
         val attachments = images.map {
             NativeImage(
@@ -578,14 +638,8 @@ class ChatController(
                 }
             }
         }
-        // 只有"像一份 HTML"的消息才交给 WebView：带 <style>、或块级标签 ≥2 个。
-        // 普通 Markdown/纯文本继续走 TextView（更快、可选中复制）。
-        val html = rich.html
-        val looksLikeHtml = appearance.htmlRender && html.isNotBlank() &&
-            (html.contains("<style", ignoreCase = true) ||
-                Regex("<(div|details|table|section|article)\\b", RegexOption.IGNORE_CASE)
-                    .findAll(html).count() >= 2)
-        return RenderedMsg(sb.toString(), paths, if (looksLikeHtml) html else null)
+        // 三种渲染路径的判定集中在 decideRender：折叠块 / 卡片位图 / 纯文本。
+        return decideRender(sb.toString(), paths, rich.html, appearance)
     }
 
     // ------------------------------------------------------------ 发送 / 生成

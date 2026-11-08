@@ -1,0 +1,295 @@
+/*
+ * 消息正文的 WebView 基础样式（ST 一档）。
+ *
+ * 为什么要单独一套 CSS：
+ *   模型/正则产出的通常是**裸 HTML 片段**（<details>、<table>、<div>），
+ *   不带任何样式。浏览器的默认样式里 <details> 是「► 标题 + 无边框」、
+ *   <table> 无边框、<blockquote> 无缩进 —— 看着就是"渲染没上去"。
+ *   这套 CSS 只负责**兜底**：作者没写样式时长得体面；作者写了样式
+ *   （<style> 块）时优先级低，不会覆盖作者的设计。
+ *
+ * 取色全部走 CSS 变量，由原生按外观设置注入（字号/行距/字体/正文色/主题色）。
+ */
+
+:root {
+    --fg: #1A2230;
+    --accent: #6C5CE7;
+    --soft: rgba(108, 92, 231, 0.08);
+    --line: rgba(108, 92, 231, 0.26);
+    --code-bg: rgba(20, 24, 35, 0.07);
+    --size: 16.5px;
+    --lh: 1.62;
+    --font: sans-serif;
+    --r: 10px;
+}
+
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+}
+
+body {
+    color: var(--fg);
+    font-family: var(--font);
+    font-size: var(--size);
+    line-height: var(--lh);
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+#m {
+    display: block;
+    /*
+     * flow-root 建立独立 BFC：子元素的 margin 不会"穿透"到 #m 外面。
+     * 不建 BFC 的话，第一个 <p> 的 margin-top 会塌到 body 上，
+     * 原生量到的高度比实际小一截，气泡底部就会被切掉一行。
+     * 老 WebView 不认 flow-root 时退化成 block，靠 JS 里的 scrollHeight 兜底。
+     */
+    display: flow-root;
+}
+
+#m > :first-child { margin-top: 0; }
+#m > :last-child { margin-bottom: 0; }
+
+/* ---------------------------------------------------------------- 文本 */
+
+#m p {
+    margin: 0 0 0.55em;
+}
+
+#m h1, #m h2, #m h3, #m h4, #m h5, #m h6 {
+    margin: 0.7em 0 0.4em;
+    line-height: 1.35;
+    font-weight: 700;
+}
+
+#m h1 { font-size: 1.32em; }
+#m h2 { font-size: 1.2em; }
+#m h3 { font-size: 1.1em; }
+#m h4, #m h5, #m h6 { font-size: 1em; }
+
+#m strong, #m b { font-weight: 700; }
+#m em, #m i { font-style: italic; }
+#m del, #m s { opacity: 0.7; }
+
+#m a {
+    color: var(--accent);
+    text-decoration: none;
+    border-bottom: 1px solid var(--line);
+}
+
+#m mark {
+    background: rgba(255, 206, 84, 0.45);
+    color: inherit;
+    padding: 0 0.15em;
+    border-radius: 3px;
+}
+
+#m hr {
+    border: none;
+    border-top: 1px solid var(--line);
+    margin: 0.9em 0;
+}
+
+/* ---------------------------------------------------------------- 引用 */
+
+#m blockquote {
+    margin: 0.55em 0;
+    padding: 0.15em 0 0.15em 0.85em;
+    border-left: 3px solid var(--line);
+    color: var(--fg);
+    opacity: 0.82;
+}
+
+#m blockquote > :last-child { margin-bottom: 0; }
+
+/* ---------------------------------------------------------------- 代码 */
+
+#m code {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.9em;
+    background: var(--code-bg);
+    padding: 0.12em 0.36em;
+    border-radius: 5px;
+    word-break: break-all;
+}
+
+#m pre {
+    margin: 0.55em 0;
+    padding: 0.7em 0.85em;
+    background: var(--code-bg);
+    border-radius: var(--r);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+#m pre code {
+    background: none;
+    padding: 0;
+    font-size: 0.88em;
+    line-height: 1.5;
+    word-break: normal;
+    white-space: pre;
+}
+
+/* ---------------------------------------------------------------- 列表 */
+
+#m ul, #m ol {
+    margin: 0.5em 0;
+    padding-left: 1.35em;
+}
+
+#m li { margin: 0.18em 0; }
+#m li > p { margin: 0 0 0.25em; }
+
+/* ---------------------------------------------------------------- 表格 */
+
+#m table {
+    width: 100%;
+    margin: 0.6em 0;
+    border-collapse: collapse;
+    font-size: 0.94em;
+}
+
+#m th, #m td {
+    border: 1px solid var(--line);
+    padding: 0.35em 0.55em;
+    text-align: left;
+    vertical-align: top;
+}
+
+#m th {
+    background: var(--soft);
+    font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- 媒体 */
+
+#m img, #m video, #m canvas, #m svg {
+    max-width: 100%;
+    height: auto;
+}
+
+#m img { border-radius: 8px; }
+
+/* ------------------------------------------------------------ 折叠栏 */
+
+/*
+ * <details> 是本轮重做的重点。
+ * 浏览器默认只给一个 ►，内容是裸文本 —— 放在气泡里非常出戏。
+ * 这里做成「左侧主题色竖条 + 淡色卡片 + 三角旋转」，
+ * 且**不依赖 JS**：作者写了 <details> 就能展开。
+ */
+#m details {
+    margin: 0.6em 0;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--r);
+    background: var(--soft);
+    overflow: hidden;
+    /* 一点外阴影：气泡底和卡片底颜色接近，不给阴影会像"两块同色拼在一起" */
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+#m details > summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: baseline;
+    gap: 0.42em;
+    padding: 0.55em 0.75em;
+    font-weight: 600;
+    color: var(--accent);
+    outline: none;
+    user-select: none;
+}
+
+#m details > summary::-webkit-details-marker { display: none; }
+
+/* 三角形用 border 画，避免字体缺字；展开时旋转 90° */
+#m details > summary::before {
+    content: "";
+    flex: none;
+    width: 0;
+    height: 0;
+    border-left: 5px solid currentColor;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    transform-origin: 2px 50%;
+    transition: transform 0.18s ease;
+}
+
+#m details[open] > summary::before {
+    transform: rotate(90deg);
+}
+
+#m details > summary > p {
+    display: inline;
+    margin: 0;
+}
+
+#m details[open] > summary {
+    border-bottom: 1px solid var(--line);
+}
+
+/* 内容区左右缩进，和标题文字对齐（标题左侧有三角 + gap） */
+#m details > *:not(summary) {
+    margin-left: 0.75em;
+    margin-right: 0.7em;
+}
+
+#m details > *:not(summary):first-of-type {
+    margin-top: 0.5em;
+}
+
+#m details > *:not(summary):last-child {
+    margin-bottom: 0.55em;
+}
+
+/* 嵌套折叠：内层淡一点，避免三层以上颜色堆叠过重 */
+#m details details {
+    background: transparent;
+    border-left-width: 2px;
+}
+
+/* ------------------------------------------------ 整页 HTML 卡片 */
+
+/*
+ * 美化预设常吐出一整份 HTML 文档（<html><head><style><body><script>）。
+ * 它必须作为**独立文档**渲染：塞进 #m 的话 <html>/<head>/<body> 会被浏览器
+ * 丢掉，body{} 选择器不匹配、@font-face 之外的全局规则失效，看起来就是
+ * 「渲染没上去」。这里用 iframe srcdoc 承载，样式/字体/结构/脚本全部生效。
+ */
+#m > iframe.card-doc {
+    display: block;
+    width: 100%;
+    margin: 0.25em 0;
+    border: 0;
+    background: transparent;
+    /* 不让卡片自己滚：高度由 iframe 内探针 postMessage 回报后撑开 */
+    overflow: hidden;
+}
+
+/* 围栏外的正文（剧情 / 选项 / 摘要）和卡片拼在同一条消息里 */
+#m > .dhp-md > :first-child { margin-top: 0; }
+#m > .dhp-md > :last-child { margin-bottom: 0; }
+
+/* ------------------------------------------------------- 作者样式兜底 */
+
+/*
+ * 作者写了 <style> 时会被追加在后面（优先级更高），
+ * 但有两类东西**必须**由我们兜住，否则气泡会被撑破：
+ *   1. 固定宽高（width: 800px）→ 限制在容器内
+ *   2. 绝对定位/超长内容 → 不横向溢出
+ */
+#m * {
+    max-width: 100%;
+}

@@ -23,11 +23,21 @@
         android:background="@drawable/bubble_bg">
 
         <!--
-          美化卡片：显示离屏渲染好的位图（不是 WebView）。
-          ★ 以前这里是 <WebView>，每个 ViewHolder 都会实例化一个完整渲染上下文，
-            同屏 10 个就是 10 个 WebView —— 滚动掉帧、内存飙高的主因。
-            现在列表里零 WebView；需要真网页交互时点开全屏「卡片查看器」。
+          富文本容器：装一个 HtmlMessageView（WebView）。
+
+          ★ 只有「含标记的消息」才会走到这里（纯文本仍用下面的 TextView）。
+            纯文本消息占绝对多数，所以列表里的 WebView 实例数被压得很低；
+            Adapter 还限制了这类 ViewHolder 的回收池大小（见 MAX_WEB_POOL）。
+          为什么不用位图：位图是静态的 —— <details> 点不开、链接点不了，
+          每张还要离屏绘制 + 落盘。真渲染只有 WebView 做得到。
         -->
+        <FrameLayout
+            android:id="@+id/msg_web"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:visibility="gone" />
+
+        <!-- 位图卡片：旧路径的降级位（WebView 不可用/内容超限时才用） -->
         <ImageView
             android:id="@+id/msg_card"
             android:layout_width="match_parent"
@@ -44,6 +54,18 @@
             android:textColor="#1A2230"
             android:textSize="15sp"
             android:lineSpacingExtra="2dp" />
+
+        <!--
+          分块渲染容器（目前只用于 <details> 折叠栏）。
+          含折叠块的消息不能用单个 TextView：折叠状态要能点开/收起，
+          所以这里按块放「文本 TextView + 折叠卡片」。
+        -->
+        <LinearLayout
+            android:id="@+id/msg_blocks"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone" />
 
         <!-- 图片容器：原生聊天里最占地方的就是配图，单独一列堆叠 -->
         <LinearLayout

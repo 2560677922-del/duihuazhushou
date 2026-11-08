@@ -287,7 +287,8 @@ object CardRenderer {
             }
         }
 
-        val safe = if (job.style.allowScript) job.html else sanitize(job.html)
+        // 清洗逻辑收敛到 HtmlSanitizer 一处：位图路径和列表 WebView 走同一套规则
+        val safe = HtmlSanitizer.clean(job.html, job.style.allowScript)
         view.loadDataWithBaseURL(null, wrap(safe, job.style), "text/html", "utf-8", null)
     }
 
@@ -301,14 +302,6 @@ object CardRenderer {
     }
 
     // ------------------------------------------------------------ HTML 包装
-
-    private fun sanitize(html: String): String {
-        var out = html
-        out = Regex("<script\\b[^>]*>[\\s\\S]*?</script\\s*>", RegexOption.IGNORE_CASE).replace(out, "")
-        out = Regex("<script\\b[^>]*/?>", RegexOption.IGNORE_CASE).replace(out, "")
-        out = Regex("\\son\\w+\\s*=\\s*(\"[^\"]*\"|'[^']*')", RegexOption.IGNORE_CASE).replace(out, "")
-        return out
-    }
 
     private fun wrap(html: String, style: Style): String {
         val color = String.format(

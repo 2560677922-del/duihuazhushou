@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!--
+  消息正文的渲染壳。
+
+  ★ 为什么是一个"壳"而不是每次 loadData 拼一整份 HTML：
+    列表滚动时 ViewHolder 会反复 bind，如果每条都拼一份 40KB 的字符串
+    重新 loadData，等于每次都重建一次文档 + JS 上下文（十几毫秒起步，
+    滚动就掉帧）。改成：每个 WebView 只在创建时加载一次这个壳，
+    之后用 evaluateJavascript 调 DHP.render() 换内容。
+
+  ★ 为什么用 file:///android_asset 而不是 loadDataWithBaseURL：
+    需要引用同目录的 render.css / marked.min.js / render.js。写进
+    一个文件也行，但 CSS 和 JS 就不再可读，维护成本很高。
+    assets 属于 file:// 域，WebView 需要 allowFileAccess = true，
+    同时禁掉 allowFileAccessFromFileURLs（消息内容不会加载本地文件）。
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="stylesheet" href="render.css">
+</head>
+<body>
+<div id="m"></div>
+<script src="marked.min.js"></script>
+<script src="render.js"></script>
+</body>
+</html>

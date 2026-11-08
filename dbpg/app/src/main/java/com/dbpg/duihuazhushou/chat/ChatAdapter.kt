@@ -1,5 +1,6 @@
 package com.dbpg.duihuazhushou.chat
 
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -17,7 +18,11 @@ import com.dbpg.duihuazhushou.appearance.AppearanceConfig
 import com.dbpg.duihuazhushou.appearance.BubbleStyle
 import com.dbpg.duihuazhushou.appearance.ThemePalette
 import com.dbpg.duihuazhushou.chat.render.CardBitmaps
+import com.dbpg.duihuazhushou.chat.render.HtmlMessageView
 import com.dbpg.duihuazhushou.richtext.RichTextRenderer
+import com.dbpg.stcore.richtext.FoldParser
+import com.dbpg.stcore.richtext.MsgBlock
+import com.dbpg.stcore.richtext.RichStyle
 import com.dbpg.stcore.richtext.RichTextParser
 
 /**
@@ -74,8 +79,17 @@ class ChatAdapter(
     /** 从设置页回来时调用：立刻套用新的字号/行距/宽度。 */
     fun updateConfig(cfg: AppearanceConfig) {
         config = cfg
+        webHeights.clear()
         notifyDataSetChanged()
     }
+
+    /**
+     * 每条富文本消息上次量到的高度（px）。
+     *
+     * 为什么记在这里：WebView 复用后要重新 layout，如果不给初始高度，
+     * 会先塌成 0 再撑开 —— 滚动时整页抖一下。按消息 id 记住就稳了。
+     */
+    private val webHeights = HashMap<String, Int>()
 
     /**
      * 流式局部刷新：只改这一条的文字。
@@ -96,6 +110,19 @@ class ChatAdapter(
     }
 
     companion object {
+        /** 纯文本 / 富文本两种 item 类型：分开才能分别限制回收池，避免 WebView 被"传染"给纯文本消息 */
+        const val TYPE_TEXT = 0
+        const val TYPE_HTML = 1
+
+        /** 富文本 ViewHolder 的回收池上限。屏幕上同时可见的富消息通常 ≤2，留 2 个够用。 */
+        const val MAX_WEB_POOL = 2
+
+        /** 渲染页超过这个时间还没回传高度，就退回纯文本（防白气泡）。 */
+        private const val WEB_FALLBACK_MS = 3000L
+
+        /** 交给 WebView 的 HTML 长度上限，超了退回纯文本。 */
+        private const val MAX_WEB_HTML = 200_000
+
         private val DIFF = object : DiffUtil.ItemCallback<ChatItem>() {
             override fun areItemsTheSame(oldItem: ChatItem, newItem: ChatItem) = oldItem.id == newItem.id
             override fun areContentsTheSame(oldItem: ChatItem, newItem: ChatItem) = oldItem == newItem
@@ -110,6 +137,8 @@ class ChatAdapter(
         root: FrameLayout,
         val bubble: LinearLayout,
         val text: TextView,
+        val blocks: LinearLayout,
+        val webHost: FrameLayout,
         val card: ImageView,
         val images: LinearLayout,
         val meta: LinearLayout,
@@ -118,7 +147,26 @@ class ChatAdapter(
         val verNewer: TextView,
         val more: TextView,
         val imgGen: TextView,
+        /** 只有 TYPE_HTML 的 ViewHolder 才有；其余为 null */
+        var web: HtmlMessageView? = null,
+        /** 当前绑定的消息 id：延迟回调要靠它判断"这个 holder 还是不是同一条" */
+        var boundId: String = "",
     ) : RecyclerView.ViewHolder(root)
+
+    /**
+     * 池化：给「富文本」这一类单独设回收池上限。
+     *
+     * RecyclerView 默认每类缓存 5 个 ViewHolder —— 对纯文本无所谓，对
+     * WebView 是灾难：每个实例十几 MB + 独立 JS 上下文，一屏滚过去能攒出
+     * 十几个。上限收到 2（屏幕上同时可见的富消息通常 ≤2），超出即销毁。
+     *
+     * 懒加载不用另做：onBindViewHolder 只在条目进入可见区（或 GapWorker
+     * 预取即将可见的）时才调用，WebView 在那一刻才收到内容。
+     */
+    override fun onAttachedToRecyclerView(rv: RecyclerView) {
+        super.onAttachedToRecyclerView(rv)
+        rv.recycledViewPool.setMaxRecycledViews(TYPE_HTML, MAX_WEB_POOL)
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val v = LayoutInflater.from(parent.context).inflate(R.layout.item_chat_message, parent, false)
@@ -130,10 +178,12 @@ class ChatAdapter(
          * 聊天页的顶栏、输入栏、菜单不在这棵树里，照常跟随底板设置。
          */
         v.tag = "dhp:keep-color"
-        return VH(
+        val holder = VH(
             v as FrameLayout,
             v.findViewById(R.id.bubble),
             v.findViewById(R.id.msg_text),
+            v.findViewById(R.id.msg_blocks),
+            v.findViewById(R.id.msg_web),
             v.findViewById(R.id.msg_card),
             v.findViewById(R.id.msg_images),
             v.findViewById(R.id.msg_meta),
@@ -143,13 +193,130 @@ class ChatAdapter(
             v.findViewById(R.id.msg_more),
             v.findViewById(R.id.msg_img_gen),
         )
+        if (viewType == TYPE_HTML) holder.web = createWeb(holder)
+        return holder
+    }
+
+    /**
+     * 给一个 ViewHolder 造 WebView。
+     *
+     * 高度必须显式给：WebView 不支持 wrap_content，等页面回传真实高度
+     * 之前的占位高度先用「上次量到的值」（[webHeights]），没有再估算 ——
+     * 否则会出现"先塌成一条线、再猛地撑开"的跳动。
+     */
+    private fun createWeb(holder: VH): HtmlMessageView {
+        val web = HtmlMessageView(holder.itemView.context)
+        holder.webHost.addView(
+            web,
+            FrameLayout.LayoutParams(
+                bubbleContentWidthPx,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        web.heightListener = null
+        return web
+    }
+
+    override fun getItemViewType(position: Int): Int =
+        if (useWeb(getItem(position))) TYPE_HTML else TYPE_TEXT
+
+    /** 只有「含标记 + 已生成完 + 开了富渲染」的消息才值得用 WebView。 */
+    private fun useWeb(item: ChatItem): Boolean {
+        val html = item.html ?: return false
+        if (!config.htmlRender || item.streaming) return false
+        /*
+         * 超长消息（> 20 万字符）退回纯文本：内容要经 evaluateJavascript
+         * 整段送进 WebView，再走 marked 解析，十万字级别的消息会把主线程按住
+         * 好几百毫秒。这类消息通常是导入的旧日志，用纯文本读反而更快。
+         */
+        return html.length <= MAX_WEB_HTML
+    }
+
+    override fun onViewRecycled(holder: VH) {
+        super.onViewRecycled(holder)
+        // 不清空的话，滚动时旧内容会先闪一下再到新内容（同一个 WebView 复用）
+        holder.web?.reset()
+        holder.webHost.visibility = View.GONE
     }
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         bind(holder, getItem(position))
     }
 
+    /**
+     * 把一条富文本消息交给 WebView。
+     *
+     * 宽度每次 bind 都对一遍（用户可能刚在设置里改了气泡宽度），
+     * 高度先用上次量到的值占位，页面加载完会用真实高度覆盖。
+     */
+    private fun bindWeb(holder: VH, web: HtmlMessageView, item: ChatItem) {
+        val w = bubbleContentWidthPx
+        /*
+         * 容器宽度要显式给：XML 里是 match_parent，而气泡是 wrap_content，
+         * 子 View 取 match_parent 会一路取到"屏幕可用宽度"，气泡就被撑满了。
+         */
+        (web.parent as? View)?.let { host ->
+            val hlp = host.layoutParams
+            if (hlp != null && hlp.width != w) {
+                hlp.width = w
+                host.layoutParams = hlp
+            }
+        }
+        // 高度按「消息 + 版本」记：切版本时内容完全不同，高度当然也不同
+        val hKey = item.id + "@" + item.variantIndex
+        val known = webHeights[hKey] ?: item.cardHeightPx
+        val h = if (known > 0) known else estimateWebHeight(item.content, w)
+        val lp = web.layoutParams
+        if (lp == null || lp.width != w || lp.height != h) {
+            web.layoutParams = FrameLayout.LayoutParams(w, h)
+        }
+        web.heightListener = HtmlMessageView.HeightListener { px ->
+            webHeights[hKey] = px
+            val cur = web.layoutParams
+            if (cur != null && cur.height != px) {
+                cur.height = px
+                web.layoutParams = cur
+            }
+        }
+        val html = item.html ?: return
+        web.bind(html, HtmlMessageView.cssOf(config, fontScaleOf(web)))
+
+        /*
+         * 兜底：3 秒还没回传任何高度，说明 assets 里的渲染页没跑起来
+         * （文件缺失 / WebView 被系统禁用 / 厂商 ROM 阉割）。
+         * 这时退回纯文本 —— 宁可难看，也不能给用户留一个白气泡。
+         */
+        web.postDelayed({
+            if (holder.web !== web || holder.boundId != item.id) return@postDelayed
+            if ((webHeights[hKey] ?: 0) > 0) return@postDelayed
+            holder.webHost.visibility = View.GONE
+            holder.text.visibility = View.VISIBLE
+            styleText(holder.text)
+            RichTextRenderer.applyTo(holder.text, RichTextParser.parse(item.content))
+        }, WEB_FALLBACK_MS)
+    }
+
+    /** 系统字体缩放：TextView 用 sp 会跟着变，WebView 的 CSS px 不会，要手动对齐。 */
+    private fun fontScaleOf(view: View): Float {
+        val dm = view.resources.displayMetrics
+        return if (dm.density > 0f) dm.scaledDensity / dm.density else 1f
+    }
+
+    /**
+     * 首帧高度估算（只在"从没量过这条"时用）。
+     *
+     * 中文按 0.62em 估字宽：比精确排版偏大一点没关系 —— 宁可第一帧多留
+     * 一点白，也不要先塌后撑（那个更显眼）。
+     */
+    private fun estimateWebHeight(plain: String, widthPx: Int): Int {
+        val lineH = (config.textSizeSp * density * config.lineSpacing).coerceAtLeast(1f)
+        val perLine = (widthPx / (config.textSizeSp * density * 0.62f)).coerceAtLeast(6f)
+        val lines = plain.length / perLine + plain.count { it == '\n' } + 1
+        return (lines * lineH).toInt().coerceIn(lineH.toInt(), 30000)
+    }
+
     private fun bind(holder: VH, item: ChatItem) {
+        holder.boundId = item.id
         val ctx = holder.itemView.context
         val density = ctx.resources.displayMetrics.density
         val isUser = item.role == "user"
@@ -170,46 +337,73 @@ class ChatAdapter(
         holder.bubble.elevation = if (style.elevation && !isSystem) 1.2f * density else 0f
 
         /*
-         * 2) 卡片：显示离屏渲染好的位图。
+         * 2) 富文本：WebView 真渲染。
          *
-         * 位图还没生成时**先用纯文本顶上**，同时异步请求渲染 —— 不能为了等图
-         * 留个空白气泡（用户会以为消息丢了）。渲染完成后 controller 会刷新
-         * 这一条，位图"接替"文字，高度按已知值占位，不会跳。
+         * 判定只有一条：这条消息「含标记」且不是流式中间态。CSS、Markdown、
+         * <details>、表格、内联 <style> 全部交给 WebView —— 预设的正则写法
+         * 千奇百怪（div/table/summary/自定义 class），原生侧不可能逐种适配，
+         * 这也是 Tavo / Wivern / SillyClient 走的同一条路。
+         *
+         * 位图卡片与原生折叠块保留为降级路径：WebView 不可用、或这条没有
+         * ViewHolder（理论上不会）时还能把内容读出来。
          */
-        val cardPath = item.cardPath?.takeIf { java.io.File(it).exists() }
-        val wantCard = item.html != null && config.htmlRender && !item.streaming
-        val showCard = wantCard && cardPath != null
-        if (showCard) {
-            holder.text.visibility = View.GONE
-            holder.card.visibility = View.VISIBLE
-            val h = if (item.cardHeightPx > 0) item.cardHeightPx
-            else FrameLayout.LayoutParams.WRAP_CONTENT
-            holder.card.layoutParams = (holder.card.layoutParams).also { it.height = h }
-            CardBitmaps.load(holder.card, cardPath!!, bubbleContentWidthPx)
-            holder.card.setOnClickListener { listener.onCardOpen(item) }
-        } else {
+        val wantWeb = useWeb(item)
+        val web = holder.web
+        if (wantWeb && web != null) {
             holder.card.visibility = View.GONE
             holder.card.setImageDrawable(null)
-            holder.text.visibility = View.VISIBLE
-            // 卡片型内容但位图未就绪：先显示纯文本 + 请求渲染
-            if (wantCard) listener.onCardNeeded(item, bubbleContentWidthPx)
-        }
-
-        // 3) 文本：maxWidth 封顶 + Spannable 渲染（字号/行距/字体/颜色跟随外观设置）
-        holder.text.maxWidth = bubbleMaxWidthPx
-        holder.text.typeface = ThemePalette.fontTypeface(config.fontFamily)
-        holder.text.setTextColor(ThemePalette.fontColorInt(config))
-        holder.text.textSize = config.textSizeSp
-        holder.text.setLineSpacing(0f, config.lineSpacing)
-        val content = if (item.streaming) item.content + "▍" else item.content
-        if (showCard) {
-            // 已由位图渲染，TextView 留空不占位
-            holder.text.text = ""
-        } else if (content.isBlank()) {
+            holder.blocks.visibility = View.GONE
+            holder.blocks.removeAllViews()
             holder.text.visibility = View.GONE
+            holder.text.text = ""
+            holder.webHost.visibility = View.VISIBLE
+            bindWeb(holder, web, item)
         } else {
-            holder.text.visibility = View.VISIBLE
-            RichTextRenderer.applyTo(holder.text, RichTextParser.parse(content))
+            holder.webHost.visibility = View.GONE
+            web?.reset()
+
+            val cardPath = item.cardPath?.takeIf { java.io.File(it).exists() }
+            val wantCard = item.html != null && config.htmlRender && !item.streaming
+            val showCard = wantCard && cardPath != null
+            if (showCard) {
+                holder.text.visibility = View.GONE
+                holder.card.visibility = View.VISIBLE
+                val h = if (item.cardHeightPx > 0) item.cardHeightPx
+                else FrameLayout.LayoutParams.WRAP_CONTENT
+                holder.card.layoutParams = (holder.card.layoutParams).also { it.height = h }
+                CardBitmaps.load(holder.card, cardPath!!, bubbleContentWidthPx)
+                holder.card.setOnClickListener { listener.onCardOpen(item) }
+            } else {
+                holder.card.visibility = View.GONE
+                holder.card.setImageDrawable(null)
+                holder.text.visibility = View.VISIBLE
+                // 卡片型内容但位图未就绪：先显示纯文本 + 请求渲染
+                if (wantCard) listener.onCardNeeded(item, bubbleContentWidthPx)
+            }
+
+            // 3) 文本：含 <details> 时按块渲染，其余走单个 TextView
+            styleText(holder.text)
+            val fold = item.foldHtml
+            val useBlocks = fold != null && !item.streaming && !showCard
+            if (useBlocks) {
+                holder.text.text = ""
+                holder.text.visibility = View.GONE
+                holder.blocks.visibility = View.VISIBLE
+                renderFoldBlocks(holder.itemView.context, holder.blocks, item, fold!!)
+            } else {
+                holder.blocks.visibility = View.GONE
+                holder.blocks.removeAllViews()
+                val content = if (item.streaming) item.content + "▍" else item.content
+                if (showCard) {
+                    // 已由位图渲染，TextView 留空不占位
+                    holder.text.text = ""
+                } else if (content.isBlank()) {
+                    holder.text.visibility = View.GONE
+                } else {
+                    holder.text.visibility = View.VISIBLE
+                    RichTextRenderer.applyTo(holder.text, RichTextParser.parse(content))
+                }
+            }
         }
 
         // 3) 图片：复用前先清空，再按本地路径加载（LruCache 命中秒开）。
@@ -265,6 +459,153 @@ class ChatAdapter(
             holder.more.setOnClickListener { listener.onActionMenu(item, it) }
         }
     }
+
+    /**
+     * 正文 TextView 的统一排版（字号/行距/字体/颜色/最大宽度）。
+     * 折叠块里的每段文字也走这一套，否则同一气泡里会出现两种字号。
+     */
+    private fun styleText(tv: TextView) {
+        tv.maxWidth = bubbleMaxWidthPx
+        tv.typeface = ThemePalette.fontTypeface(config.fontFamily)
+        tv.setTextColor(ThemePalette.fontColorInt(config))
+        tv.textSize = config.textSizeSp
+        tv.setLineSpacing(0f, config.lineSpacing)
+    }
+
+    /**
+     * 折叠栏展开状态：key = "itemId#块序号"。
+     *
+     * 存在 Adapter 而不是 View 上 —— RecyclerView 复用会让"展开的第 3 条"
+     * 跑到别的消息上去，必须按消息 id 记住。
+     */
+    private val foldState = HashMap<String, Boolean>()
+
+    /**
+     * 按块渲染：正文段落用 TextView，`<details>` 用可点击的折叠卡片。
+     *
+     * 卡片宽度跟随内容（wrap），但正文 TextView 有 maxWidth 封顶，
+     * 所以长段落不会被撑出气泡。
+     */
+    private fun renderFoldBlocks(
+        ctx: android.content.Context,
+        box: LinearLayout,
+        item: ChatItem,
+        html: String,
+    ) {
+        box.removeAllViews()
+        for ((i, b) in FoldParser.split(html).withIndex()) {
+            when (b) {
+                is MsgBlock.Text -> {
+                    val tv = TextView(ctx)
+                    styleText(tv)
+                    RichTextRenderer.applyTo(tv, RichTextParser.parse(b.html))
+                    box.addView(tv)
+                }
+                is MsgBlock.Fold -> box.addView(foldCard(ctx, item, i, b))
+            }
+        }
+    }
+
+    /**
+     * 折叠卡片：左侧主题色竖条 + 标题 + 箭头，点击展开正文。
+     *
+     * 颜色全部从主题 accent 派生（6% 底 / 20% 描边 / 纯色竖条），
+     * 换主题时不会出现"气泡变了、折叠栏还是蓝色"的错位。
+     */
+    private fun foldCard(
+        ctx: android.content.Context,
+        item: ChatItem,
+        index: Int,
+        block: MsgBlock.Fold,
+    ): View {
+        val accent = ThemePalette.parseHex(config.accentColor, "#2F66D8")
+
+        val card = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dpOf(12f).toFloat()
+                setColor(mixWithWhite(accent, 0.06f))
+                setStroke(dpOf(1f).coerceAtLeast(1), mixWithWhite(accent, 0.22f))
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                topMargin = dpOf(6f)
+                bottomMargin = dpOf(4f)
+            }
+        }
+
+        val head = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dpOf(12f), dpOf(9f), dpOf(10f), dpOf(9f))
+            isClickable = true
+        }
+        head.addView(View(ctx).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = dpOf(2f).toFloat()
+                setColor(accent)
+            }
+        }, LinearLayout.LayoutParams(dpOf(3f), dpOf(14f)).apply { marginEnd = dpOf(8f) })
+
+        val title = TextView(ctx).apply {
+            // 标题里的反引号（`标题`）在 ST 里会变成行内代码底色；折叠卡片本身
+            // 已经是淡色底，再叠一层会脏。标题只保留粗体/斜体，去掉 code 底。
+            val richTitle = RichTextParser.parse(block.title)
+            text = RichTextRenderer.toSpannable(
+                richTitle.copy(spans = richTitle.spans.filter { it.style != RichStyle.CODE }),
+            )
+            setTextColor(accent)
+            textSize = (config.textSizeSp - 2f).coerceAtLeast(12f)
+            setTypeface(typeface, Typeface.BOLD)
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        head.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        val arrow = TextView(ctx).apply {
+            text = "▾"
+            setTextColor(mixWithWhite(accent, 0.72f))
+            textSize = 13f
+            setPadding(dpOf(6f), 0, 0, 0)
+        }
+        head.addView(arrow)
+        card.addView(head)
+
+        val body = TextView(ctx).apply {
+            setPadding(dpOf(14f), 0, dpOf(12f), dpOf(10f))
+        }
+        styleText(body)
+        RichTextRenderer.applyTo(body, RichTextParser.parse(block.body))
+        card.addView(body)
+
+        val key = "${item.id}#$index"
+        var open = foldState[key] ?: block.open
+        fun applyState(animate: Boolean) {
+            body.visibility = if (open) View.VISIBLE else View.GONE
+            if (animate) {
+                arrow.animate().rotation(if (open) 0f else -90f).setDuration(160).start()
+            } else {
+                arrow.rotation = if (open) 0f else -90f
+            }
+        }
+        head.setOnClickListener {
+            open = !open
+            foldState[key] = open
+            applyState(true)
+        }
+        applyState(false)
+        return card
+    }
+
+    /** 与白色按比例混合：ratio 越小越淡，避免半透明叠在气泡上出现脏色。 */
+    private fun mixWithWhite(color: Int, ratio: Float): Int = android.graphics.Color.rgb(
+        (android.graphics.Color.red(color) * ratio + 255 * (1 - ratio)).toInt(),
+        (android.graphics.Color.green(color) * ratio + 255 * (1 - ratio)).toInt(),
+        (android.graphics.Color.blue(color) * ratio + 255 * (1 - ratio)).toInt(),
+    )
 
     /**
      * 按款式生成气泡背景。

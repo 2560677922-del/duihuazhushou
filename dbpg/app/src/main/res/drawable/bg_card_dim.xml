@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 未激活条目：灰底同形卡片，和"会发出去"的白卡区分开，但仍是同一套圆角/描边 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#F6F7F9" />
+    <stroke android:width="1dp" android:color="#EDF0F5" />
+    <corners android:radius="14dp" />
+</shape>

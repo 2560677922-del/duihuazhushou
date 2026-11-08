@@ -31,6 +31,12 @@ import { collectPresetMessages } from '../engine/summaryPreset';
 import { streamChatCompletion } from '../engine/apiClient';
 import { imageMarkerInstruction } from '../engine/imageMarker';
 import { flattenForEngine } from '../engine/regexGroups';
+import {
+  activatePromptInOrder,
+  getActivePromptOrder,
+  listRankedPrompts,
+  movePromptInOrder,
+} from '../engine/presetOrder';
 import type { ChatMessage } from '../engine/types';
 import { OpenAIPreset, WorldBook } from 'parsecard';
 import { useAssetsStore } from '../stores/assets';
@@ -1219,6 +1225,30 @@ async function apiCommand(raw: string): Promise<void> {
         break;
       }
       /**
+       * 子条目排序 / 激活。
+       *
+       * 顺序的权威是 prompt_order 的 order[]，不是 prompts[] 数组 ——
+       * 所以这两个命令都只动排序表（presetOrder.ts），绝不重排提示词库本身。
+       *
+       * dir=-1 上移 / dir=1 下移；边界或找不到时什么都不做（原生会提示「已经到顶」）。
+       * 「加入排序」对应 ST / Tavo 里把未激活提示词拖回主列表：追加到末尾并启用。
+       */
+      case 'presetMovePrompt': {
+        const a = useAssetsStore();
+        const ps: any = (a.presets || []).find((x: any) => x._uid === req.presetId);
+        if (!ps) throw new Error('找不到预设');
+        const dir = req.dir === -1 || req.dir === 'up' ? -1 : 1;
+        if (movePromptInOrder(ps, String(req.identifier || ''), dir)) await a.save();
+        break;
+      }
+      case 'presetActivatePrompt': {
+        const a = useAssetsStore();
+        const ps: any = (a.presets || []).find((x: any) => x._uid === req.presetId);
+        if (!ps) throw new Error('找不到预设');
+        if (activatePromptInOrder(ps, String(req.identifier || ''))) await a.save();
+        break;
+      }
+      /**
        * 预设改名。只改显示名，不动 id / 子条目 / prompt_order，
        * 所以正在进行的对话引用的 presetId 不会失效。
        */
@@ -1240,20 +1270,8 @@ async function apiCommand(raw: string): Promise<void> {
         if (!list) throw new Error('找不到预设');
         const id = `native-${Date.now()}`;
         list.push({ identifier: id, name: '新子条目', content: '', role: 'system', system_prompt: true, enabled: true });
-        const po = ps?.data?.prompt_order ?? ps?.prompt_order;
-        if (Array.isArray(po)) {
-          for (const section of po) {
-            if (Array.isArray(section?.order) && section.order.every((x: any) => x && typeof x === 'object')) {
-              section.order.push({ identifier: id, enabled: true });
-            }
-          }
-        } else if (po && typeof po === 'object') {
-          for (const v of Object.values(po)) {
-            if (Array.isArray(v) && v.every((x: any) => x && typeof x === 'object')) {
-              (v as any[]).push({ identifier: id, enabled: true });
-            }
-          }
-        }
+        // 只接进「当前生效那一组」，不往所有角色组里复制一份（那会让别的角色组莫名多条）。
+        activatePromptInOrder(ps, id);
         await a.save();
         break;
       }
@@ -1452,57 +1470,21 @@ function imageApiSummary(): string {
 }
 
 /**
- * 遍历 ST 预设 prompt_order 的所有历史形态，回调每个「顺序项」。
- *
- * 见过的三种：
- *   1. [{ character_id: 100001, order: [{ identifier, enabled }] }]  ← ST 1.12+
- *   2. { '100001': [{ identifier, enabled }] }                       ← 部分分支
- *   3. { '100001': ['main', 'jailbreak', ...] }                      ← 老预设，纯 id 数组
- * 第 3 种没有 enabled 可写，只能靠 prompts[].enabled，遍历时自然跳过字符串。
- * 限制深度是防止预设里塞了奇形怪状的循环引用把这里跑死。
- */
-function forEachPromptOrderEntry(ps: any, fn: (e: any) => void): void {
-  const po = ps?.data?.prompt_order ?? ps?.prompt_order
-    ?? ps?.data?.promptOrder ?? ps?.promptOrder;
-  if (!po) return;
-  const walk = (node: any, depth: number): void => {
-    if (node == null || depth > 5) return;
-    if (Array.isArray(node)) {
-      for (const x of node) walk(x, depth + 1);
-      return;
-    }
-    if (typeof node !== 'object') return;
-    if (Array.isArray(node.order)) {
-      walk(node.order, depth + 1);
-      return;
-    }
-    if ('identifier' in node || 'id' in node || 'enabled' in node) {
-      fn(node);
-      return;
-    }
-    for (const v of Object.values(node)) walk(v, depth + 1);
-  };
-  walk(po, 0);
-}
-
-/** prompt_order 里这条是否被单独关掉。 */
-function promptOrderDisabled(ps: any, identifier: string): boolean {
-  let disabled = false;
-  forEachPromptOrderEntry(ps, (e) => {
-    if (String(e.identifier ?? e.id ?? '') === identifier && e.enabled === false) disabled = true;
-  });
-  return disabled;
-}
-
-/**
  * 单条 prompt 开关要同时写两处，否则「界面显示关了但提示词还在」：
- * `assembler.ts` 阶段 1 优先用 parsecard 的 listPromptEntries()（读 order.enabled），
- * 回退路径才读 prompts[].enabled。两处都同步才对任何版本预设生效。
+ * `assembler.ts` 读排序表的 order[].enabled（见 presetOrder.ts），
+ * 部分旧工具/导入器则读 prompts[].enabled。两处都同步才对任何版本预设生效。
+ *
+ * 只写**当前生效那一组**：ST 里同一个 prompt 可以按角色分组有不同的启停，
+ * 把所有组一起改会把别的角色组的设置抹掉（这是以前 forEach 全遍历的隐患）。
  */
 function syncPromptEnabled(ps: any, identifier: string, enabled: boolean): void {
-  forEachPromptOrderEntry(ps, (e) => {
-    if (String(e.identifier ?? e.id ?? '') === identifier) e.enabled = enabled;
-  });
+  const order = getActivePromptOrder(ps);
+  if (order) {
+    for (const e of order) {
+      if (typeof e !== 'object' || !e) continue;
+      if (String(e.identifier ?? e.id ?? '') === identifier) e.enabled = enabled;
+    }
+  }
   // store 里若存的是 parsecard 实例（而不是 toJSON 后的普通对象），
   // 顺带用官方 API 同步它内部的顺序表。
   if (typeof ps?.setPromptEnabled === 'function') {
@@ -1559,17 +1541,25 @@ function assetsDetail(): string {
     current: p._uid === a.currentPresetId,
     // 「启用」＝对话里可不可选（可见性基准）；缺省视为启用
     enabled: p.enabled !== false,
-    // 子条目要把「单独开关」用到的字段全带出来。enabled 有两处权威来源：
-    // prompts[].enabled 与 prompt_order 里的 order[].enabled，任一为 false 都算关。
-    prompts: (p.data?.prompts || p.prompts || []).map((x: any, i: number) => ({
-      identifier: x.identifier || `#${i}`,
-      name: x.name || x.identifier || `#${i}`,
-      content: x.content || '',
-      role: x.role || '',
-      system: x.system_prompt !== false,
-      enabled: x.enabled !== false && !promptOrderDisabled(p, x.identifier || `#${i}`),
-      marker: !!x.marker,
-      idx: i,
+    /*
+     * 子条目顺序 = 发送顺序，**只能来自 prompt_order**（见 engine/presetOrder.ts）。
+     * prompts[] 是「提示词库」，顺序是历史插入顺序，导入后跟 ST 对不上，
+     * 所以这里统一走 listRankedPrompts：
+     *   - ordered=true  在排序表里，position 从 1 递增；
+     *   - ordered=false 在 ST 里属于「未激活提示词」，不参与生成，排到末尾单独分区。
+     * 启停以 order[].enabled 为准（ST 唯一权威），未激活恒为 false。
+     */
+    prompts: listRankedPrompts(p).map((e) => ({
+      identifier: e.identifier,
+      name: e.prompt?.name || e.identifier,
+      content: e.prompt?.content || '',
+      role: e.prompt?.role || '',
+      system: e.prompt?.system_prompt !== false,
+      enabled: e.enabled,
+      ordered: e.ordered,
+      position: e.position,
+      marker: !!e.prompt?.marker,
+      idx: e.index,
     })),
   }));
   const regexGroups = (a.regexGroups || []).map((g: any) => ({
@@ -1634,7 +1624,10 @@ function summaryPreset(presetId: string): string {
     String(card?.name || card?.data?.name || '').trim();
   const user = String(preset.getSetting?.('name_user') || '').trim() || '用户';
 
-  const entries: any[] = preset.listPromptEntries ? preset.listPromptEntries() : [];
+  // 与真实组装同一套排序规则：未激活提示词不进摘要（它就是"不发生效"的部分）
+  const entries: any[] = listRankedPrompts(preset)
+    .filter((e) => e.ordered)
+    .map((e) => ({ enabled: e.enabled, prompt: e.prompt }));
   const vars = useVariablesStore();
   /*
    * 角色卡字段一律置空、只留名字 —— 见 collectPresetMessages 的注释。

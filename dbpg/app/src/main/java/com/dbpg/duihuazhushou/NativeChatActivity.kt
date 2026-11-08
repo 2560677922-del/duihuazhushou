@@ -175,6 +175,14 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         adapter = ChatAdapter(appearance, resources.displayMetrics.widthPixels, adapterListener)
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
+        /*
+         * 富文本条目单独限回收池。
+         *
+         * 富文本的 ViewHolder 手里有一个 WebView（十几 MB + 独立 JS 上下文），
+         * 默认池子是 5 —— 滚一遍就能堆出十几个实例，低端机直接 OOM。
+         * 同屏可见的富消息通常不超过 2 条，留 2 个足够平滑复用。
+         */
+        list.recycledViewPool.setMaxRecycledViews(ChatAdapter.TYPE_HTML, ChatAdapter.MAX_WEB_POOL)
 
         controller = ChatController(applicationContext, ImageFileCache(this), this)
         // 旋转/重建后把摘要入口的状态补上（否则"正在浓缩"的淡色会丢）
@@ -226,6 +234,8 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         controller.release()
         // 离屏 WebView 属于本 Activity 的 context，不销毁就是整页泄漏
         com.dbpg.duihuazhushou.chat.render.CardRenderer.detach(this)
+        // 列表里的富文本 WebView 同理：RecyclerView 的回收池不负责 destroy
+        com.dbpg.duihuazhushou.chat.render.HtmlMessageView.releaseAll()
     }
 
     // ------------------------------------------------------------ ChatController.Sink

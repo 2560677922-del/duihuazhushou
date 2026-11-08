@@ -24,10 +24,19 @@ data class ChatItem(
     /** 一共有几版；<= 1 时不出「‹ ›」 */
     val variantCount: Int = 0,
     /**
-     * 美化 HTML（跑完正则、保留标签的原文）。
-     * 非空时这条消息是"卡片型"内容，由卡片渲染器画成位图（或按设置降级为纯文本）。
+     * 要交给 WebView 真渲染的富 HTML（跑完正则、清洗过脚本）。
+     *
+     * 非空 = 这条消息含结构性标记（`<details>` / `<table>` / `<div>` / 内联
+     * `<style>` …），原生 TextView 表达不了，必须走浏览器那套排版。
      */
     val html: String? = null,
+    /**
+     * 含 `<details>` 的富 HTML，给**降级路径**用：用户关掉富渲染、或 WebView
+     * 起不来时，用原生折叠块至少还能展开/收起（只认 `<details>` 这一种）。
+     *
+     * 与 [html] 互斥：正常路径下 html 非空、foldHtml 为空。
+     */
+    val foldHtml: String? = null,
     /** 卡片位图文件路径（渲染完成后才有）。空 = 还在渲染 / 降级为纯文本。 */
     val cardPath: String? = null,
     /** 卡片渲染后的高度（px），用来在位图到位前占位，避免滚动跳动。 */
