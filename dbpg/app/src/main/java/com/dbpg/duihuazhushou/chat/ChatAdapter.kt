@@ -59,6 +59,15 @@ class ChatAdapter(
         fun onCardNeeded(item: ChatItem, widthPx: Int)
         /** 点卡片：打开全屏查看器（可选中文字、可跑脚本） */
         fun onCardOpen(item: ChatItem)
+        /**
+         * 卡片脚本往"酒馆输入框"里写了字（预设的「填入 / 追加」模式）。
+         *
+         * 卡片的选项按钮是照 SillyTavern 写的，操作的是宿主输入框；原生化之后
+         * 这个输入框不存在，由 HtmlMessageView 的兼容层转成这两个回调。
+         */
+        fun onMessageInput(text: String)
+        /** 卡片要求直接发送（点了选项、模式为「发送」）。 */
+        fun onMessageSend(text: String)
     }
 
     /** 气泡最大宽度：按屏宽百分比算，改设置不用重建 Adapter。 */
@@ -214,6 +223,15 @@ class ChatAdapter(
             ),
         )
         web.heightListener = null
+        /*
+         * 卡片 ↔ 宿主：接口固定，和具体预设无关。
+         * 预设只要按 ST 的写法调 SillyTavern.getContext().generate() 或改
+         * #send_textarea，就会落到这里；不这么写的卡片完全不受影响。
+         */
+        web.hostListener = object : HtmlMessageView.HostListener {
+            override fun onInput(text: String) = listener.onMessageInput(text)
+            override fun onSend(text: String) = listener.onMessageSend(text)
+        }
         return web
     }
 

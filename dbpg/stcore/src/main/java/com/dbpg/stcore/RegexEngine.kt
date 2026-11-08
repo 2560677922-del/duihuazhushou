@@ -248,15 +248,31 @@ fun runRegex(
 
         val markdownOnly = s.markdownOnly
         val promptOnly = s.promptOnly
-        // ★ 与 SillyTavern runRegexScript 完全一致：
-        //   isMarkdown（显示）→ 跳过 promptOnly 的规则；构建 prompt → 跳过 markdownOnly 的规则。
-        //   旧写法 `promptOnly && !markdownOnly` 会漏掉「两个标志都为 true」的规则 ——
-        //   预设 [12]「行动选项2」正是这种写法，于是显示时把 <options> 整段删掉，
-        //   [13] 前端面板虽然命中也只剩 summary/comment，卡片里永远没有选项。
+        /*
+         * ★ 两个标志的语义（这里和 ST 源码**故意不完全一样**，别照着 ST 改回去）
+         *
+         *   ST 的 getRegexedString 是"或"关系：
+         *     (markdownOnly && 显示) || (promptOnly && 构建提示词) || (双 false && 落库)
+         *   于是「双 true」的脚本在显示侧也会跑。
+         *
+         *   但真实预设不是这么用的。Meowssiah 的 [12]「行动选项2」：
+         *     markdownOnly = true, promptOnly = true, find = (<options>…)，替换成空串
+         *   ST 的语义下它会在显示侧先删掉 <options>，紧接着 [13]「前端综合面板」
+         *   就再也匹配不到选项 —— 卡片里永远没有按钮。Tavo 的引擎在显示侧跳过
+         *   promptOnly，所以同一个预设在那里是正常的（用户实测）。
+         *
+         *   因此这里的判定是：
+         *     显示侧：promptOnly 一律跳过（保住 <options>，交给面板正则）
+         *     提示词侧：只跳过"纯显示"脚本（markdownOnly && !promptOnly）；
+         *               双 true 照常执行 —— 作者写 promptOnly 就是想让它进模型前消失
+         *
+         *   双 false 的普通美化正则两边都跑：ST 是把改写结果存进聊天记录，
+         *   我们存的是模型原文、每次渲染重算，所以必须补上这一步，效果等价。
+         */
         if (forDisplay) {
             if (promptOnly) continue
         } else if (!dry) {
-            if (markdownOnly) continue
+            if (markdownOnly && !promptOnly) continue
         }
 
         val rawFind = s.findRegex

@@ -315,3 +315,26 @@ body {
     border: 0;
     max-width: 100% !important;
 }
+
+/* ------------------------------------------------ 宿主兼容层（假输入框） */
+
+/*
+ * 预设脚本用 getElementById('send_textarea') 找酒馆输入框。
+ * 这两个元素必须"存在且可写"，但绝不能出现在气泡里，
+ * 也不能抢焦点（readonly 已挡掉软键盘）。
+ */
+#send_textarea,
+#send_but {
+    position: fixed;
+    left: -10000px;
+    top: 0;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    opacity: 0;
+    pointer-events: none;
+    resize: none;
+    overflow: hidden;
+}

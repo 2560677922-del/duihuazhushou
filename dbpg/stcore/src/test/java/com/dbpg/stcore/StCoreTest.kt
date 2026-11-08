@@ -45,6 +45,47 @@ class MacroTest {
         // web macro.ts：未知宏清空成空串（不原样保留，避免把 {{random}} 之类带进提示词）
         assertEquals("", applyMacros("{{unknown}}", ctx))
     }
+
+    @Test
+    fun `random 从候选里取 不残留花括号`() {
+        val ctx = MacroContext()
+        val out = applyMacros("选项：{{random::红,绿,蓝}}", ctx)
+        assertTrue(out.startsWith("选项："))
+        assertTrue(out in listOf("选项：红", "选项：绿", "选项：蓝"))
+        assertFalse(out.contains("{{"))
+    }
+
+    @Test
+    fun `pick 同文稳定 不同文可不同`() {
+        val ctx = MacroContext()
+        val a = applyMacros("{{pick::甲,乙,丙}}{{pick::甲,乙,丙}}", ctx)
+        val b = applyMacros("{{pick::甲,乙,丙}}{{pick::甲,乙,丙}}", ctx)
+        // 同一段文本重复渲染（滚动进出屏幕）不能换值
+        assertEquals(a, b)
+        assertFalse(a.contains("{{"))
+    }
+
+    @Test
+    fun `roll 支持骰点与修正`() {
+        val ctx = MacroContext()
+        val out = applyMacros("命中 {{roll::1d1+5}}", ctx)
+        assertEquals("命中 6", out)
+    }
+
+    @Test
+    fun `注释宏整段删除 trim 吃掉换行`() {
+        val ctx = MacroContext()
+        assertEquals("前后", applyMacros("前{{// 作者备注 }}后", ctx))
+        assertEquals("甲乙", applyMacros("甲{{trim}}\n乙", ctx))
+    }
+
+    @Test
+    fun `时间与换行宏`() {
+        val ctx = MacroContext()
+        val out = applyMacros("{{date}} {{time}}", ctx)
+        assertTrue(Regex("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}").matches(out))
+        assertEquals("A\nB", applyMacros("A{{newline}}B", ctx))
+    }
 }
 
 class ReasoningTest {
@@ -98,6 +139,30 @@ class RegexEngineTest {
         val s = script("id=(\\d+)", "$1", trimStrings = listOf("1"))
         val (o) = runRegex(listOf(ChatMessage(Role.ASSISTANT, "x id=123 y")), listOf(s))
         assertEquals("x 23 y", o[0].content)
+    }
+
+    @Test
+    fun `双 true 脚本 显示跳过 提示词执行`() {
+        // Meowssiah [12]：删 <options>。显示侧必须留着给面板正则，提示词侧才删。
+        val s = script("/(<options>[\\s\\S]*?<\\/options>)/g", "",
+            markdownOnly = true, promptOnly = true)
+        val raw = "前<options>A</options>后"
+
+        val (display, _) = runRegex(
+            listOf(ChatMessage(Role.ASSISTANT, raw)), listOf(s),
+            RegexEngineOptions(forDisplay = true),
+        )
+        assertEquals("前<options>A</options>后", display[0].content)
+
+        val (prompt, _) = runRegex(listOf(ChatMessage(Role.ASSISTANT, raw)), listOf(s))
+        assertEquals("前后", prompt[0].content)
+    }
+
+    @Test
+    fun `纯显示脚本不进提示词`() {
+        val s = script("/A/", "B", markdownOnly = true, promptOnly = false)
+        val (prompt, _) = runRegex(listOf(ChatMessage(Role.ASSISTANT, "A")), listOf(s))
+        assertEquals("A", prompt[0].content)
     }
 
     @Test
@@ -228,5 +293,18 @@ class TransformForDisplayTest {
         val text = blocks.filterIsInstance<ContentBlock.Text>().joinToString("") { it.text }
         assertTrue(text.contains("生命50"))
         assertFalse(text.contains("草稿"))
+    }
+
+    @Test
+    fun `显示侧展开宏 未知宏保留`() {
+        val blocks = transformForDisplay(
+            "{{char}}：{{random::甲,乙}} / {{myCustomMacro}}", emptyList(), emptyList(), null,
+            MacroContext(char = "小猫"), hideReasoning = false, reasoningCutMarker = null,
+        )
+        val text = blocks.filterIsInstance<ContentBlock.Text>().joinToString("") { it.text }
+        assertTrue(text.startsWith("小猫："))
+        assertTrue(text.contains("甲") || text.contains("乙"))
+        // 不认识的宏不能凭空消失
+        assertTrue(text.contains("{{myCustomMacro}}"))
     }
 }

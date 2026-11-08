@@ -22,6 +22,21 @@
 </head>
 <body>
 <div id="m"></div>
+<!--
+  宿主兼容层（DOM 部分）。
+
+  预设卡片的选项按钮不是自己发请求，而是照 SillyTavern 的写法操作"酒馆的输入框"：
+      const ta = window.parent.document.getElementById('send_textarea');
+      ta.value = '选项文字';  ->  context.generate();
+  原生 App 里既没有 parent 页面也没有这个输入框，脚本走到第一步就 catch 掉了，
+  表现就是"选项渲染出来了，点了没反应"。
+
+  这里放两个真实的元素（文本域 + 发送键），由 render.js 把
+  input / 点击转给原生。位置挪出可视区而不是 display:none —— 后者会让
+  focus()/setSelectionRange 失效，脚本会在半路抛错。
+-->
+<textarea id="send_textarea" readonly aria-hidden="true" tabindex="-1"></textarea>
+<button id="send_but" aria-hidden="true" tabindex="-1" type="button"></button>
 <script src="marked.min.js"></script>
 <script src="render.js"></script>
 </body>

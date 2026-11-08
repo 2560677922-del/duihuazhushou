@@ -364,6 +364,33 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             )
         }
 
+        /*
+         * 卡片里的选项按钮。
+         *
+         * 这两种模式是预设自己的开关（Meowssiah 是「发送 / 填入 / 追加」），
+         * 我们只负责把它落到真正的输入框/发送链路上，不判断内容、不挑预设。
+         */
+        override fun onMessageInput(text: String) {
+            if (text.isEmpty()) return
+            input.setText(text)
+            input.setSelection(input.text.length)
+        }
+
+        override fun onMessageSend(text: String) {
+            val body = text.trim()
+            if (body.isEmpty()) return
+            // 生成中发送会被 controller 直接拒掉，但 submitInput 会先把输入框清空 ——
+            // 用户刚点的选项就丢了。这里先挡住。
+            if (sendBtn.visibility != View.VISIBLE) {
+                Toast.makeText(this@NativeChatActivity, "还在生成，先停一下", Toast.LENGTH_SHORT).show()
+                input.setText(body)
+                input.setSelection(body.length)
+                return
+            }
+            input.setText(body)
+            submitInput()
+        }
+
     }
 
     /**

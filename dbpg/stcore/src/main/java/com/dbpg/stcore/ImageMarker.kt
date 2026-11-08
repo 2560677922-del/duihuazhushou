@@ -253,6 +253,17 @@ fun transformForDisplayRich(
         )
         out = msgs.first().content
     }
+    /*
+     * 正则之后、变量之前展开宏。
+     *
+     * 为什么不能只靠正则替换串里那次展开：预设的卡片是"整份 HTML + JS"，
+     * 卡片上的文案（随机台词、当前时间、`{{char}}`）往往写在 HTML 里而不是
+     * 替换串的 `$1` 里。不跑这一步，气泡里就会出现 `{{random::…}}` 原文。
+     *
+     * 用 expandMacrosForDisplay 而不是 applyMacros：显示侧不许清空未知宏，
+     * 否则作者自定义的宏会静默消失，看起来像内容被吞。
+     */
+    if (ctx != null) out = expandMacrosForDisplay(out, ctx)
     if (vars != null) out = readVariables(out, vars)
     /*
      * 保留一份"带 HTML"的版本给卡片渲染。

@@ -48,6 +48,21 @@ class HtmlMessageView(context: Context) : WebView(context) {
 
     var heightListener: HeightListener? = null
 
+    /**
+     * 卡片脚本要跟宿主交互时的出口。
+     *
+     * 不在这里直接调 ChatController：这个 View 只负责渲染，发消息属于会话逻辑，
+     * 由 Activity 决定"填进输入框"还是"直接发送"。
+     */
+    interface HostListener {
+        /** 卡片往输入框里写了字（「填入 / 追加」模式）。 */
+        fun onInput(text: String)
+        /** 卡片要求直接发送（点了选项、模式为 send）。 */
+        fun onSend(text: String)
+    }
+
+    var hostListener: HostListener? = null
+
     /** CSS 变量（跟外观设置走；变了要重新 theme + render）。 */
     data class Css(
         val fg: String,
@@ -75,6 +90,9 @@ class HtmlMessageView(context: Context) : WebView(context) {
     companion object {
         private const val TAG = "DHP_HTML"
         private const val SHELL = "file:///android_asset/msg/render.html"
+        private const val KEY_SETTINGS = "card_settings"
+        private const val MAX_INPUT = 20000
+        private const val MAX_SETTINGS = 64 * 1024
 
         /**
          * 这些实例必须在 Activity 销毁时 destroy()：
@@ -264,5 +282,54 @@ class HtmlMessageView(context: Context) : WebView(context) {
         fun warn(msg: String?) {
             Log.w(TAG, "页面告警: $msg")
         }
+
+        /*
+         * ---- 宿主兼容层（SillyTavern 契约） ----
+         *
+         * 卡片脚本不认我们的接口，它只认 ST 的 window.SillyTavern；
+         * render.js 里那层 shim 会把这些调用转成下面四个方法。
+         * 全部做长度上限：卡片来自模型输出，不能让它把输入框或偏好撑爆。
+         */
+
+        /** 卡片往输入框里写的字（append / replace 模式）。 */
+        @JavascriptInterface
+        fun input(text: String?) {
+            val v = text?.take(MAX_INPUT) ?: return
+            main.post {
+                if (!destroyed) hostListener?.onInput(v)
+            }
+        }
+
+        /** 卡片点了选项且模式为「直接发送」。 */
+        @JavascriptInterface
+        fun send(text: String?) {
+            val v = text?.trim()?.take(MAX_INPUT) ?: return
+            if (v.isEmpty()) return
+            main.post {
+                if (!destroyed) hostListener?.onSend(v)
+            }
+        }
+
+        /** 卡片自己的设置（例如「直接发送 / 填入 / 追加」开关）。 */
+        @JavascriptInterface
+        fun getSettings(): String = try {
+            prefs().getString(KEY_SETTINGS, "{}") ?: "{}"
+        } catch (e: Exception) {
+            "{}"
+        }
+
+        @JavascriptInterface
+        fun saveSettings(json: String?) {
+            val v = json?.take(MAX_SETTINGS) ?: return
+            try {
+                // 只接受对象，挡掉数组/字符串把 JSON.parse 弄崩
+                if (!v.trimStart().startsWith("{")) return
+                prefs().edit().putString(KEY_SETTINGS, v).apply()
+            } catch (e: Exception) {
+                Log.w(TAG, "保存卡片设置失败: ${e.message}")
+            }
+        }
     }
+
+    private fun prefs() = context.getSharedPreferences("dhp_host", Context.MODE_PRIVATE)
 }

@@ -158,11 +158,68 @@
         '})();<\/script>'
     ].join('');
 
+    /*
+     * 宿主兼容层（JS 部分）。
+     *
+     * 预设卡片遵守的是 SillyTavern 的"插件契约"，不是在调我们的私有接口：
+     *   - window.SillyTavern.getContext().generate()      直接发送
+     *   - context.extensionSettings                       记住卡片自己的开关
+     *   - context.saveSettingsDebounced()                 落盘
+     *   - #send_textarea / #send_but                      改输入框 / 按发送
+     * 这里把这几样按 ST 的形状搭出来，指向原生桥。于是「任何遵守 ST 契约的
+     * 预设」都能点选项 —— 不需要为某个预设写适配，也不需要它知道我们存在。
+     *
+     * 注意：它同时跑在父壳（markdown 段落的按钮）和 iframe（整页卡片）里，
+     * 所以取 DOM 必须走 parent.document；父壳里 parent === window，等价。
+     */
+    var HOST_SHIM = [
+        '(function(){',
+        'var P=window.parent||window;',
+        'function B(){try{return P.DHPBridge||window.DHPBridge||null}catch(e){return null}}',
+        'function D(){try{return (P&&P.document)||document}catch(e){return document}}',
+        'function box(){try{return D().getElementById("send_textarea")}catch(e){return null}}',
+        'var settings={};',
+        'try{var b0=B();if(b0&&b0.getSettings)settings=JSON.parse(b0.getSettings()||"{}")||{}}catch(e){settings={}}',
+        'function save(){try{var b=B();if(b&&b.saveSettings)b.saveSettings(JSON.stringify(settings))}catch(e){}}',
+        'function fire(){try{var t=box();if(!t)return;var v=String(t.value||"");if(!v.replace(/\\s/g,""))return;',
+        'var b=B();if(b&&b.send)b.send(v);t.value="";}catch(e){}}',
+        'var es={on:function(){},once:function(){},off:function(){},emit:function(){},removeListener:function(){}};',
+        'function ctx(){return {extensionSettings:settings,chat:[],characters:[],character:{},name1:"",name2:"",',
+        'generate:fire,',
+        'sendMessage:function(t){var e=box();if(e&&t!=null)e.value=String(t);fire()},',
+        'saveSettings:save,saveSettingsDebounced:save,',
+        'eventSource:es,eventTypes:{},event_types:{}}}',
+        'var ST=window.SillyTavern||{};',
+        'ST.getContext=ctx;ST.saveSettings=save;ST.saveSettingsDebounced=save;',
+        'ST.eventSource=es;ST.event_types={};ST.libs=ST.libs||{};window.SillyTavern=ST;',
+        'document.addEventListener("click",function(e){var n=e.target;while(n&&n!==document){',
+        'if(n.id==="send_but"){e.preventDefault();fire();return}n=n.parentNode}},true);',
+        '})();'
+    ].join('');
+
+    function installShim(doc) {
+        try {
+            var s = doc.createElement('script');
+            s.setAttribute('data-dhp-host', '');
+            s.textContent = HOST_SHIM;
+            (doc.head || doc.documentElement).appendChild(s);
+            s.parentNode.removeChild(s);
+        } catch (e) { /* 老 WebView 或 CSP 挡住：退化为不可交互，渲染不受影响 */ }
+    }
+
     function makeDocFrame(doc) {
         var f = document.createElement('iframe');
         f.className = 'card-doc';
-        /* allow-scripts 是探针所必需；不给 same-origin / top-navigation / popups */
-        f.setAttribute('sandbox', 'allow-scripts');
+        /*
+         * allow-scripts：卡片自己的脚本（选项按钮、折叠、高度上报）必须能跑。
+         * allow-same-origin：预设脚本是照 SillyTavern 写的 —— 它们会直接
+         *   `window.parent.document.getElementById('send_textarea')` 去改宿主
+         *   输入框。不给同源，这一句就抛 SecurityError，于是"选项点不动"。
+         *   代价是卡片能摸到本壳的 DOM / DHPBridge；本壳只暴露
+         *   height / input / send / settings 四个无权限接口，且不加载本地文件
+         *   （allowFileAccessFromFileURLs=false），风险限制在这一条气泡内。
+         */
+        f.setAttribute('sandbox', 'allow-scripts allow-same-origin');
         f.setAttribute('scrolling', 'no');
         f.setAttribute('allowfullscreen', 'false');
         f.style.width = '100%';
@@ -196,8 +253,13 @@
             'body{background:transparent}' +
             'img,table,video,canvas,svg,iframe,pre{max-width:100%!important}' +
             '</style>';
-        if (/<\/head\s*>/i.test(full)) full = full.replace(/<\/head\s*>/i, guard + '</head>');
-        else full = guard + full;
+        /*
+         * 宿主 shim 必须比卡片自己的 <script> 更早执行 —— 卡片脚本在
+         * <body> 里，所以插到 </head> 前。作者没写 head 时插最前面。
+         */
+        var hostShim = '<script data-dhp-host>' + HOST_SHIM + '</scr' + 'ipt>';
+        if (/<\/head\s*>/i.test(full)) full = full.replace(/<\/head\s*>/i, hostShim + guard + '</head>');
+        else full = hostShim + guard + full;
         /*
          * 作者在 <body> 里后写的 <style> 会覆盖 head 里的 guard，
          * 所以文档末尾再补一份（CSS 后加载者胜）。
@@ -319,6 +381,25 @@
 
     window.DHP = { render: render, theme: theme, clear: clear };
     window.DHPReady = true;
+
+    /* ------------------------------------------------ 宿主兼容层安装 */
+
+    installShim(document);
+
+    /*
+     * 卡片把文字写进假输入框后，脚本只会 dispatch input/change（正是 ST 里的
+     * 做法）。这里把它同步给原生输入框 —— 「填入 / 追加」这两种模式才看得见。
+     * 「发送」模式走 shim 的 generate()，不经过这里。
+     */
+    (function () {
+        var box = document.getElementById('send_textarea');
+        if (!box) return;
+        box.addEventListener('input', function () {
+            try {
+                if (window.DHPBridge && DHPBridge.input) DHPBridge.input(String(box.value || ''));
+            } catch (e) { /* 页面已销毁 */ }
+        });
+    })();
 
     /* ---------------------------------------------------------- 高度监听 */
 
