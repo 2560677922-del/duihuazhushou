@@ -1,6 +1,5 @@
 node_modules/
 dist/
-dist-native/
 *.log
 .DS_Store
 .env

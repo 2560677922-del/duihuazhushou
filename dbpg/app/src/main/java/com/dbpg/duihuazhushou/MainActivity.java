@@ -428,7 +428,7 @@ public final class MainActivity extends Activity {
                     : error.getDescription().toString();
             Log.e(TAG, "主框架加载失败: " + desc);
             showError("应用加载失败：" + desc + "\n\n通常是引擎还没构建，\n"
-                    + "请在上一级目录执行 npm run build:native，再重新打包。\n\n点一下重试");
+                    + "请在上一级目录执行 npm run build，再重新打包。\n\n点一下重试");
         }
 
         @Override
