@@ -1,4 +1,24 @@
-# dbpg — 冒险模拟器 Android 打包工程
+# dbpg — 冒险模拟器 Android 工程
+
+> ## ⚠ 先读这里：这是「原生优先」App，不是网页套壳（2026-11-08 更新）
+>
+> 本文下面「把 Vue 打包成 APK」描述的是**最早的套壳形态**，现状已经变了：
+>
+> - **用户在手机上看到的界面，全部是原生 Kotlin**：首页 / 会话列表 / 聊天 / 设置 / 资产 / 生图 / 图库，都在 `app/src/main/java/com/dbpg/duihuazhushou/`。
+> - **网页（上一级 `src/`，构建产物 `dist` → `assets/www/`）只剩对话引擎**：SillyTavern 兼容层（预设 / 正则 / 世界书 / 角色卡 / 变量 / 宏）+ 生成请求组装。它跑在 1dp、`alpha=0` 的隐藏 WebView 里，**用户看不到**，相当于后端。
+> - 一句话：**要改用户看得见的界面 → 改 `app/src/main/...`（原生）；要改 ST 兼容 / 生成逻辑 → 改 `src/`（web 引擎）。**
+>
+> ### 外观系统在哪（最容易改错的地方）
+>
+> | 想改 | 改这里 | ❌ 不要改 |
+> | --- | --- | --- |
+> | App 设置页本身 | `appearance/SettingsActivity.kt` + `res/layout/activity_settings.xml` | `src/views/Settings.vue` |
+> | 外观数据（字号/行距/字体/颜色/气泡/背景） | `appearance/Appearance.kt`（SharedPreferences） | `src/stores/appearance.ts` |
+> | 主题色 / 页面底色 / 装饰 / 全界面字体套用 | `appearance/Theme.kt` | `src/styles/main.css` |
+> | 聊天气泡渲染（文字/图片/版本条） | `chat/ChatAdapter.kt` | web 的聊天组件 |
+>
+> `src/views/Settings.vue`、`src/stores/appearance.ts` 是**引擎内部页**，只有用浏览器跑
+> `npm run dev` 才看得到；**改它们不会改变 APK 的设置页**。这个坑已经踩过一次。
 
 把上一级目录（`duihuazhushou/`）的 Vue + Vite 网页应用打包成 Android APK。
 

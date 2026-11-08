@@ -15,6 +15,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.dbpg.duihuazhushou.R
 import com.dbpg.duihuazhushou.appearance.AppearanceConfig
 import com.dbpg.duihuazhushou.appearance.BubbleStyle
+import com.dbpg.duihuazhushou.appearance.ThemePalette
 import com.dbpg.duihuazhushou.richtext.RichTextRenderer
 import com.dbpg.stcore.richtext.RichTextParser
 
@@ -133,9 +134,10 @@ class ChatAdapter(
             holder.text.visibility = View.VISIBLE
         }
 
-        // 3) 文本：maxWidth 封顶 + Spannable 渲染（字号/行距跟随外观设置）
+        // 3) 文本：maxWidth 封顶 + Spannable 渲染（字号/行距/字体/颜色跟随外观设置）
         holder.text.maxWidth = bubbleMaxWidthPx
-        holder.text.setTextColor(0xFF1A2230.toInt())
+        holder.text.typeface = ThemePalette.fontTypeface(config.fontFamily)
+        holder.text.setTextColor(ThemePalette.fontColorInt(config))
         holder.text.textSize = config.textSizeSp
         holder.text.setLineSpacing(0f, config.lineSpacing)
         val content = if (item.streaming) item.content + "▍" else item.content
@@ -212,11 +214,19 @@ class ChatAdapter(
      */
     private fun bindHtml(holder: VH, html: String, cfg: com.dbpg.duihuazhushou.appearance.AppearanceConfig) {
         val web = holder.html
-        if (web.tag == html + "|" + cfg.allowScript + "|" + cfg.textSizeSp) return
-        web.tag = html + "|" + cfg.allowScript + "|" + cfg.textSizeSp
+        val tag = html + "|" + cfg.allowScript + "|" + cfg.textSizeSp + "|" + cfg.lineSpacing +
+            "|" + cfg.fontFamily + "|" + cfg.fontColor
+        if (web.tag == tag) return
+        web.tag = tag
 
         val safe = if (cfg.allowScript) html else sanitizeHtml(html)
-        val doc = wrapHtml(safe, cfg.textSizeSp, cfg.lineSpacing)
+        val doc = wrapHtml(
+            safe,
+            cfg.textSizeSp,
+            cfg.lineSpacing,
+            ThemePalette.fontCssFamily(cfg.fontFamily),
+            String.format("#%06X", 0xFFFFFF and ThemePalette.fontColorInt(cfg)),
+        )
 
         val s = web.settings
         s.javaScriptEnabled = true
@@ -280,13 +290,19 @@ class ChatAdapter(
         return out
     }
 
-    /** 统一包一层：视口、透明底、正文字号/行距跟随外观设置，图片不溢出。
+    /** 统一包一层：视口、透明底、正文字号/行距/字体/颜色跟随外观设置，图片不溢出。
      *  正文包在 #dhp-m 里 —— 量高度只量它，回收复用时不会被旧视口撑大。 */
-    private fun wrapHtml(html: String, textSizeSp: Float, lineSpacing: Float): String = """
+    private fun wrapHtml(
+        html: String,
+        textSizeSp: Float,
+        lineSpacing: Float,
+        fontFamily: String,
+        fontColor: String,
+    ): String = """
         <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
           html,body{margin:0;padding:0;background:transparent;}
-          body{color:#1A2230;font-size:${textSizeSp}px;line-height:${lineSpacing};
+          body{color:$fontColor;font-family:$fontFamily;font-size:${textSizeSp}px;line-height:${lineSpacing};
                word-break:break-word;overflow-wrap:anywhere;}
           img,video,canvas{max-width:100%;height:auto;}
           table{max-width:100%;border-collapse:collapse;}

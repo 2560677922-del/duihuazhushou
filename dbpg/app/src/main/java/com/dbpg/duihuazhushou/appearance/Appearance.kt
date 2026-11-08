@@ -34,6 +34,16 @@ data class AppearanceConfig(
      * 老版本读到不认识的值会自动回落默认款，不会崩。
      */
     val bubbleStyle: String = BubbleStyle.ROUND.id,
+    /**
+     * 字体型号：系统默认 / 无衬线 / 衬线 / 等宽 / 粗黑。
+     * 存字符串 id（空串=系统默认），不认识回落默认。
+     */
+    val fontFamily: String = "",
+    /**
+     * 字体颜色：空串=自动（按页面底色明暗取对比色，默认墨黑）；
+     * 否则为 hex。独立控制，不和「页面底色」耦合 —— 选了深底配浅字也不会被覆盖。
+     */
+    val fontColor: String = "",
     /** 聊天背景遮罩浓度 0–90：越高字越清楚、图越淡。 */
     val bgDim: Int = 55,
     /** 主题色（按钮/高亮/chip 的强调色）。存 hex 字符串，不认识回落默认蓝。 */
@@ -54,6 +64,8 @@ object Appearance {
     private const val K_HTML_RENDER = "html_render"
     private const val K_ALLOW_SCRIPT = "allow_script"
     private const val K_BUBBLE_STYLE = "bubble_style"
+    private const val K_FONT_FAMILY = "font_family"
+    private const val K_FONT_COLOR = "font_color"
     private const val K_BG_DIM = "bg_dim"
     private const val K_ACCENT = "accent_color"
     private const val K_BASE = "bg_base_color"
@@ -69,6 +81,8 @@ object Appearance {
             htmlRender = p.getBoolean(K_HTML_RENDER, true),
             allowScript = p.getBoolean(K_ALLOW_SCRIPT, false),
             bubbleStyle = BubbleStyle.byId(p.getString(K_BUBBLE_STYLE, null)).id,
+            fontFamily = p.getString(K_FONT_FAMILY, "") ?: "",
+            fontColor = p.getString(K_FONT_COLOR, "") ?: "",
             bgDim = p.getInt(K_BG_DIM, 55).coerceIn(0, 90),
             accentColor = p.getString(K_ACCENT, "#2F66D8") ?: "#2F66D8",
             bgBaseColor = p.getString(K_BASE, "#F4F6FA") ?: "#F4F6FA",
@@ -85,6 +99,8 @@ object Appearance {
             .putBoolean(K_HTML_RENDER, cfg.htmlRender)
             .putBoolean(K_ALLOW_SCRIPT, cfg.allowScript)
             .putString(K_BUBBLE_STYLE, cfg.bubbleStyle)
+            .putString(K_FONT_FAMILY, cfg.fontFamily)
+            .putString(K_FONT_COLOR, cfg.fontColor)
             .putInt(K_BG_DIM, cfg.bgDim)
             .putString(K_ACCENT, cfg.accentColor)
             .putString(K_BASE, cfg.bgBaseColor)

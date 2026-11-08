@@ -7,6 +7,7 @@ import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.view.View
@@ -69,6 +70,56 @@ object ThemePalette {
 
     fun labelOf(list: List<Swatch>, hex: String): String =
         list.firstOrNull { it.hex.equals(hex, true) }?.label ?: hex
+
+    /** 字体型号预设（系统字体，零资产成本，跨设备都有回退）。 */
+    data class FontSpec(val id: String, val label: String)
+
+    val FONTS = listOf(
+        FontSpec("", "系统默认"),
+        FontSpec("sans", "无衬线"),
+        FontSpec("serif", "衬线"),
+        FontSpec("mono", "等宽"),
+        FontSpec("black", "粗黑"),
+    )
+
+    /** id → Typeface；不认识回落系统默认。 */
+    fun fontTypeface(id: String): Typeface = when (id) {
+        "serif" -> Typeface.SERIF
+        "mono" -> Typeface.MONOSPACE
+        "black" -> Typeface.create("sans-serif-black", Typeface.NORMAL)
+        // "sans" 与空串都走无衬线（系统默认本就无衬线，这里显式保证）
+        else -> Typeface.SANS_SERIF
+    }
+
+    /** WebView 用的 CSS font-family（美化 HTML 也要跟着换字体）。 */
+    fun fontCssFamily(id: String): String = when (id) {
+        "serif" -> "serif"
+        "mono" -> "monospace"
+        "black" -> "'sans-serif-black', sans-serif"
+        else -> "sans-serif"
+    }
+
+    /** 字体颜色：空串=自动（按页面底色明暗取对比色），否则解析 hex。 */
+    fun fontColorInt(cfg: AppearanceConfig): Int {
+        val hex = cfg.fontColor
+        if (hex.isBlank()) {
+            // 自动：底色偏亮用墨黑，偏暗用纯白，保证正文可读
+            val base = base(cfg)
+            val lum = (0.299f * Color.red(base) + 0.587f * Color.green(base) + 0.114f * Color.blue(base))
+            return if (lum >= 140) 0xFF1A2230.toInt() else 0xFFFFFFFF.toInt()
+        }
+        return parseHex(hex, "#1A2230")
+    }
+
+    /** 字体颜色预设（空串=自动）。 */
+    val FONT_COLORS = listOf(
+        Swatch("", "自动"),
+        Swatch("#1A2230", "墨黑"),
+        Swatch("#5A6472", "深灰"),
+        Swatch("#FFFFFF", "纯白"),
+        Swatch("#6B5847", "暖棕"),
+        Swatch("#7A1F3D", "酒红"),
+    )
 }
 
 /**
@@ -273,6 +324,23 @@ object UiBackdrop {
             root.tintAccentRecursive(accent)
             root.postDelayed({ root.tintAccentRecursive(accent) }, 600L)
         }
+
+        // 3) 字体型号：递归套到每个 TextView（保留原有粗体/斜体样式）。
+        //    列表项异步 inflate，同样补一遍。聊天页自己也在 ChatAdapter 里套。
+        val tf = ThemePalette.fontTypeface(cfg.fontFamily)
+        root.applyFontRecursive(tf)
+        root.postDelayed({ root.applyFontRecursive(tf) }, 600L)
+    }
+}
+
+/** 递归套字体：把每个 TextView 的字体换成 [tf]，保留它原来的粗体/斜体样式。 */
+fun View.applyFontRecursive(tf: Typeface) {
+    if (this is TextView) {
+        val style = this.typeface?.style ?: Typeface.NORMAL
+        runCatching { this.typeface = Typeface.create(tf, style) }
+    }
+    if (this is ViewGroup) {
+        for (i in 0 until childCount) getChildAt(i).applyFontRecursive(tf)
     }
 }
 

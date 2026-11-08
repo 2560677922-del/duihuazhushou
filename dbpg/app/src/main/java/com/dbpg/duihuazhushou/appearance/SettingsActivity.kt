@@ -42,6 +42,8 @@ class SettingsActivity : Activity() {
     private lateinit var accentValue: TextView
     private lateinit var baseValue: TextView
     private lateinit var decoValue: TextView
+    private lateinit var fontFamilyValue: TextView
+    private lateinit var fontColorValue: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -66,12 +68,16 @@ class SettingsActivity : Activity() {
         accentValue = findViewById(R.id.set_accent_value)
         baseValue = findViewById(R.id.set_base_value)
         decoValue = findViewById(R.id.set_deco_value)
+        fontFamilyValue = findViewById(R.id.set_font_family_value)
+        fontColorValue = findViewById(R.id.set_font_color_value)
 
         bubbleBtn.setOnClickListener { pickBubbleStyle() }
         bgValue.setOnClickListener { pickUiBackground() }
         accentValue.setOnClickListener { pickAccent() }
         baseValue.setOnClickListener { pickBaseColor() }
         decoValue.setOnClickListener { pickDecoration() }
+        fontFamilyValue.setOnClickListener { pickFontFamily() }
+        fontColorValue.setOnClickListener { pickFontColor() }
         dimBar.max = 90
         dimBar.progress = cfg.bgDim
 
@@ -152,9 +158,13 @@ class SettingsActivity : Activity() {
             "grass" -> "青草"
             else -> "无"
         }
+        fontFamilyValue.text = ThemePalette.FONTS.firstOrNull { it.id == cfg.fontFamily }?.label ?: "系统默认"
+        fontColorValue.text = ThemePalette.FONT_COLORS.firstOrNull { it.hex.equals(cfg.fontColor, true) }?.label ?: "自动"
 
         preview.textSize = cfg.textSizeSp
         preview.setLineSpacing(0f, cfg.lineSpacing)
+        preview.typeface = ThemePalette.fontTypeface(cfg.fontFamily)
+        preview.setTextColor(ThemePalette.fontColorInt(cfg))
         // 预览块跟着宽度设置收缩，所见即所得
         val screen = resources.displayMetrics.widthPixels
         val margin = (32 * resources.displayMetrics.density).toInt()
@@ -255,6 +265,40 @@ class SettingsActivity : Activity() {
             .setTitle("装饰风格")
             .setSingleChoiceItems(labels, current) { dialog, which ->
                 cfg = cfg.copy(decoration = ids[which])
+                Appearance.save(this, cfg)
+                render()
+                dialog.dismiss()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 字体型号：系统默认 / 无衬线 / 衬线 / 等宽 / 粗黑。改完立即保存并刷新预览。 */
+    private fun pickFontFamily() {
+        val all = ThemePalette.FONTS
+        val labels = all.map { it.label }.toTypedArray()
+        val current = all.indexOfFirst { it.id == cfg.fontFamily }.coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("字体型号")
+            .setSingleChoiceItems(labels, current) { dialog, which ->
+                cfg = cfg.copy(fontFamily = all[which].id)
+                Appearance.save(this, cfg)
+                render()
+                dialog.dismiss()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 字体颜色：自动 / 墨黑 / 深灰 / 纯白 / 暖棕 / 酒红。独立于页面底色。 */
+    private fun pickFontColor() {
+        val all = ThemePalette.FONT_COLORS
+        val labels = all.map { it.label }.toTypedArray()
+        val current = all.indexOfFirst { it.hex.equals(cfg.fontColor, true) }.coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("字体颜色")
+            .setSingleChoiceItems(labels, current) { dialog, which ->
+                cfg = cfg.copy(fontColor = all[which].hex)
                 Appearance.save(this, cfg)
                 render()
                 dialog.dismiss()
