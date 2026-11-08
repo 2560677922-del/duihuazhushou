@@ -30,6 +30,8 @@ data class RenderDiagnostic(
     val winner: String?,
     val outputLength: Int?,
     val note: String,
+    /** 插件自己报的结构探针（正文行数 / 选项行数 / 分隔线…），换预设排错用。 */
+    val probe: String = "",
 )
 
 object PluginRegistry {
@@ -42,15 +44,21 @@ object PluginRegistry {
     @Volatile var lastDiagnostic: RenderDiagnostic? = null
         private set
 
+    /** 最近一次送进插件槽的原始 rich（只放内存）。设置页可一键复制，排错用。 */
+    @Volatile var lastRich: String? = null
+        private set
+
     private fun record(
         rich: String,
         claims: List<Pair<String, Boolean>>,
         winner: String?,
         outputLength: Int?,
         note: String,
+        probe: String = "",
     ) {
         // 只截前 160 字符；换行画成 ⏎ 方便在设置页里读
         val head = rich.take(160).replace("\n", "⏎").replace("\r", "")
+        lastRich = rich
         lastDiagnostic = RenderDiagnostic(
             at = System.currentTimeMillis(),
             richLength = rich.length,
@@ -60,8 +68,17 @@ object PluginRegistry {
             winner = winner,
             outputLength = outputLength,
             note = note,
+            probe = probe,
         )
     }
+
+    /** 让每个启用的插件报一句结构探针，只保留非空的。 */
+    private fun probeOf(live: List<RenderPlugin>, rich: String): String =
+        live.mapNotNull { p ->
+            runCatching { p.probe(rich) }.getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { "${p.descriptor.id} → $it" }
+        }.joinToString("\n")
 
     /** 当前预设下、已安装且已启用且契约兼容的插件，按优先级降序。设置页也用它展示仲裁顺序。 */
     fun activeCandidates(ctx: Context, presetId: String): List<PluginDescriptor> {
@@ -100,15 +117,23 @@ object PluginRegistry {
             return null
         }
 
+        val failures = ArrayList<String>()
         val claims = live.associate { p ->
             p.descriptor.id to runCatching { p.claim(rich, meta) }.onFailure {
+                failures.add("${p.descriptor.id}: ${it.javaClass.simpleName}: ${it.message.orEmpty().take(80)}")
                 Log.w(TAG, "插件 ${p.descriptor.id} claim 失败，跳过", it)
             }.getOrDefault(false)
         }
         val claimList = claims.toList()
+        val probe = probeOf(live, rich)
         val candidates = live.filter { claims[it.descriptor.id] == true }
         if (candidates.isEmpty()) {
-            record(rich, claimList, null, null, "全部放行 → 这条消息不是插件负责的写法")
+            val note = if (failures.isEmpty()) {
+                "全部放行 → 这条消息不是插件负责的写法"
+            } else {
+                "插件 claim 抛异常 → 已回退内置：${failures.joinToString("；")}"
+            }
+            record(rich, claimList, null, null, note, probe)
             return null
         }
         if (candidates.size > 1) {
@@ -133,6 +158,7 @@ object PluginRegistry {
             rich, claimList, winner.descriptor.id, out?.length,
             if (out == null) "渲染返回 null（模板读不到 / 无面板结构）→ 回退内置"
             else "已产出卡片，交给 WebView / iframe",
+            probe,
         )
         return out
     }

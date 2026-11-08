@@ -84,6 +84,12 @@ interface RenderPlugin {
 
     /** 激活时返回的销毁闭包，卸载时调用。P0 的内置插件无状态。 */
     fun onActivate(): Disposable = Disposable { }
+
+    /**
+     * 只读诊断：为什么认领 / 为什么不认领。设置页「渲染自检」直接展示。
+     * 默认空串；不认识结构（比如卡片渲染器）的插件不用实现。
+     */
+    fun probe(rich: String): String = ""
 }
 
 fun interface Disposable {

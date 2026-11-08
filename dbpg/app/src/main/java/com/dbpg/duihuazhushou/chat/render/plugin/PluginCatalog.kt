@@ -268,7 +268,7 @@ private object PanelDataAdapter : RenderPlugin {
         name = "面板数据适配器 · 折叠窗",
         convention = "模型把剧情总结 / 吐槽 / 选项写成散文（连续选项行为准，前面可有 --- 分隔线，也可没有）",
         description = "抄预设自带的前端模板：模型没按约定吐 <summary> / <comment> / <options>、把面板内容写成散文时，把「剧情小总结 + 连续选项 + 结尾吐槽」整理成标签填进随 APK 内置的 32KB 模板，产出 ```html 整页卡片交给 iframe —— 折叠窗、选项按钮、状态栏都是预设自己的脚本渲染的。不要求消息里有 --- 分隔线；同一条消息里已有的思维链折叠栏 / 状态栏卡片原样保留，只有消息里已经有面板卡片时才放行。不改请求体、不改正则引擎、不改正文；装上才生效、卸载即回退。",
-        version = "1.1.0",
+        version = "1.2.0",
         priority = 120,
     )
 
@@ -277,8 +277,21 @@ private object PanelDataAdapter : RenderPlugin {
         """^[ \t]*(?:-{3,}|\*{3,}|_{3,}|<hr\b[^>]*/?>)[ \t]*$""",
     )
 
-    /** 围栏起始 / 结束行。自扫一遍，不依赖 FENCE 的「闭合围栏独占一行」约束。 */
-    private val FENCE_LINE = Regex("""^[ \t]*```""")
+    /**
+     * 围栏标记（``` / ~~~）。**按标记次数配对，不按「行」配对**。
+     *
+     * ★ 真机踩过的坑：闭合围栏可能黏在 `</html>` 后面、也可能整块被压成一行，
+     *   按「行首是 ``` 」去数就只数到一个开围栏，于是它后面**所有正文都被判成
+     *   围栏内**，选项行一个都扫不到 → 认领恒为 false。改为按出现次数两两配对，
+     *   无论围栏独占一行还是黏在标签后面都成立。
+     */
+    private val FENCE_TOKEN = Regex("""(?:`{3,}|~{3,})""")
+
+    /** 整页文档结束标记：卡片到哪里结束是确定的，之后一定是聊天正文。 */
+    private val HTML_CLOSE = Regex("""</html\s*>""", RegexOption.IGNORE_CASE)
+
+    /** 紧跟在 `</html>` 后面的闭合围栏（同一行或下一行，允许前面有空行）。 */
+    private val CLOSE_FENCE = Regex("""^\s*```[^\n]*""")
 
     /**
      * 「这份卡片已经承载了面板数据」的通用标志。
@@ -370,18 +383,43 @@ private object PanelDataAdapter : RenderPlugin {
         return out
     }
 
-    /** 所有 ``` 围栏块的范围（含围栏行本身），用于把卡片内容从散文扫描里屏蔽掉。 */
+    /** 所有围栏块的范围（含标记本身），用于把卡片内容从散文扫描里屏蔽掉。 */
     private fun fenceRanges(rich: String): List<IntRange> {
+        val marks = FENCE_TOKEN.findAll(rich).map { it.range }.toList()
         val out = ArrayList<IntRange>()
-        var open = -1
-        for (l in linesOf(rich)) {
-            if (FENCE_LINE.containsMatchIn(l.text)) {
-                if (open < 0) open = l.start
-                else { out.add(open..l.end); open = -1 }
-            }
+        var i = 0
+        while (i + 1 < marks.size) {
+            out.add(marks[i].first..marks[i + 1].last)
+            i += 2
         }
-        if (open >= 0) out.add(open..rich.length)
         return out
+    }
+
+    /**
+     * 把 rich 切成「卡片区」和「聊天正文」。
+     *
+     * ★ 定位基准是**最后一个 `</html>`**，不是围栏：
+     *   整页卡片的结尾是确定的，而围栏可能被包裹、被黏住、被压成一行。
+     *   没有整页文档时退化为「最后一对围栏之后」，再没有就从 0 开始。
+     *
+     * 返回 (正文起点, 正文)，正文起点与原始 rich 的字符偏移一致。
+     */
+    private fun splitTail(view: String): Pair<Int, String> {
+        val closes = HTML_CLOSE.findAll(view).toList()
+        if (closes.isNotEmpty()) {
+            var i = closes.last().range.last + 1
+            // 顺带把紧跟其后的闭合围栏一起划进卡片区，正文里就不留孤零零的 ```
+            val rest = view.substring(i)
+            val m = CLOSE_FENCE.find(rest)
+            if (m != null && m.range.first == 0) i += m.range.last + 1
+            return i to view.substring(i)
+        }
+        val ranges = fenceRanges(view)
+        if (ranges.isNotEmpty()) {
+            val i = ranges.last().last + 1
+            return i to view.substring(i)
+        }
+        return 0 to view
     }
 
     /**
@@ -415,53 +453,118 @@ private object PanelDataAdapter : RenderPlugin {
      *
      * 两条路径都只扫围栏外的行，卡片内部的 `---` / 符号行不会误判。
      */
-    private fun findPanelSpan(rich: String): PanelSpan? {
-        // 在归一化视图上扫描；等长替换保证这里的行坐标能直接切回原始 rich
-        val view = scanView(rich)
-        val ranges = fenceRanges(view)
-        val lines = linesOf(view)
-        fun inFence(off: Int) = ranges.any { off >= it.first && off <= it.last }
+    private data class Run(val offset: Int, val count: Int, val index: Int)
 
-        val dividers = lines.filter { !inFence(it.start) && DIVIDER_LINE.matches(it.text.trim()) }
-        var headEnd = -1
-        val start = if (dividers.isNotEmpty()) {
-            // 停在前一个行边界（也就是那个 `<br>` / `\n` 的第一个字符）之前，
-            // 别把标签劈成半个 `<` 留在正文里，也别把 --- 留成一条孤立横线
-            headEnd = (dividers.last().start - 1).coerceAtLeast(0)
-            minOf(dividers.last().end + 1, rich.length)
-        } else {
-            var curStart = -1
-            var curCount = 0
-            var bestStart = -1
-            var bestCount = 0
-            for ((i, l) in lines.withIndex()) {
-                if (inFence(l.start)) { curCount = 0; curStart = -1; continue }
-                if (isOptionStart(l.text)) {
-                    if (curCount == 0) curStart = i
-                    curCount++
-                    if (curCount > bestCount) { bestCount = curCount; bestStart = curStart }
-                } else { curCount = 0; curStart = -1 }
+    /** 在一组 (偏移, 文本) 里找最长的连续「选项行」。空行不算断开。 */
+    private fun longestRun(items: List<Pair<Int, String>>, allowBlank: Boolean): Run? {
+        var best: Run? = null
+        var curStart = -1
+        var curCount = 0
+        var curIndex = -1
+        for ((idx, item) in items.withIndex()) {
+            val t = item.second.trim()
+            if (t.isEmpty() && allowBlank) continue
+            if (isOptionStart(t)) {
+                if (curCount == 0) {
+                    curStart = item.first
+                    curIndex = idx
+                }
+                curCount++
+                val b = best
+                if (b == null || curCount > b.count) best = Run(curStart, curCount, curIndex)
+            } else {
+                curCount = 0
+                curStart = -1
             }
-            if (bestCount < 2 || bestStart < 0) return null
-            var first = bestStart
-            var j = bestStart - 1
+        }
+        return best
+    }
+
+    /** 句末标点切分，用于「整条正文被压成一行」时的兜底。 */
+    private val SENT_END = Regex("""(?<=[。！？!?…])""")
+
+    private fun sentencesOf(text: String): List<Pair<Int, String>> {
+        val out = ArrayList<Pair<Int, String>>()
+        var last = 0
+        for (m in SENT_END.findAll(text)) {
+            val end = m.range.last + 1
+            if (end > last) {
+                out.add(last to text.substring(last, end))
+                last = end
+            }
+        }
+        if (last < text.length) out.add(last to text.substring(last))
+        return out
+    }
+
+    /**
+     * 定位面板区。
+     *
+     * 1. 正文 = 最后一张整页卡片之后（[splitTail]），**不依赖围栏形态**；
+     * 2. 在正文里找**最长的连续选项行**（空行不断开）；正文被压成一行时，
+     *    退化为按句末标点切分再找一次；
+     * 3. 选项块紧邻的上一条分隔线划进面板并从正文删掉（否则正文尾巴上
+     *    会多出一条孤立横线）；隔了正文段落的 `---` 按原样保留，那本来就是
+     *    作者用 `---` 分段。
+     */
+    private fun findPanelSpan(rich: String): PanelSpan? {
+        val view = scanView(rich)
+        val (base, tail) = splitTail(view)
+        if (tail.isBlank()) return null
+        val lines = linesOf(tail)
+
+        val run = longestRun(lines.map { it.start to it.text }, allowBlank = true)
+            ?: longestRun(sentencesOf(tail), allowBlank = false)
+        // 首选「连续选项块」；选项之间被正文行隔开（模型常这么写）时，
+        // 退化为「正文里所有选项行」—— 至少不让面板空着。
+        val allOptIdx = lines.withIndex()
+            .filter { isOptionStart(it.value.text) }
+            .map { it.index }
+        val anchor = when {
+            run != null && run.count >= 2 -> run.offset
+            allOptIdx.size >= 2 -> lines[allOptIdx.first()].start
+            else -> return null
+        }
+        val optIdx = lines.indexOfFirst { it.start == anchor }
+
+        /*
+         * 面板起点：
+         *   - 选项块（最长的连续选项行）；
+         *   - 选项**上方紧邻**的「剧情小总结」一并纳入（只认特征词，正文段落不动）；
+         *   - 再往上若是 `---` / `<hr>`，它就是面板分界线：划进面板、从正文里删掉，
+         *     否则正文尾巴会多出一条孤立横线。隔了正文段落的 `---` 不动。
+         */
+        var panelStart = anchor
+        var headEnd = anchor
+        if (optIdx > 0) {
+            var j = optIdx - 1
+            var firstSummary = -1
             while (j >= 0) {
                 val t = lines[j].text.trim()
-                if (t.isEmpty()) break
-                if (SUMMARY_HINT.containsMatchIn(t) || t.length > 120) { first = j; j-- } else break
+                if (t.isEmpty()) { j--; continue }
+                if (SUMMARY_HINT.containsMatchIn(t)) { firstSummary = j; j-- } else break
             }
-            lines[first].start
+            if (firstSummary >= 0) {
+                panelStart = lines[firstSummary].start
+                headEnd = panelStart
+            }
+            var k = (if (firstSummary >= 0) firstSummary else optIdx) - 1
+            while (k >= 0 && lines[k].text.isBlank()) k--
+            if (k >= 0 && DIVIDER_LINE.matches(lines[k].text.trim())) {
+                panelStart = minOf(lines[k].end + 1, tail.length)
+                headEnd = (lines[k].start - 1).coerceAtLeast(0)
+            }
         }
 
-        val tailLines = lines.filter { it.start >= start && !inFence(it.start) }
-        val optionCount = tailLines.count { isOptionStart(it.text) }
+        val bodyLines = linesOf(tail.substring(panelStart))
+        val optionCount = bodyLines.count { isOptionStart(it.text) }
         // 防误伤：光有两行符号不算面板，还得有剧情总结 / 结尾吐槽 / 引导语
-        val narrative = tailLines.any {
+        val narrative = bodyLines.any {
             val t = it.text.trim()
             !isOptionStart(t) &&
                 (SUMMARY_HINT.containsMatchIn(t) || HINT_LINE.containsMatchIn(t) || t.length > 60)
         }
-        return PanelSpan(start, if (headEnd >= 0) headEnd else start, optionCount, narrative)
+        return PanelSpan(base + panelStart, base + headEnd, optionCount, narrative)
     }
 
     override fun claim(rich: String, meta: PluginRenderMeta): Boolean {
@@ -495,6 +598,18 @@ private object PanelDataAdapter : RenderPlugin {
         return if (head.isBlank()) card else head + "\n\n" + card
     }
 
+    /** 设置页「渲染自检」用：把识别过程的关键数字摊开，不用再靠猜。 */
+    override fun probe(rich: String): String {
+        val view = scanView(rich)
+        val (_, tail) = splitTail(view)
+        val lines = linesOf(tail)
+        val run = longestRun(lines.map { it.start to it.text }, allowBlank = true)
+            ?: longestRun(sentencesOf(tail), allowBlank = false)
+        val div = lines.count { DIVIDER_LINE.matches(it.text.trim()) }
+        return "卡片后正文 ${lines.count { it.text.isNotBlank() }} 行 / " +
+            "选项行 ${run?.count ?: 0} / 分隔线 $div / 正文长度 ${tail.length}"
+    }
+
     /** 把面板区散文拆成「选项行 / 剧情总结 / 吐槽」，不认任何预设专有 id。 */
     private fun splitPanel(tail: String): Panel {
         val opts = ArrayList<String>()
@@ -510,7 +625,8 @@ private object PanelDataAdapter : RenderPlugin {
             }
             val plain = TAG_SHELL.replace(line, "").trim()
             if (plain.isEmpty()) continue
-            if (plain.length > 120 || SUMMARY_HINT.containsMatchIn(plain)) {
+            // 段落型的（>= 60 字 / 带总结特征词）进折叠小总结，短句进「悄悄话」
+            if (plain.length >= 60 || SUMMARY_HINT.containsMatchIn(plain)) {
                 if (summary.isNotEmpty()) summary.append('\n')
                 summary.append(plain)
             } else {

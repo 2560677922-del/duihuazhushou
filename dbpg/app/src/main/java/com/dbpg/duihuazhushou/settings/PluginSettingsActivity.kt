@@ -1,6 +1,8 @@
 package com.dbpg.duihuazhushou.settings
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
@@ -8,6 +10,7 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import com.dbpg.duihuazhushou.Insets
 import com.dbpg.duihuazhushou.R
 import com.dbpg.duihuazhushou.appearance.AppearanceConfig
@@ -170,9 +173,22 @@ class PluginSettingsActivity : Activity() {
                 append("生效插件：").append(d.winner ?: "无（全部放行）")
                     .append(" · 产出 ").append(d.outputLength?.toString() ?: "0").append(" 字符\n")
                 append("结果：").append(d.note).append('\n')
+                if (d.probe.isNotBlank()) append("结构探针：").append(d.probe).append('\n')
                 append("rich 开头：").append(d.richHead)
             }
         }
+    }
+
+    /** 把整条 rich 复制到剪贴板：诊断里截断的 160 字符之外，一眼能看全。 */
+    private fun copyRich() {
+        val rich = PluginRegistry.lastRich
+        if (rich == null) {
+            diagText.text = "还没有渲染记录，先回聊天生成一条再回来。"
+            return
+        }
+        val cm = getSystemService(ClipboardManager::class.java)
+        cm?.setPrimaryClip(ClipData.newPlainText("rich", rich))
+        Toast.makeText(this, "已复制 ${rich.length} 字符，可直接粘贴给我", Toast.LENGTH_SHORT).show()
     }
 
     /**
@@ -249,6 +265,7 @@ class PluginSettingsActivity : Activity() {
             setPadding(0, dp(8), 0, 0)
         }
         acts.addView(actionButton("用内置模板自检渲染") { togglePreview() })
+        acts.addView(actionButton("复制完整 rich") { copyRich() })
         acts.addView(actionButton("刷新诊断") { refreshDiagnostic() })
         card.addView(acts, matchWidth())
         previewHost = LinearLayout(this).apply {

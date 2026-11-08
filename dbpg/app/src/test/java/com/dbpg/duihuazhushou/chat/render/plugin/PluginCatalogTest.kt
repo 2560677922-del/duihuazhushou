@@ -362,4 +362,81 @@ class PluginCatalogTest {
         assertFalse("两行符号但没有任何总结/吐槽，不该误认成面板", panel.claim(noDivider, meta))
         assertNull(panel.render(noDivider, assetMeta))
     }
+
+    /**
+     * ★ 真机实测（诊断截图）：整张折叠栏卡片被压成**一行**，闭合围栏黏在
+     *   `</html>` 后面。旧实现按「行首是 ```」数围栏，只数到一个开围栏，
+     *   于是后面所有正文都被判成「围栏内」，选项行一个都扫不到。
+     */
+    @Test
+    fun panelAdapterClaimsWhenCardIsOneSingleLine() {
+        val oneLineCard = "```" +
+            "<!DOCTYPE html><html lang=\"zh-CN\"><head><title>小猫之神 - 折叠栏</title></head><body>" +
+            "<details><summary>点我收起喵~</summary>设定与要求回忆分析</details>" +
+            "</body></html>" + "```"
+        val rich = listOf(oneLineCard, prosePanel).joinToString(NL)
+        assertTrue("整张卡片压成一行也必须能认出正文", panel.claim(rich, meta))
+        val out = panel.render(rich, assetMeta)!!
+        assertTrue("已有卡片必须原样保留", out.contains("<title>小猫之神 - 折叠栏</title>"))
+        assertTrue("正文必须留在卡片之外", out.contains("犹如珍珠般的哑光"))
+        assertTrue("必须补出面板", out.contains("<options>") && out.contains("<option>拿起手机"))
+        assertFalse("幂等", panel.claim(out, meta))
+        // 落盘：真 render.html 端到端（最贴近真机的那一种输入）
+        runCatching {
+            val dir = "/workspace/st-lab/plugin-slot"
+            java.io.File("$dir/kotlin_oneline_output.txt").writeText(out)
+            java.io.File("$dir/kotlin_oneline_sanitized.txt")
+                .writeText(com.dbpg.duihuazhushou.chat.render.HtmlSanitizer.clean(out, false))
+        }
+    }
+
+    /** 模型直接把整页文档贴出来、没有围栏：以 `</html>` 为界取正文。 */
+    @Test
+    fun panelAdapterClaimsCardWithoutAnyFence() {
+        val bareCard = "<!DOCTYPE html><html><head><title>折叠栏</title></head>" +
+            "<body><div>思考内容</div></body></html>"
+        val rich = listOf(bareCard, "", "你仰起头，看着白色的天花板。", "", prosePanel).joinToString(NL)
+        assertTrue(panel.claim(rich, meta))
+        val out = panel.render(rich, assetMeta)!!
+        assertTrue(out.contains("<title>折叠栏</title>"))
+        assertTrue(out.contains("<option>拿起手机"))
+    }
+
+    /** 选项之间夹空行（模型爱这么写），不能把连续选项打断。 */
+    @Test
+    fun panelAdapterToleratesBlankLinesBetweenOptions() {
+        val spaced = listOf(
+            "本段剧情发生在午后的一间小卧室里，详细描写了神宫雏首次出场的外貌特征，最后她放下手机稍作休息。",
+            "😏 拿起手机，打开前置摄像头",
+            "",
+            "😂 门外突然传来敲门声",
+            "",
+            "🥺 觉得地板有点凉，你双手撑着地毯站起身",
+            "喵呼——！写完啦写完啦喵！",
+        ).joinToString(NL)
+        assertTrue(panel.claim(spaced, meta))
+        val out = panel.render(spaced, assetMeta)!!
+        assertTrue("三个选项都要进模板", out.contains("<option>拿起手机") &&
+            out.contains("<option>门外突然传来敲门声") && out.contains("<option>觉得地板有点凉"))
+    }
+
+    /**
+     * ★ 真机同构回归：这份 rich 是 App 自己的正则引擎跑 Meowssiah 预设的真实产物
+     *   （折叠栏卡片 + 长正文 + 三个 emoji 选项 + 剧情总结 + 结尾吐槽）。
+     *   插件必须能认领，并且 summary / comment / options 三样都补出来。
+     */
+    @Test
+    fun panelAdapterHandlesRealPresetRich() {
+        val rich = javaClass.classLoader?.getResourceAsStream("plugins/real_preset_rich.txt")
+            ?.bufferedReader()?.use { it.readText() } ?: return
+        assertTrue("真实预设产物必须被认领", panel.claim(rich, meta))
+        val out = panel.render(rich, assetMeta)!!
+        assertTrue("折叠栏卡片必须原样保留", out.contains("<title>小猫之神 - 折叠栏</title>"))
+        assertTrue("正文必须留在卡片之外", out.contains("午后的阳光穿过百叶窗"))
+        assertTrue(out.contains("<summary>"))
+        assertTrue(out.contains("<comment>"))
+        assertTrue("三个选项都要进模板", out.contains("<option>拿起手机") &&
+            out.contains("<option>走到梳妆台前") && out.contains("<option>转身拉开防尘布"))
+        assertFalse("幂等", panel.claim(out, meta))
+    }
 }
