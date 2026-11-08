@@ -7,6 +7,34 @@ import java.util.regex.Pattern
 private val NAMED_GROUP_RE = Regex("""\(\?<([A-Za-z][A-Za-z0-9]*)>""")
 
 /**
+ * 编译后的正则缓存（LRU，512 条）。
+ *
+ * 为什么必须缓存：美化正则单条可以有两万多字符，`Pattern.compile` 一次就要
+ * 几毫秒到几十毫秒。以前每条消息、每条脚本、每次界面刷新都重新编译 ——
+ * 200 条消息 × 20 条规则 × 每 80ms 一次流式刷新，主线程直接被打满。
+ *
+ * 安全性：`Pattern` 是不可变且线程安全的；`Matcher` 才带状态，而本类每次
+ * `exec/replace` 都新建 Matcher，所以共享 Pattern 不会串状态。
+ */
+private object PatternCache {
+    private const val MAX = 512
+
+    private val map = object : LinkedHashMap<String, Pattern>(128, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pattern>?): Boolean =
+            size > MAX
+    }
+
+    fun compile(source: String, opts: Int): Pattern {
+        val key = "$opts\u0000$source"
+        synchronized(map) { map[key] }?.let { return it }
+        // 编译放在锁外：两万字的规则编译几十毫秒，锁内编译会阻塞其它线程取缓存
+        val p = Pattern.compile(source, opts)
+        synchronized(map) { map[key] = p }
+        return p
+    }
+}
+
+/**
  * 一个贴近 JavaScript RegExp 语义的正则封装。
  *
  * 为什么不直接用 Kotlin `Regex`：
@@ -51,7 +79,7 @@ class JsRegex(val source: String, val flags: String) {
         if (flags.contains('i')) opts = opts or Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         if (flags.contains('m')) opts = opts or Pattern.MULTILINE
         if (flags.contains('s')) opts = opts or Pattern.DOTALL
-        pattern = Pattern.compile(source, opts)
+        pattern = PatternCache.compile(source, opts)
         namedGroupNames = NAMED_GROUP_RE.findAll(source).map { it.groupValues[1] }.toList()
     }
 

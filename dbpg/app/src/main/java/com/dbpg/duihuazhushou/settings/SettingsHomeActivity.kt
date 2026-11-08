@@ -44,6 +44,11 @@ class SettingsHomeActivity : Activity() {
                 Intent(this, com.dbpg.duihuazhushou.appearance.SettingsActivity::class.java),
             )
         }
+        findViewById<View>(R.id.shome_render).setOnClickListener {
+            startActivity(
+                Intent(this, com.dbpg.duihuazhushou.appearance.RenderSettingsActivity::class.java),
+            )
+        }
         findViewById<View>(R.id.shome_gallery).setOnClickListener {
             startActivity(
                 Intent(this, com.dbpg.duihuazhushou.gallery.GalleryActivity::class.java),

@@ -33,8 +33,6 @@ class SettingsActivity : Activity() {
     private lateinit var lineBar: SeekBar
     private lateinit var widthBar: SeekBar
     private lateinit var hideSwitch: Switch
-    private lateinit var htmlSwitch: Switch
-    private lateinit var scriptSwitch: Switch
     private lateinit var bubbleBtn: TextView
     private lateinit var bgValue: TextView
     private lateinit var dimBar: SeekBar
@@ -70,8 +68,6 @@ class SettingsActivity : Activity() {
         lineBar = findViewById(R.id.set_line)
         widthBar = findViewById(R.id.set_width)
         hideSwitch = findViewById(R.id.set_hide_reasoning)
-        htmlSwitch = findViewById(R.id.set_html_render)
-        scriptSwitch = findViewById(R.id.set_allow_script)
         bubbleBtn = findViewById(R.id.set_bubble_style)
         bgValue = findViewById(R.id.set_bg_value)
         dimBar = findViewById(R.id.set_bg_dim)
@@ -115,8 +111,6 @@ class SettingsActivity : Activity() {
         widthBar.max = 34
         widthBar.progress = (cfg.bubbleWidthPercent - 60).coerceIn(0, 34)
         hideSwitch.isChecked = cfg.hideReasoning
-        htmlSwitch.isChecked = cfg.htmlRender
-        scriptSwitch.isChecked = cfg.allowScript
 
         bind()
         render()
@@ -136,20 +130,12 @@ class SettingsActivity : Activity() {
             cfg = cfg.copy(hideReasoning = checked)
             Appearance.save(this, cfg)
         }
-        htmlSwitch.setOnCheckedChangeListener { _, checked ->
-            cfg = cfg.copy(htmlRender = checked)
-            Appearance.save(this, cfg)
-        }
         dimBar.setOnSeekBarChangeListener(onChangeLive { p ->
             cfg = cfg.copy(bgDim = p)
         })
         panelBar.setOnSeekBarChangeListener(onChangeLive { p ->
             cfg = cfg.copy(panelOpacity = p)
         })
-        scriptSwitch.setOnCheckedChangeListener { _, checked ->
-            cfg = cfg.copy(allowScript = checked)
-            Appearance.save(this, cfg)
-        }
     }
 
     private fun onChange(apply: (Int) -> Unit) = object : SeekBar.OnSeekBarChangeListener {
@@ -393,8 +379,6 @@ class SettingsActivity : Activity() {
         lineBar.progress = ((cfg.lineSpacing - 1f) * 100).toInt()
         widthBar.progress = cfg.bubbleWidthPercent - 60
         hideSwitch.isChecked = cfg.hideReasoning
-        htmlSwitch.isChecked = cfg.htmlRender
-        scriptSwitch.isChecked = cfg.allowScript
         dimBar.progress = cfg.bgDim
         panelBar.progress = cfg.panelOpacity
         render()

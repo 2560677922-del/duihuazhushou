@@ -137,6 +137,27 @@ object EngineBridge {
     }
 
     /**
+     * 不带 Activity 的同步取值（后台服务用）。
+     *
+     * `evaluateJavascript` 的回调本身就在主线程，所以这里直接回调即可；
+     * 引擎没起来就立刻回 null，调用方自己降级 —— 摘要这类后台任务绝不能
+     * 因为引擎在加载就一直等。
+     */
+    fun fetchJson(fn: String, arg: String?, cb: (JSONObject?) -> Unit) {
+        val w = MainActivity.getWebView()
+        if (w == null) {
+            cb(null)
+            return
+        }
+        val call = if (arg == null) {
+            "window.__dhpApi ? window.__dhpApi.$fn() : null"
+        } else {
+            "window.__dhpApi ? window.__dhpApi.$fn(${JSONObject.quote(arg)}) : null"
+        }
+        w.evaluateJavascript(call) { r -> cb(parse(r)) }
+    }
+
+    /**
      * 发一条异步命令。
      *
      * 配置类命令在本进程就地执行并落盘，页面通过 [NativeBridge.fireLocal]

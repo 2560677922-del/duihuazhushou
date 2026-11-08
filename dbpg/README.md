@@ -57,6 +57,35 @@
 >    `OnChildAttachStateChangeListener`，新项进场时按**当前** token 补色。
 >    自己写新的列表页时不用额外做什么，只要根布局里有 RecyclerView 就会自动挂上。
 
+> ### 渲染与上下文（2026-11-08 新增，改之前先看）
+>
+> 设置首页 → **「渲染与上下文」**（`appearance/RenderSettingsActivity.kt` +
+> `res/layout/activity_render_settings.xml`）。它管两件事，都**不在**外观系统里：
+>
+> | 想改 | 改这里 | 说明 |
+> | --- | --- | --- |
+> | 美化渲染开关 / 卡片脚本 | `appearance/Appearance.kt`（`htmlRender` / `allowScript`） | 从「UI 风格」页迁到这里，旧页已删掉这两项，别再加回去 |
+> | 卡片怎么画 | `chat/render/CardRenderer.kt` + `ChatAdapter.kt` | 列表里是**位图**（ImageView），不是 WebView |
+> | 点卡片看全文 | `chat/render/CardViewerActivity.kt` | 全屏单例 WebView，可选中、可跑脚本 |
+> | 摘要参数 | `summary/SummaryConfig.kt` | SharedPreferences `dhp_summary` |
+> | 摘要请求 | `summary/SummaryService.kt` | 原生 OkHttp 直连，**不走 web 生成通道** |
+> | 摘要注入上下文 | `stcore/session/SessionHistory.kt` | 被覆盖的轮次不再发原文 |
+> | 「带预设」到底带什么 | `../src/engine/summaryPreset.ts` | 预设全量带；角色卡/世界书宏清空 |
+>
+> **三条铁律：**
+>
+> 1. **列表里不要塞 WebView**。以前 `item_chat_message.xml` 每条一个 WebView，
+>    滚出屏幕再回来就重载一次 —— 这是"一顿一顿"的直接原因。现在是
+>    `CardRenderer` 离屏画一张 WebP，`CardBitmaps` 解码 LRU 复用。
+> 2. **摘要 ≠ 扮演**。摘要请求里只带「预设 + 上下文」，
+>    角色卡、世界书、正则一律不带。预设要**全量**带（砍一半就失效），
+>    只把角色卡类宏（`{{description}}` 等）替换为空。
+> 3. **`keepRecent` 不存在**。触发阈值 10、单次取 8，差值天然留下最近 2 条原文。
+>    不要再加一个"保留最近 N 条"，会让触发点漂移。
+>
+> 摘要入口在聊天页右上角（`chat_summary`）：查看 / 编辑 / 立即浓缩 / 清除。
+> 摘要有变化时图标变主题蓝，跑任务时会变淡。
+
 把上一级目录（`duihuazhushou/`）的 Vue + Vite 网页应用打包成 Android APK。
 
 **这个目录是完全独立的 Android 工程。** 没有改动 Web 工程里的任何源码文件，
@@ -64,7 +93,7 @@
 
 - 包名 `com.dbpg.duihuazhushou`
 - 当前版本 `versionName 1.0.4` / `versionCode 6`
-- 产物 `app\build\outputs\apk\debug\app-debug.apk`，约 1.3 MB
+- 产物 `app\build\outputs\apk\debug\app-debug.apk`，约 5.4 MiB（5,716,909 字节）
 
 ---
 

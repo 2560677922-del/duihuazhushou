@@ -25,7 +25,11 @@ data class ChatItem(
     val variantCount: Int = 0,
     /**
      * 美化 HTML（跑完正则、保留标签的原文）。
-     * 非空时气泡用内嵌 WebView 真渲染（CSS 生效），content 只作降级与搜索。
+     * 非空时这条消息是"卡片型"内容，由卡片渲染器画成位图（或按设置降级为纯文本）。
      */
     val html: String? = null,
+    /** 卡片位图文件路径（渲染完成后才有）。空 = 还在渲染 / 降级为纯文本。 */
+    val cardPath: String? = null,
+    /** 卡片渲染后的高度（px），用来在位图到位前占位，避免滚动跳动。 */
+    val cardHeightPx: Int = 0,
 )

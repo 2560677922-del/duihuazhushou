@@ -22,14 +22,20 @@
         android:padding="10dp"
         android:background="@drawable/bubble_bg">
 
-        <!-- 美化 HTML 消息用：内嵌 WebView 真渲染（CSS 生效）。
-             普通 Markdown/纯文本仍用 msg_text，性能更好、可选中复制。 -->
-        <WebView
-            android:id="@+id/msg_html"
+        <!--
+          美化卡片：显示离屏渲染好的位图（不是 WebView）。
+          ★ 以前这里是 <WebView>，每个 ViewHolder 都会实例化一个完整渲染上下文，
+            同屏 10 个就是 10 个 WebView —— 滚动掉帧、内存飙高的主因。
+            现在列表里零 WebView；需要真网页交互时点开全屏「卡片查看器」。
+        -->
+        <ImageView
+            android:id="@+id/msg_card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:adjustViewBounds="true"
+            android:scaleType="fitCenter"
             android:visibility="gone"
-            android:background="@android:color/transparent" />
+            android:contentDescription="@null" />
 
         <TextView
             android:id="@+id/msg_text"

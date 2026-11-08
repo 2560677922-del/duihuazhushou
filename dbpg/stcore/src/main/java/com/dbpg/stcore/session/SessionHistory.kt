@@ -34,6 +34,7 @@ object SessionHistory {
 
     const val ROLE_USER = "user"
     const val ROLE_ASSISTANT = "assistant"
+    const val ROLE_SYSTEM = "system"
 
     /**
      * 导出整段历史（不含正在输入的那一句）。
@@ -42,17 +43,53 @@ object SessionHistory {
      *                     重新生成第 i 轮时传第 i 轮的 id：它自己的 user 会作为
      *                     `currentUserInput` 单独发，不能重复出现在 history 里。
      */
-    fun export(doc: SessionDoc, uptoActionId: String? = null): List<PromptMessage> {
+    fun export(
+        doc: SessionDoc,
+        uptoActionId: String? = null,
+        /**
+         * 自动摘要。空列表 = 完全不启用（行为和以前一模一样）。
+         *
+         * ★ 只在**原生导出这一层**替换原文，web 的 assemblePrompt 完全不知道
+         *   摘要的存在 —— 它收到的就是一份"已经变短的干净历史"。
+         *   这样不用改 web、也不会和它的 token 裁剪打架。
+         */
+        summaries: List<SummaryBlock> = doc.summaries,
+        /** 摘要那条消息的角色。默认 system；个别中转不接受多条 system 时切 assistant。 */
+        summaryRole: String = ROLE_SYSTEM,
+    ): List<PromptMessage> {
         val stop = if (uptoActionId == null) -1 else doc.actions.indexOfFirst { it.id == uptoActionId }
         val end = if (stop < 0) doc.actions.size else stop
 
         val out = ArrayList<PromptMessage>(end * 2 + 1)
-        // 场景描述是"故事的开场白"，始终以 assistant 身份排在最前
-        // （与 web 的 history computed 一致；不加的话模型会丢掉开场地设定）
+
+        /*
+         * 摘要生效条件：
+         *   1) 摘要在当前 actions 上仍然有效（锚点没被删/改，见 SummaryPlanner）
+         *   2) 这次导出的是"摘要区间之后"的内容
+         *
+         * 反过来：如果用户对一条**早于摘要区间**的消息点"重新生成"，就必须
+         * 退回原文 —— 否则模型只知道"前情提要"，却看不到那一轮的具体细节。
+         */
+        val (blocks, firstRaw) = SummaryPlanner.effective(summaries, doc.actions)
+        val useSummary = blocks.isNotEmpty() && firstRaw > 0 && (stop < 0 || stop >= firstRaw)
+        var rawStart = 0
+        if (useSummary) {
+            rawStart = firstRaw
+            out.add(
+                PromptMessage(
+                    summaryRole,
+                    "【前情提要（自动摘要，不是当前场景）】\n" +
+                        blocks.joinToString("\n") { it.text.trim() },
+                ),
+            )
+        }
+
+        // 场景描述是"故事的开场白"。放在摘要之后、原文之前：
+        // 摘要交代"之前发生了什么"，场景交代"这是一个什么故事"，顺序符合阅读习惯。
         val scene = clean(doc.sceneDescription)
         if (scene.isNotEmpty()) out.add(PromptMessage(ROLE_ASSISTANT, scene))
 
-        for (i in 0 until end) {
+        for (i in rawStart until end) {
             val a = doc.actions[i]
             val user = clean(a.user)
             if (user.isNotEmpty()) out.add(PromptMessage(ROLE_USER, user))
@@ -61,6 +98,10 @@ object SessionHistory {
         }
         return out
     }
+
+    /** 不需要摘要时用的便捷重载（导到某条之前，含摘要策略关闭）。 */
+    fun exportRaw(doc: SessionDoc, uptoActionId: String? = null): List<PromptMessage> =
+        export(doc, uptoActionId, summaries = emptyList())
 
     /** 某一轮的 user 文本，剥图后作为"当前输入"单独发送。 */
     fun userInputOf(doc: SessionDoc, actionId: String): String =

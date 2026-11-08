@@ -4,18 +4,27 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import com.dbpg.duihuazhushou.appearance.AppearanceConfig
+import com.dbpg.duihuazhushou.chat.render.CardRenderer
+import com.dbpg.duihuazhushou.chat.render.RenderCache
 import com.dbpg.duihuazhushou.imagegen.AutoImageService
 import com.dbpg.duihuazhushou.session.SessionRepo
 import com.dbpg.duihuazhushou.settings.ConnectionStore
+import com.dbpg.duihuazhushou.summary.SummaryConfig
+import com.dbpg.duihuazhushou.summary.SummaryService
 import com.dbpg.stcore.ContentBlock
 import com.dbpg.stcore.NativeImage
 import com.dbpg.stcore.imagegen.AutoImageEnv
 import com.dbpg.stcore.imagegen.AutoImageSupport
+import com.dbpg.stcore.render.Hashing
+import com.dbpg.stcore.render.RenderKey
+import com.dbpg.stcore.render.StreamPipeline
 import com.dbpg.stcore.session.ActionImage
 import com.dbpg.stcore.session.SessionAction
 import com.dbpg.stcore.session.SessionDoc
 import com.dbpg.stcore.session.SessionEditor
 import com.dbpg.stcore.session.SessionHistory
+import com.dbpg.stcore.session.SummaryBlock
+import com.dbpg.stcore.session.SummaryPlanner
 import com.dbpg.stcore.stripHtmlNoise
 import com.dbpg.stcore.stripImageMarkers
 import com.dbpg.stcore.transformForDisplayRich
@@ -49,15 +58,38 @@ class ChatController(
     private val sink: Sink,
 ) : GenBridge.Sink {
 
+    companion object {
+        /**
+         * 流式合并间隔。
+         *
+         * web 侧 80ms 推一次全量，这里再合并到 120ms：人眼对 8fps 的文字刷新
+         * 已经无感，而 UI 每帧最多只做一次 setText，输入框不会被挤掉帧。
+         */
+        private const val DELTA_INTERVAL = 120L
+    }
+
     interface Sink {
         /** 列表数据变了。scroll=true 表示这一轮必须贴底（发送/完成）。 */
         fun onItems(items: List<ChatItem>, scrollToBottom: Boolean)
+        /**
+         * 流式增量：只更新这一条的文字。
+         *
+         * ★ 不走 [onItems]：整表提交会触发 DiffUtil 全表比对 + 可见项全部 rebind，
+         *   而流式每 120ms 就来一次。这里只改一条，界面层用 payload/轻量 bind 处理。
+         */
+        fun onStreamingText(actionId: String, text: String)
         fun onTitle(title: String)
         /** 生成中：停止按钮可见、输入框禁用 */
         fun onGenerating(active: Boolean)
         fun onToast(message: String)
         /** 分支出新会话，界面负责跳过去 */
         fun onBranchCreated(sessionId: String, title: String)
+
+        /** 摘要任务开始/结束（界面可以转圈或置灰入口）。默认不关心。 */
+        fun onSummaryState(active: Boolean) {}
+
+        /** 摘要有变化（新增/编辑/删除）。默认不关心。 */
+        fun onSummaryChanged() {}
     }
 
     var doc: SessionDoc? = null
@@ -66,8 +98,45 @@ class ChatController(
     private var display: DisplayConfig = DisplayConfig.empty()
     private var appearance: AppearanceConfig = AppearanceConfig()
 
+    /**
+     * 渲染指纹的两个维度（内容哈希，不是自增版本号）。
+     *
+     * 自增版本号在进程重启后会归零，和磁盘里的旧产物撞 key，出现
+     * "配置明明改了、界面还是老样子"。所以这里必须是"配置内容的哈希"。
+     */
+    private var cfgHash: Int = 0
+    private var lookHash: Int = 0
+
+    /** 是否存在 minDepth/maxDepth 脚本：只有这时 depth 才需要参与缓存键。 */
+    private var depthSensitive: Boolean = false
+
+    private val cache: RenderCache by lazy { RenderCache.get(appContext) }
+
+    /** 卡片位图：actionId → (路径, 高度)。渲染完成后才有。 */
+    private data class CardRef(val path: String, val heightPx: Int)
+
+    private val cardRefs = java.util.concurrent.ConcurrentHashMap<String, CardRef>()
+
+    /** 最近一次构建出的 HTML（按 actionId）。卡片渲染要用它，避免再写回缓存读一遍。 */
+    private val renderedHtml = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** 渲染失败/超时的卡片：不再反复请求，直接长期显示纯文本。 */
+    private val cardFailed = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     /** 生图配置快照：打开会话时拉一次，之后自动配图全用它，不再问 web。 */
     private var imageEnv: AutoImageEnv? = null
+
+    /**
+     * 会话绑定的预设 id（空 = 跟随全局默认）。
+     *
+     * 摘要请求要带"当前聊天的预设"，但不能自己在原生解析 ST 预设 ——
+     * 排序、启用、宏、变量全在 web 兼容层。这里只记 id，取值时交给
+     * `EngineBridge.fetchJson("exportSummaryPreset", id)`。
+     */
+    private var summaryPresetId: String? = null
+
+    /** 同一时间只允许一个摘要任务：并发会互相覆盖区间。 */
+    private var summarizing = false
 
     private var genId: String? = null
     private var genActionId: String = ""
@@ -116,6 +185,8 @@ class ChatController(
 
     private fun bind(d: SessionDoc) {
         doc = d
+        summaryPresetId = com.dbpg.duihuazhushou.session.SessionBindingStore
+            .load(appContext, d.id).presetId
         sink.onTitle(d.title.ifBlank { "冒险" })
         render(true)
         refreshDisplayConfig()
@@ -140,23 +211,98 @@ class ChatController(
      * 否则新消息用的还是旧配置。
      */
     fun refreshConfig() {
+        // 绑定可能刚被「本对话资产」改过：摘要要跟着用新的预设
+        doc?.let {
+            summaryPresetId = com.dbpg.duihuazhushou.session.SessionBindingStore
+                .load(appContext, it.id).presetId
+        }
         refreshDisplayConfig()
         refreshImageEnv()
     }
 
     fun applyAppearance(cfg: AppearanceConfig) {
         if (cfg == appearance) return
+        val old = lookHash
         appearance = cfg
+        lookHash = lookHashOf(cfg)
+        // 外观变了，缓存里"长什么样"就全错了。整体清掉，代价是重算一次。
+        if (lookHash != old) {
+            cache.clearForLookChange()
+            invalidateCards()
+        }
         render(false)
     }
 
     private fun refreshDisplayConfig() {
         val id = doc?.id ?: return
         GenBridge.fetchDisplayConfig(id) { json ->
-            display = DisplayConfig.parse(json)
+            val parsed = DisplayConfig.parse(json)
+            val old = cfgHash
+            display = parsed
+            cfgHash = cfgHashOf(parsed)
+            depthSensitive = parsed.scripts.any { it.minDepth != null || it.maxDepth != null }
+            if (cfgHash != old && old != 0) {
+                // 换预设/正则/变量：产物全部作废（全清最省心，旧 key 也不会再命中）
+                cache.clearAll()
+            }
             render(false)
         }
     }
+
+    // ------------------------------------------------------------ 渲染指纹
+
+    /**
+     * "怎么渲染"的指纹：脚本 + 变量 + 宏上下文（角色卡身份部分）。
+     *
+     * ★ 刻意排除 macroContext.chat / lastMessage / currentMessage：
+     *   它们随每条消息变化，纳入进来会导致**任何缓存都永远不命中**，
+     *   缓存反而变成纯开销。
+     *
+     * ★ 但如果用户的美化正则真的引用了 {{lastMessage}}，排除就会导致
+     *   "上一条变了、这一条还显示旧值"。所以这里做一次检查：
+     *   命中这类宏就整体关掉缓存（[cacheable]），宁可慢也不能错。
+     */
+    private fun cfgHashOf(d: DisplayConfig): Int {
+        val sb = StringBuilder(1024)
+        for (s in d.scripts) {
+            sb.append(s.id).append('\u0001').append(s.findRegex).append('\u0001')
+                .append(s.replaceString).append('\u0001')
+                .append(s.minDepth).append('\u0001').append(s.maxDepth).append('\u0001')
+                .append(s.placement?.joinToString(",")).append('\u0001')
+                .append(s.disabled).append(s.markdownOnly).append(s.promptOnly).append('\u0001')
+                .append(s.trimStrings?.joinToString("\u0002")).append('\u0001')
+                .append(s.substituteRegex).append('\u0003')
+        }
+        // 变量表按 key 排序后拼接：HashMap 的遍历顺序不稳定，直接拼会抖
+        d.variables.session.toSortedMap().forEach { (k, v) -> sb.append(k).append('=').append(v).append('\u0001') }
+        d.variables.global.toSortedMap().forEach { (k, v) -> sb.append("g:").append(k).append('=').append(v).append('\u0001') }
+        val mc = d.macroContext
+        sb.append(mc.char).append('\u0001').append(mc.user).append('\u0001')
+            .append(mc.persona).append('\u0001').append(mc.description).append('\u0001')
+            .append(mc.scenario).append('\u0001').append(mc.original).append('\u0001')
+            .append(mc.mesExample)
+        return Hashing.intOf(sb.toString())
+    }
+
+    /** "长什么样"的指纹：字号/行距/字体/颜色/宽度/思维链开关。 */
+    private fun lookHashOf(c: AppearanceConfig): Int = Hashing.intOf(
+        c.textSizeSp.toString(),
+        c.lineSpacing.toString(),
+        c.bubbleWidthPercent.toString(),
+        c.fontFamily,
+        c.fontColor,
+        c.htmlRender.toString(),
+        c.allowScript.toString(),
+        c.hideReasoning.toString(),
+        display.reasoningCutMarker,
+    )
+
+    /** 正则里引用了"会随消息变化"的宏时，缓存必须关掉。 */
+    private val cacheable: Boolean
+        get() = display.scripts.none { s ->
+            val r = s.replaceString
+            r.contains("{{chat}}") || r.contains("{{lastMessage}}") || r.contains("{{currentMessage}}")
+        }
 
     private fun refreshImageEnv() {
         GenBridge.fetchImageConfig { json ->
@@ -239,13 +385,23 @@ class ChatController(
                 continue
             }
 
-            val rendered = renderAi(
+            val rendered = renderCached(
+                actionId = a.id,
                 text = aiText,
                 images = a.images,
                 depth = d.actions.size - 1 - i,
                 display = display,
                 appearance = appearance,
+                generating = generating,
+                sessionId = d.id,
             )
+            val html = rendered.html
+            if (html != null) {
+                renderedHtml[a.id] = html
+            } else {
+                renderedHtml.remove(a.id)
+            }
+            val card = if (html != null) cardRefs[a.id] else null
             out.add(
                 ChatItem(
                     id = "a:${a.id}",
@@ -256,7 +412,9 @@ class ChatController(
                     actionId = a.id,
                     variantIndex = a.variantIndex,
                     variantCount = a.variants.size,
-                    html = rendered.html,
+                    html = html,
+                    cardPath = card?.path,
+                    cardHeightPx = card?.heightPx ?: 0,
                 ),
             )
         }
@@ -264,12 +422,105 @@ class ChatController(
     }
 
     /** AI 正文 → 显示文本 + 本地图片路径（跑 ST 显示变换：思维链/正则/变量/剥标记）。 */
-    /** renderAi 的输出：纯文本 + 图片路径 + 可选的富 HTML（给 WebView 渲染）。 */
+    /** renderAi 的输出：纯文本 + 图片路径 + 可选的富 HTML（给卡片渲染）。 */
     private data class RenderedMsg(
         val plain: String,
         val paths: List<String>,
         val html: String?,
     )
+
+    // ------------------------------------------------------------ 卡片位图
+
+    /**
+     * 为一条卡片消息准备位图。
+     *
+     * 由界面在 bind 时调用（说明"这一条已经滚到可见区了"），
+     * 因此渲染是**按需**的：200 条会话不会在打开时一次性画 200 张图。
+     *
+     * 失败一次就不再重试（[cardFailed]）：宁可长期显示纯文本，也不要让
+     * 一张坏卡片把渲染队列堵死。
+     */
+    fun ensureCard(actionId: String, widthPx: Int) {
+        if (actionId.isEmpty() || widthPx <= 0) return
+        if (cardRefs.containsKey(actionId) || cardFailed.contains(actionId)) return
+        val html = renderedHtml[actionId] ?: return
+
+        // key 里必须带外观与宽度：换字体/改气泡宽度后旧位图就不对了
+        val key = "c" + java.lang.Long.toHexString(
+            Hashing.fnv(actionId, Hashing.text(html).toString(), lookHash.toString(), widthPx.toString()),
+        )
+
+        CardRenderer.render(
+            context = appContext,
+            key = key,
+            html = html,
+            widthPx = widthPx,
+            style = CardRenderer.Style.of(appearance),
+        ) { path, heightPx ->
+            if (path == null || heightPx <= 0) {
+                cardFailed.add(actionId)
+                return@render
+            }
+            cardRefs[actionId] = CardRef(path, heightPx)
+            // 位图就绪：只刷新这一条。用 render(false) 是因为高度/内容变了，
+            // 需要走一次正常的列表重建（有缓存，代价很小）。
+            render(false)
+        }
+    }
+
+    /** 卡片位图作废（改外观/换气泡宽度时调用）。 */
+    private fun invalidateCards() {
+        cardRefs.clear()
+        cardFailed.clear()
+    }
+
+    /**
+     * 带缓存的渲染：内容定稿的消息只算一次。
+     *
+     * 命中条件 = 正文 + 图片 + 配置指纹 + 外观指纹 全一致。
+     * 生成中的那一条**永远不走缓存**：它每 120ms 都在变，缓存只会制造垃圾。
+     *
+     * 这里是整个性能方案的核心：打开 200 条会话时，第二次开始几乎是纯 map 查找，
+     * 不再重跑两万字的美化正则。
+     */
+    private fun renderCached(
+        actionId: String,
+        text: String,
+        images: List<ActionImage>,
+        depth: Int,
+        display: DisplayConfig,
+        appearance: AppearanceConfig,
+        generating: Boolean,
+        sessionId: String,
+    ): RenderedMsg {
+        if (text.isBlank()) return RenderedMsg("", emptyList(), null)
+        if (generating || sessionId.isEmpty() || !cacheable) {
+            return renderAi(text, images, depth, display, appearance)
+        }
+
+        val imgSig = if (images.isEmpty()) "" else images.joinToString("\u0001") {
+            it.id + ":" + (it.localPath ?: it.dataUrl ?: "") + ":" + it.markdownIndex
+        }
+        val key = RenderKey(
+            actionId = actionId,
+            contentHash = Hashing.text(text) xor Hashing.fnv(imgSig),
+            cfgHash = cfgHash,
+            lookHash = lookHash,
+            // 只有存在 minDepth/maxDepth 脚本时才把深度纳入；深度精确参与，
+            // 追加消息会让旧消息失效一次 —— 宁可多算一次，也不能显示错的内容。
+            depth = if (depthSensitive) depth else -1,
+        )
+
+        cache.get(sessionId, key)?.let { e ->
+            // 图片文件可能被用户在查看器里删了：过滤掉，但不影响正文
+            val live = e.paths.filter { java.io.File(it).exists() }
+            return RenderedMsg(e.plain, live, e.html)
+        }
+
+        val out = renderAi(text, images, depth, display, appearance)
+        cache.put(sessionId, key, RenderCache.Entry(out.plain, out.html, out.paths))
+        return out
+    }
 
     private fun renderAi(
         text: String,
@@ -382,7 +633,20 @@ class ChatController(
 
     private fun beginGen(actionId: String, userInput: String, isNew: Boolean) {
         val d = doc ?: return
-        val history = SessionHistory.export(d, uptoActionId = actionId)
+        /*
+         * 导出上下文：摘要开启时，被覆盖的轮次用摘要替代原文。
+         *
+         * 这一步在**原生**完成，web 只收到一份"已经变短的干净历史"，
+         * 所以 assemblePrompt / token 裁剪都不用改，也不会打架。
+         * 关闭摘要时走的是完全相同的旧路径（summaries 传空）。
+         */
+        val sCfg = SummaryConfig.load(appContext)
+        val history = SessionHistory.export(
+            doc = d,
+            uptoActionId = actionId,
+            summaries = if (sCfg.enabled) d.summaries else emptyList(),
+            summaryRole = sCfg.role,
+        )
         val env = imageEnv
 
         // 本对话的资产引用（世界书/预设/正则）：绑定 ∩ 资产页启用项在引擎侧过滤
@@ -428,7 +692,41 @@ class ChatController(
     override fun onGenDelta(text: String) {
         if (genId == null) return
         genText = text
-        render(false)
+
+        /*
+         * 流式合并：web 侧已经是 80ms 一推，这里再按 120ms 合并一次。
+         *
+         * ★ 为什么不能直接 render()：那会把整个会话重新构建一遍（哪怕有缓存，
+         *   也要对每条算指纹 + 建对象）。流式是"一条在变、其余不动"，
+         *   所以只把这**一条**的文字推给界面，列表的其余部分完全不碰。
+         *
+         * ★ 为什么用轻管线而不是完整正则：正则可能跨整篇，半截文本会产出
+         *   "半个 <div>"，定稿后又会跳变。这里只做思考块截断 + 删图片标记，
+         *   定稿（onGenDone）再一次性跑完整管线并写入缓存。
+         */
+        if (pendingText == null) main.postDelayed(deltaFlush, DELTA_INTERVAL)
+        pendingText = text
+    }
+
+    private var pendingText: String? = null
+
+    private val deltaFlush = Runnable {
+        val t = pendingText ?: return@Runnable
+        pendingText = null
+        val aid = genActionId
+        if (aid.isEmpty() || genId == null) return@Runnable
+        val shown = StreamPipeline.render(
+            text = t,
+            hideReasoning = appearance.hideReasoning,
+            cutMarker = display.reasoningCutMarker.ifEmpty { null },
+            streaming = true,
+        )
+        sink.onStreamingText(aid, shown)
+    }
+
+    private fun stopDeltaFlush() {
+        pendingText = null
+        main.removeCallbacks(deltaFlush)
     }
 
     override fun onGenDone(full: String) {
@@ -443,6 +741,8 @@ class ChatController(
         render(true)
 
         if (text.isNotBlank()) maybeAutoImage(actionId, text)
+        // 自动摘要放在生成完成之后：绝不能在流式过程中跑（会抢网络/抢主线程）
+        maybeAutoSummarize()
     }
 
     override fun onGenError(message: String) {
@@ -481,6 +781,7 @@ class ChatController(
     }
 
     private fun clearGenState() {
+        stopDeltaFlush()
         genId = null
         genActionId = ""
         genText = ""
@@ -674,6 +975,153 @@ class ChatController(
             },
             onDone = { render(false) },
         )
+    }
+
+    // ------------------------------------------------------------ 自动摘要
+
+    /** 摘要是否正在跑（界面给入口转圈）。 */
+    fun isSummarizing(): Boolean = summarizing
+
+    /** 当前会话里"仍然有效"的摘要块（按时间顺序，通常只有一条）。 */
+    fun summaries(): List<SummaryBlock> {
+        val d = doc ?: return emptyList()
+        return SummaryPlanner.effective(d.summaries, d.actions).first
+    }
+
+    /** 摘要覆盖到第几轮（不含）；0 = 还没摘要过。 */
+    fun summarizedUpTo(): Int {
+        val d = doc ?: return 0
+        return SummaryPlanner.effective(d.summaries, d.actions).second
+    }
+
+    /**
+     * 生成结束后检查一次：攒够了就自动摘要。
+     *
+     * 触发口径（用户原话）：每 [SummaryConfig.everyCount] 条（或每
+     * [SummaryConfig.everyChars] 字）触发一次，压缩**最早的**
+     * [SummaryConfig.takeCount] 条 —— 不是"输出 N 条摘要"。
+     * 两者差值天然把最近的几条留在原文区，所以不需要额外设"保留最近 N 条"。
+     */
+    private fun maybeAutoSummarize() {
+        val d = doc ?: return
+        val cfg = SummaryConfig.load(appContext)
+        if (!cfg.enabled || summarizing) return
+        val upTo = summarizedUpTo()
+        val range = SummaryPlanner.next(
+            total = d.actions.size,
+            summarizedUpTo = upTo,
+            mode = if (cfg.mode == SummaryConfig.MODE_CHARS) {
+                SummaryPlanner.TriggerMode.CHARS
+            } else {
+                SummaryPlanner.TriggerMode.COUNT
+            },
+            everyCount = cfg.everyCount,
+            everyChars = cfg.everyChars,
+            takeCount = cfg.takeCount,
+            // 0：靠 everyCount - takeCount 的差额保护最近几条，见 SummaryConfig 注释
+            keepRecent = 0,
+            charsOf = { i ->
+                val a = d.actions.getOrNull(i)
+                (a?.user?.length ?: 0) + (a?.ai?.length ?: 0)
+            },
+        ) ?: return
+        startSummary(range, cfg)
+    }
+
+    /**
+     * 手动摘要（右上角入口）：不看阈值，直接压缩"最早未摘要的 N 条"。
+     *
+     * 用户可以拿它当"我现在就想省上下文"的开关，也可以先点一次看看效果。
+     */
+    fun summarizeNow() {
+        val d = doc ?: return
+        if (summarizing) {
+            sink.onToast("正在浓缩，稍等")
+            return
+        }
+        val cfg = SummaryConfig.load(appContext)
+        val upTo = summarizedUpTo()
+        val pending = d.actions.size - upTo
+        if (pending <= 0) {
+            sink.onToast("没有可压缩的内容")
+            return
+        }
+        val take = cfg.takeCount.coerceIn(1, pending)
+        startSummary(upTo until (upTo + take), cfg)
+    }
+
+    /**
+     * 起一次摘要任务。
+     *
+     * 失败一律静默降级（只 toast 一句）：摘要是"锦上添花"，绝不能因为
+     * 中转不支持、超时、返回空，就让聊天卡住或丢消息。
+     */
+    private fun startSummary(range: IntRange, cfg: SummaryConfig) {
+        val d = doc ?: return
+        if (summarizing || range.isEmpty()) return
+        summarizing = true
+        sink.onSummaryState(true)
+
+        // 已有摘要一起带上：滚动摘要必须承接前情，否则第 3 次摘要就丢了开头
+        val prior = SummaryPlanner.effective(d.summaries, d.actions).first
+
+        SummaryService.run(
+            context = appContext,
+            doc = d,
+            range = range,
+            cfg = cfg,
+            prior = prior,
+            presetId = summaryPresetId,
+        ) { block ->
+            summarizing = false
+            sink.onSummaryState(false)
+            val cur = doc
+            // 摘要期间可能切了会话：结果只回写原会话，绝不串台
+            if (cur == null || cur.id != d.id) return@run
+            if (block == null) {
+                sink.onToast("摘要失败（不影响聊天）")
+                return@run
+            }
+            /*
+             * 只落一条：fromIndex 已被 SummaryService 合并到最早起点。
+             * 旧的在有效区间内被这条覆盖，无效残留（锚点坏掉的）顺手清掉。
+             */
+            val next = cur.copy(
+                summaries = listOf(block),
+                updatedAt = System.currentTimeMillis(),
+            )
+            doc = next
+            SessionRepo.save(next)
+            sink.onSummaryChanged()
+            sink.onToast("已把前 ${range.count()} 条压缩成摘要")
+        }
+    }
+
+    /** 用户改摘要正文（空串视为不改；要删请用 [clearSummaries]）。 */
+    fun updateSummaryText(text: String) {
+        val d = doc ?: return
+        val blocks = SummaryPlanner.effective(d.summaries, d.actions).first
+        if (blocks.isEmpty()) return
+        val t = text.trim()
+        if (t.isEmpty()) return
+        val next = d.copy(
+            summaries = listOf(blocks.first().copy(text = t)),
+            updatedAt = System.currentTimeMillis(),
+        )
+        doc = next
+        SessionRepo.save(next)
+        sink.onSummaryChanged()
+    }
+
+    /** 清掉摘要，恢复"全文发给模型"。原文一直没删，所以随时可回退。 */
+    fun clearSummaries() {
+        val d = doc ?: return
+        if (d.summaries.isEmpty()) return
+        val next = d.copy(summaries = emptyList(), updatedAt = System.currentTimeMillis())
+        doc = next
+        SessionRepo.save(next)
+        sink.onSummaryChanged()
+        sink.onToast("已清除摘要，之后发送全文")
     }
 
     // ------------------------------------------------------------ 生命周期

@@ -393,6 +393,60 @@
                 android:tint="#8A94A6" />
         </LinearLayout>
 
+        <!-- 渲染与上下文：性能开关 + 自动摘要（单开一页，见 RenderSettingsActivity） -->
+        <LinearLayout
+            android:id="@+id/shome_render"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_card"
+            android:foreground="?android:attr/selectableItemBackground"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="16dp"
+            android:elevation="1dp">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="14dp"
+                android:contentDescription="渲染与上下文"
+                android:src="@drawable/ic_summary"
+                android:tint="#5A6B85" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="渲染与上下文"
+                    android:textColor="#1A2230"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="卡片性能 / 自动摘要（长会话省上下文）"
+                    android:textColor="#66707F"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginStart="8dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_chevron_right"
+                android:tint="#8A94A6" />
+        </LinearLayout>
+
         <LinearLayout
             android:id="@+id/shome_gallery"
             android:layout_width="match_parent"

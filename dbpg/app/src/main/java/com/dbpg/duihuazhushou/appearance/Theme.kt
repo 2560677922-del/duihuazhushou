@@ -182,6 +182,22 @@ object ThemePalette {
         return parseHex(hex, "#1A2230")
     }
 
+    /**
+     * 同上，但直接吃两个字符串。
+     *
+     * 卡片渲染器（CardRenderer）跑在离屏 WebView 里，手里只有"字体色/底色"两个
+     * 值、没有完整 AppearanceConfig；用这个重载可以避免为了算颜色去 new 一个
+     * 假配置（那会把自动色算错，深色主题下卡片变成黑字）。
+     */
+    fun fontColorOn(fontColorHex: String, baseHex: String): Int {
+        if (fontColorHex.isBlank()) {
+            val base = parseHex(baseHex, "#F4F6FA")
+            val lum = (0.299f * Color.red(base) + 0.587f * Color.green(base) + 0.114f * Color.blue(base))
+            return if (lum >= 140) 0xFF1A2230.toInt() else 0xFFFFFFFF.toInt()
+        }
+        return parseHex(fontColorHex, "#1A2230")
+    }
+
     /** 字体颜色预设（空串=自动）。 */
     val FONT_COLORS = listOf(
         Swatch("", "自动"),

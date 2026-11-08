@@ -16,6 +16,7 @@ import com.dbpg.duihuazhushou.R
 import com.dbpg.duihuazhushou.appearance.AppearanceConfig
 import com.dbpg.duihuazhushou.appearance.BubbleStyle
 import com.dbpg.duihuazhushou.appearance.ThemePalette
+import com.dbpg.duihuazhushou.chat.render.CardBitmaps
 import com.dbpg.duihuazhushou.richtext.RichTextRenderer
 import com.dbpg.stcore.richtext.RichTextParser
 
@@ -44,16 +45,54 @@ class ChatAdapter(
         fun onActionMenu(item: ChatItem, anchor: View)
         /** 单条消息生图：把这条 + 前 N 条当上下文出图，挂回这条消息 */
         fun onImageGen(item: ChatItem)
+        /**
+         * 这条是卡片但位图还没生成：请界面触发一次离屏渲染。
+         *
+         * 之所以由界面转给 controller，而不是 Adapter 自己调渲染器：
+         * Adapter 只该"画"，渲染结果的落库/刷新要走 ChatController 的数据链。
+         */
+        fun onCardNeeded(item: ChatItem, widthPx: Int)
+        /** 点卡片：打开全屏查看器（可选中文字、可跑脚本） */
+        fun onCardOpen(item: ChatItem)
     }
 
     /** 气泡最大宽度：按屏宽百分比算，改设置不用重建 Adapter。 */
     private val bubbleMaxWidthPx: Int
         get() = (screenWidthPx * config.bubbleWidthPercent / 100).coerceAtLeast(screenWidthPx / 3)
 
+    /**
+     * 卡片渲染宽度 = 气泡宽度 - 左右 padding（10dp × 2）。
+     * 必须和气泡内可用宽度一致，否则卡片里的表格/图片会溢出或留白。
+     */
+    private val bubbleContentWidthPx: Int
+        get() = (bubbleMaxWidthPx - dpOf(20f)).coerceAtLeast(screenWidthPx / 3)
+
+    private fun dpOf(v: Float): Int = (v * density).toInt()
+
+    private val density: Float get() = android.content.res.Resources.getSystem().displayMetrics.density
+
     /** 从设置页回来时调用：立刻套用新的字号/行距/宽度。 */
     fun updateConfig(cfg: AppearanceConfig) {
         config = cfg
         notifyDataSetChanged()
+    }
+
+    /**
+     * 流式局部刷新：只改这一条的文字。
+     *
+     * 不走整表 submitList 之外的路径，是因为 ListAdapter 的内部列表不可变；
+     * 但 DiffUtil 会算出"只有一条变了"，只会 rebind 那一个 holder ——
+     * 比"整个会话重新渲染 + 全表 rebind"便宜两个数量级。
+     */
+    fun patchStreaming(actionId: String, text: String) {
+        if (actionId.isEmpty()) return
+        val cur = currentList
+        val i = cur.indexOfFirst { it.actionId == actionId }
+        if (i < 0) return
+        if (cur[i].content == text && cur[i].streaming) return
+        val next = ArrayList(cur)
+        next[i] = cur[i].copy(content = text, streaming = true)
+        submitList(next)
     }
 
     companion object {
@@ -71,7 +110,7 @@ class ChatAdapter(
         root: FrameLayout,
         val bubble: LinearLayout,
         val text: TextView,
-        val html: android.webkit.WebView,
+        val card: ImageView,
         val images: LinearLayout,
         val meta: LinearLayout,
         val verOlder: TextView,
@@ -95,7 +134,7 @@ class ChatAdapter(
             v as FrameLayout,
             v.findViewById(R.id.bubble),
             v.findViewById(R.id.msg_text),
-            v.findViewById(R.id.msg_html),
+            v.findViewById(R.id.msg_card),
             v.findViewById(R.id.msg_images),
             v.findViewById(R.id.msg_meta),
             v.findViewById(R.id.msg_ver_older),
@@ -130,16 +169,30 @@ class ChatAdapter(
         holder.bubble.background = bubbleBackground(style, isUser, isSystem, density)
         holder.bubble.elevation = if (style.elevation && !isSystem) 1.2f * density else 0f
 
-        // 2) 美化 HTML：交给内嵌 WebView 渲染；普通消息仍用 TextView
-        val richHtml = item.html
-        if (richHtml != null) {
+        /*
+         * 2) 卡片：显示离屏渲染好的位图。
+         *
+         * 位图还没生成时**先用纯文本顶上**，同时异步请求渲染 —— 不能为了等图
+         * 留个空白气泡（用户会以为消息丢了）。渲染完成后 controller 会刷新
+         * 这一条，位图"接替"文字，高度按已知值占位，不会跳。
+         */
+        val cardPath = item.cardPath?.takeIf { java.io.File(it).exists() }
+        val wantCard = item.html != null && config.htmlRender && !item.streaming
+        val showCard = wantCard && cardPath != null
+        if (showCard) {
             holder.text.visibility = View.GONE
-            holder.html.visibility = View.VISIBLE
-            bindHtml(holder, richHtml, config)
+            holder.card.visibility = View.VISIBLE
+            val h = if (item.cardHeightPx > 0) item.cardHeightPx
+            else FrameLayout.LayoutParams.WRAP_CONTENT
+            holder.card.layoutParams = (holder.card.layoutParams).also { it.height = h }
+            CardBitmaps.load(holder.card, cardPath!!, bubbleContentWidthPx)
+            holder.card.setOnClickListener { listener.onCardOpen(item) }
         } else {
-            holder.html.visibility = View.GONE
-            holder.html.tag = null
+            holder.card.visibility = View.GONE
+            holder.card.setImageDrawable(null)
             holder.text.visibility = View.VISIBLE
+            // 卡片型内容但位图未就绪：先显示纯文本 + 请求渲染
+            if (wantCard) listener.onCardNeeded(item, bubbleContentWidthPx)
         }
 
         // 3) 文本：maxWidth 封顶 + Spannable 渲染（字号/行距/字体/颜色跟随外观设置）
@@ -149,8 +202,8 @@ class ChatAdapter(
         holder.text.textSize = config.textSizeSp
         holder.text.setLineSpacing(0f, config.lineSpacing)
         val content = if (item.streaming) item.content + "▍" else item.content
-        if (richHtml != null) {
-            // 已由 WebView 渲染，TextView 留空不占位
+        if (showCard) {
+            // 已由位图渲染，TextView 留空不占位
             holder.text.text = ""
         } else if (content.isBlank()) {
             holder.text.visibility = View.GONE
@@ -212,112 +265,6 @@ class ChatAdapter(
             holder.more.setOnClickListener { listener.onActionMenu(item, it) }
         }
     }
-
-    /**
-     * 把美化 HTML 渲染到气泡里的 WebView。
-     *
-     * 安全边界：默认**剥离 <script> 与 on* 事件属性**再加载 —— 内容来自模型，
-     * 不可信；只有用户在设置里显式打开「允许脚本」才执行。
-     * JS 引擎本身保持开启：只为量内容高度（否则 WebView 高度算不出来）。
-     */
-    private fun bindHtml(holder: VH, html: String, cfg: com.dbpg.duihuazhushou.appearance.AppearanceConfig) {
-        val web = holder.html
-        val tag = html + "|" + cfg.allowScript + "|" + cfg.textSizeSp + "|" + cfg.lineSpacing +
-            "|" + cfg.fontFamily + "|" + cfg.fontColor
-        if (web.tag == tag) return
-        web.tag = tag
-
-        val safe = if (cfg.allowScript) html else sanitizeHtml(html)
-        val doc = wrapHtml(
-            safe,
-            cfg.textSizeSp,
-            cfg.lineSpacing,
-            ThemePalette.fontCssFamily(cfg.fontFamily),
-            String.format("#%06X", 0xFFFFFF and ThemePalette.fontColorInt(cfg)),
-        )
-
-        val s = web.settings
-        s.javaScriptEnabled = true
-        s.domStorageEnabled = false
-        s.allowFileAccess = false
-        s.allowContentAccess = false
-        s.loadsImagesAutomatically = true
-        s.blockNetworkLoads = false
-        s.setSupportZoom(false)
-        web.isVerticalScrollBarEnabled = false
-        web.overScrollMode = View.OVER_SCROLL_NEVER
-        web.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-        web.webViewClient = object : android.webkit.WebViewClient() {
-            override fun shouldOverrideUrlLoading(
-                view: android.webkit.WebView,
-                request: android.webkit.WebResourceRequest,
-            ): Boolean = true // 气泡里的链接不跳转，避免把聊天页变成浏览器
-
-            override fun onPageFinished(view: android.webkit.WebView, url: String?) {
-                // 量出真实内容高度，把 WebView 撑开（内部不再滚动，整页跟着列表滚）。
-                //
-                // 量的是包裹层 #dhp-m 的盒子高度，**不是** scrollHeight：
-                // RecyclerView 回收复用时 WebView 还带着上一条的固定高度，
-                // scrollHeight 至少要撑满"视口"（= 那个旧高度），短内容就量出
-                // 一个大高度 —— 气泡下方一大片空白就是这么来的。
-                // 包裹层高度只跟内容有关，回收多少次都准。
-                //
-                // 量两次：首次 paint 前 web font/图片还没占位，只量一次会把
-                // 内容截断（实测：卡片下方的段落与提示条被裁掉）。
-                fun measure() {
-                    view.evaluateJavascript(
-                        "(function(){var m=document.getElementById('dhp-m');" +
-                            "if(!m)return Math.ceil(document.body.scrollHeight);" +
-                            "return Math.ceil(m.getBoundingClientRect().height);})()",
-                    ) { raw ->
-                        // scrollHeight 是 CSS px；Android 布局要设备 px，必须乘 density
-                        val cssPx = raw?.trim('"')?.toFloatOrNull()?.toInt() ?: 0
-                        val px = (cssPx * view.resources.displayMetrics.density).toInt()
-                        if (px > 0) {
-                            val lp = view.layoutParams
-                            if (lp.height != px) {
-                                lp.height = px
-                                view.layoutParams = lp
-                            }
-                        }
-                    }
-                }
-                measure()
-                view.postDelayed({ measure() }, 320L)
-            }
-        }
-        web.loadDataWithBaseURL(null, doc, "text/html", "utf-8", null)
-    }
-
-    /** 剥脚本与事件属性（allowScript=false 时）。 */
-    private fun sanitizeHtml(html: String): String {
-        var out = html
-        out = Regex("<script\\b[^>]*>[\\s\\S]*?</script\\s*>", RegexOption.IGNORE_CASE).replace(out, "")
-        out = Regex("<script\\b[^>]*/?>", RegexOption.IGNORE_CASE).replace(out, "")
-        out = Regex("\\son\\w+\\s*=\\s*(\"[^\"]*\"|'[^']*')", RegexOption.IGNORE_CASE).replace(out, "")
-        return out
-    }
-
-    /** 统一包一层：视口、透明底、正文字号/行距/字体/颜色跟随外观设置，图片不溢出。
-     *  正文包在 #dhp-m 里 —— 量高度只量它，回收复用时不会被旧视口撑大。 */
-    private fun wrapHtml(
-        html: String,
-        textSizeSp: Float,
-        lineSpacing: Float,
-        fontFamily: String,
-        fontColor: String,
-    ): String = """
-        <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-          html,body{margin:0;padding:0;background:transparent;}
-          body{color:$fontColor;font-family:$fontFamily;font-size:${textSizeSp}px;line-height:${lineSpacing};
-               word-break:break-word;overflow-wrap:anywhere;}
-          img,video,canvas{max-width:100%;height:auto;}
-          table{max-width:100%;border-collapse:collapse;}
-          pre{white-space:pre-wrap;word-break:break-word;overflow-x:auto;}
-          a{color:#2F66D8;}
-        </style></head><body><div id="dhp-m">$html</div></body></html>
-    """.trimIndent()
 
     /**
      * 按款式生成气泡背景。

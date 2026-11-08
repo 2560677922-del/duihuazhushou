@@ -63,7 +63,7 @@
             android:paddingEnd="10dp"
             android:paddingTop="6dp"
             android:paddingBottom="6dp"
-            android:maxWidth="150dp"
+            android:maxWidth="112dp"
             android:ellipsize="end"
             android:maxLines="1"
             android:background="@drawable/bg_btn_soft"
@@ -71,6 +71,16 @@
             android:textColor="#2F66D8"
             android:textSize="12sp"
             android:contentDescription="切换对话模型" />
+
+        <!-- 前情提要（自动摘要）：查看/编辑摘要、立即浓缩、清除 -->
+        <ImageView
+            android:id="@+id/chat_summary"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="9dp"
+            android:src="@drawable/ic_summary"
+            android:tint="#3A4353"
+            android:contentDescription="前情提要（自动摘要）" />
 
         <TextView
             android:id="@+id/chat_more"

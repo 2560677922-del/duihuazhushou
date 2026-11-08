@@ -42,6 +42,13 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.DHP" />
 
+        <!-- 卡片查看器：列表里是位图，进这里才是真 WebView（可选中/可脚本） -->
+        <activity
+            android:name=".chat.render.CardViewerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP" />
+
         <!-- 原生「标签生图」试验页：纯 Kotlin 生图管线（OkHttp + ZIP 解压 + 落盘） -->
         <activity
             android:name=".NativeImageGenActivity"
@@ -74,6 +81,12 @@
         <!-- 原生外观设置：字号/行距/气泡宽度/隐藏思维链 -->
         <activity
             android:name=".appearance.SettingsActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
+        <!-- 渲染与上下文：美化渲染 / 卡片脚本 / 自动摘要 -->
+        <activity
+            android:name=".appearance.RenderSettingsActivity"
             android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.DHP.Content" />

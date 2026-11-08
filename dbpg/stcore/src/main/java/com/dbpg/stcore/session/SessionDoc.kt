@@ -175,6 +175,13 @@ data class SessionDoc(
     val updatedAt: Long = 0L,
     val draft: SessionDraft? = null,
     /**
+     * 自动摘要（原生私有扩展，JSON 键名 `nativeSummaries`）。
+     *
+     * web 不认识这个字段，但 raw 兜底机制保证：网页写回会话时不会把它抹掉，
+     * 老版本 App 读到也不会崩（parse 拿不到就是空列表）。
+     */
+    val summaries: List<SummaryBlock> = emptyList(),
+    /**
      * 当前格式版本。
      *
      * 现在恒为 1；加字段不需要升版本（靠 raw 兜底），
@@ -210,12 +217,18 @@ data class SessionDoc(
                     .put("ai", draft.ai)
                     .put("updatedAt", draft.updatedAt),
             )
+        // 摘要为空时删键而不是写空数组：避免让"从没用过摘要"的会话多背一个字段
+        if (summaries.isEmpty()) o.remove(KEY_SUMMARIES) else
+            o.put(KEY_SUMMARIES, JSONArray().also { a -> summaries.forEach { a.put(it.toJson()) } })
         return o
     }
 
     fun toJsonString(): String = toJson().toString()
 
     companion object {
+        /** 原生私有键名前缀：和 nativeLocalPath 一样，避免和 web 将来字段撞名。 */
+        private const val KEY_SUMMARIES = "nativeSummaries"
+
         /** 解析失败返回 null（坏文件不该让整个列表崩）。 */
         fun parse(text: String?): SessionDoc? {
             val t = text?.trim()
@@ -243,6 +256,7 @@ data class SessionDoc(
                         updatedAt = optLong(it, "updatedAt"),
                     )
                 },
+                summaries = SummaryBlock.parseArray(o.optJSONArray(KEY_SUMMARIES)),
                 schemaVersion = o.optInt("schemaVersion", 1),
                 raw = o.toString(),
             )

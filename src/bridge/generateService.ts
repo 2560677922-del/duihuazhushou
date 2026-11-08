@@ -26,6 +26,8 @@
  */
 
 import { assemblePrompt } from '../engine/assembler';
+import { readVariables } from '../engine/variables';
+import { collectPresetMessages } from '../engine/summaryPreset';
 import { streamChatCompletion } from '../engine/apiClient';
 import { imageMarkerInstruction } from '../engine/imageMarker';
 import { flattenForEngine } from '../engine/regexGroups';
@@ -1551,6 +1553,66 @@ function assetsDetail(): string {
   });
 }
 
+/**
+ * 导出「摘要专用预设」：**只带预设自身的提示词，不带角色卡与世界书**。
+ *
+ * 为什么需要单独一条通道：
+ *   `assemblePrompt()` 是给"扮演"用的 —— 它会触发世界书、注入角色卡、跑正则、
+ *   按 token 裁剪。摘要要的恰恰相反：只要预设的"工作方式"（写作规则、格式要求、
+ *   越狱/前置语），不要人设与世界观，也不要裁剪（预设被砍一半就失效了）。
+ *
+ * 宏处理：`{{char}}` / `{{user}}` 保留成名字（摘要要认人）；
+ * `{{description}}` / `{{personality}}` / `{{scenario}}` / `{{persona}}` /
+ * `{{mes_example}}` / `{{first_mes}}` / `{{original}}` 一律清空 —— 这就是
+ * "不带角色卡"的落点：预设里引用了角色卡的地方变成空白，而不是把整条规则删掉。
+ *
+ * 全程同步、不改任何 store，返回 JSON 字符串给原生 evaluateJavascript 取走。
+ */
+function summaryPreset(presetId: string): string {
+  const a = useAssetsStore();
+  const id = String(presetId || '');
+  const raw =
+    (id ? (a.presets || []).find((p: any) => p._uid === id) : undefined) ??
+    a.getCurrentPreset();
+  if (!raw) return JSON.stringify({ ok: false, reason: '没有可用预设', messages: [] });
+
+  const preset: any = OpenAIPreset.fromJSON(raw);
+  const card: any = a.getCurrentCharacter?.();
+  const char =
+    String(preset.getSetting?.('name_char') || '').trim() ||
+    String(card?.name || card?.data?.name || '').trim();
+  const user = String(preset.getSetting?.('name_user') || '').trim() || '用户';
+
+  const entries: any[] = preset.listPromptEntries ? preset.listPromptEntries() : [];
+  const vars = useVariablesStore();
+  /*
+   * 角色卡字段一律置空、只留名字 —— 见 collectPresetMessages 的注释。
+   * 这条规则是"摘要带预设但不带角色卡"的核心，所以放在纯函数里可单测。
+   */
+  const messages = collectPresetMessages(
+    entries,
+    {
+      char,
+      user,
+      description: '',
+      persona: '',
+      scenario: '',
+      original: '',
+      mes_example: '',
+      chat: '',
+      currentMessage: '',
+      lastMessage: '',
+    },
+    (t) => readVariables(t, vars as any),
+  );
+  return JSON.stringify({
+    ok: true,
+    name: raw.name || raw.data?.name || '',
+    id: raw._uid || '',
+    messages,
+  });
+}
+
 /** 拉取对话模型列表（复用 imageGen 的 fetchModels：兼容 /v1/models 各形态）。 */
 async function fetchApiModels(raw: string): Promise<void> {
   try {
@@ -1641,6 +1703,8 @@ export function installGenerateService(): void {
     getImageStyle: imageStyleSummary,
     getDisplaySettings: displaySettingsSummary,
     getAssets: assetsDetail,
+    // 摘要专用：只要预设，不要角色卡/世界书/正则（见 summaryPreset 注释）
+    exportSummaryPreset: summaryPreset,
     // 配置原生化：一次性迁移 + 单向镜像推送（见文件头「原生配置镜像」注释）
     exportNativeConfig,
     applyNativeConfig,
