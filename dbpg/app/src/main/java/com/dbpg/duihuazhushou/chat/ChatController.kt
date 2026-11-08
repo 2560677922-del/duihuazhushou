@@ -114,6 +114,16 @@ class ChatController(
     /** 是否存在 minDepth/maxDepth 脚本：只有这时 depth 才需要参与缓存键。 */
     private var depthSensitive: Boolean = false
 
+    /**
+     * 引擎侧「当前启用的预设 id」的本地快照。
+     *
+     * 会话没绑定预设时，生成请求必须显式带上它 —— 否则请求里没有
+     * presetId，web 侧只能靠 getCurrentPreset() 猜；一旦引擎刚重建、
+     * 或者用户导入新预设后没切全局默认，就会拿错预设（表现就是模型
+     * 「直接拒绝」，因为破限/角色提示词没进去）。
+     */
+    private var activePresetId: String = ""
+
     private val cache: RenderCache by lazy { RenderCache.get(appContext) }
 
     /** 卡片位图：actionId → (路径, 高度)。渲染完成后才有。 */
@@ -195,6 +205,7 @@ class ChatController(
         render(true)
         refreshDisplayConfig()
         refreshImageEnv()
+        refreshActivePreset()
     }
 
     /** 从设置页/其他界面回来时重新读盘（可能被别的地方改过）。 */
@@ -222,6 +233,15 @@ class ChatController(
         }
         refreshDisplayConfig()
         refreshImageEnv()
+        refreshActivePreset()
+    }
+
+    /** 缓存引擎当前预设 id：生成请求（含重新生成）会显式带上它。 */
+    private fun refreshActivePreset() {
+        GenBridge.fetchAssetCatalog { json ->
+            val current = runCatching { JSONObject(json ?: "{}").optJSONObject("current") }.getOrNull()
+            activePresetId = current?.optString("presetId").orEmpty()
+        }
     }
 
     fun applyAppearance(cfg: AppearanceConfig) {
@@ -683,7 +703,30 @@ class ChatController(
         if (dropped > 0) sink.onToast("已作废后面 $dropped 条（重新生成）")
 
         val user = SessionHistory.userInputOf(trimmed, actionId)
-        beginGen(actionId, user, isNew = false)
+        /*
+         * 第一轮（角色卡开场白）没有用户发言，user 会是空串。
+         * 空串在 web 侧不会 push 成最后一条 user，请求结构就和正常发送
+         * 不一样（历史以 assistant 结尾）—— 模型容易直接拒答。
+         * 补一个中性的「继续」让轮次结构保持一致，预设照常注入。
+         */
+        beginGen(actionId, user.ifBlank { "继续" }, isNew = false)
+    }
+
+    /**
+     * 用户气泡下的「重新发送」：拿这一轮的原文再请求一次。
+     *
+     * 与 AI 气泡下的「重新生成」是同一套行为（砍掉后续、旧回复进 variants），
+     * 只是入口和文案不同 —— 用户想要的是"我这句话再问一遍"，而模型侧
+     * 需要的正是「原文 + 完整预设」的一次新请求。
+     */
+    fun resend(actionId: String) {
+        val d = doc ?: return
+        if (genId != null) {
+            sink.onToast("还在生成，先停一下")
+            return
+        }
+        if (d.actions.none { it.id == actionId }) return
+        regenerate(actionId)
     }
 
     private fun beginGen(actionId: String, userInput: String, isNew: Boolean) {
@@ -706,10 +749,12 @@ class ChatController(
 
         // 本对话的资产引用（世界书/预设/正则）：绑定 ∩ 资产页启用项在引擎侧过滤
         val binding = com.dbpg.duihuazhushou.session.SessionBindingStore.load(appContext, d.id)
+        val effectivePreset = binding.presetId?.takeIf { it.isNotBlank() } ?: activePresetId
         val bindingJson = JSONObject().apply {
             binding.worldBookIds?.let { put("worldBookIds", org.json.JSONArray(it)) }
-            binding.presetId?.let { put("presetId", it) }
             binding.regexGroupIds?.let { put("regexGroupIds", org.json.JSONArray(it)) }
+            // 重新生成也必须带预设：会话没绑定时退回引擎当前启用的那个
+            if (effectivePreset.isNotBlank()) put("presetId", effectivePreset)
         }
 
         val reqId = GenBridge.request(
@@ -719,6 +764,7 @@ class ChatController(
             imageInstruction = env?.settings?.enabled,
             imageMax = env?.settings?.maxPerReply ?: 2,
             assetBinding = bindingJson,
+            presetId = effectivePreset,
             sink = this,
         )
         if (reqId == null) {

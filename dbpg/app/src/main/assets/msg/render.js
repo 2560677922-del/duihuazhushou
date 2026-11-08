@@ -142,13 +142,19 @@
      */
     var PROBE = [
         '<script>(function(){',
-        'function H(){return Math.max(',
-        'document.documentElement?document.documentElement.scrollHeight:0,',
-        'document.body?document.body.scrollHeight:0);}',
+        /*
+         * 用 body 的自身高度，不要用 documentElement.scrollHeight：
+         * 后者至少等于 iframe 当前视口高度（首帧占位 160px），内容折叠后
+         * 永远缩不回去，卡片下方就会留一大块空白，把下面的正文挤开。
+         */
+        'function H(){var b=document.body,d=document.documentElement;',
+        'var h=b?Math.max(b.scrollHeight,b.offsetHeight,b.getBoundingClientRect().height):0;',
+        'if(!(h>0)&&d)h=d.scrollHeight;return h||0;}',
         'function R(){try{parent.postMessage({__dhpH:H()},"*");}catch(e){}}',
         'addEventListener("load",R);',
-        'setTimeout(R,40);setTimeout(R,180);setTimeout(R,500);',
-        'if(window.ResizeObserver){try{new ResizeObserver(R).observe(document.documentElement);}catch(e){}}',
+        'setTimeout(R,40);setTimeout(R,180);setTimeout(R,500);setTimeout(R,1200);',
+        'if(document.fonts&&document.fonts.ready)document.fonts.ready.then(R);',
+        'if(window.ResizeObserver){try{new ResizeObserver(R).observe(document.body);}catch(e){}}',
         '})();<\/script>'
     ].join('');
 
@@ -163,7 +169,8 @@
         f.style.border = '0';
         f.style.display = 'block';
         f.style.background = 'transparent';
-        f.style.height = '160px';        // 首帧占位，探针回报后立刻替换
+        f.style.height = '96px';         // 首帧占位，探针回报后立刻替换
+        f.dataset.h = '';                // 收到过真实高度就置 1
 
         var full = doc;
         /* 卡片要按气泡宽度排版；作者没写 viewport 就补一个 */
@@ -178,20 +185,45 @@
         /*
          * 只在作者没写 body 背景时保持透明，别给卡片盖一层白底；
          * 同时挡住固定宽度/大图把气泡撑破（作者自己的 CSS 仍优先）。
+         *
+         * ★ overflow-x 用 !important：预设卡片里常写 nowrap / 固定宽度，
+         *   iframe 内部一旦超宽，用户就能左右拖动，每行字被切掉半边。
+         *   这里把 html/body 锁死成"视口即边界"，卡片自己仍可纵向长高。
          */
         var guard = '<style data-dhp>' +
-            'html{overflow-x:hidden}body{background:transparent}' +
-            'img,table,video,canvas,svg{max-width:100%;height:auto}' +
+            'html,body{overflow-x:hidden!important;width:100%!important;' +
+            'max-width:100%!important;margin:0!important}' +
+            'body{background:transparent}' +
+            'img,table,video,canvas,svg,iframe,pre{max-width:100%!important}' +
             '</style>';
         if (/<\/head\s*>/i.test(full)) full = full.replace(/<\/head\s*>/i, guard + '</head>');
         else full = guard + full;
+        /*
+         * 作者在 <body> 里后写的 <style> 会覆盖 head 里的 guard，
+         * 所以文档末尾再补一份（CSS 后加载者胜）。
+         */
+        var tailGuard = '<style data-dhp-tail>' +
+            'html,body{overflow-x:hidden!important;width:100%!important;max-width:100%!important}' +
+            '</style>';
 
-        if (/<\/body\s*>/i.test(full)) full = full.replace(/<\/body\s*>/i, PROBE + '</body>');
-        else full += PROBE;
+        if (/<\/body\s*>/i.test(full)) full = full.replace(/<\/body\s*>/i, tailGuard + PROBE + '</body>');
+        else full += tailGuard + PROBE;
 
         /* 用 DOM 属性设置，绕开 srcdoc 里引号/换行的转义地狱 */
         f.srcdoc = full;
         docFrames.push(f);
+
+        /*
+         * 兜底：个别 WebView（或 iframe 被系统挂起）不触发 load / ResizeObserver
+         * 时，探针永远不回报，卡片会被首帧的 96px 裁成一条。按文档长度估一个
+         * 上限 600px 的高度，至少让卡片完整可见；正常情况下不会走到这里。
+         */
+        setTimeout(function () {
+            if (f.dataset.h || !f.isConnected) return;
+            var est = Math.min(600, Math.max(180, Math.round(full.length / 70)));
+            f.style.height = est + 'px';
+            schedule();
+        }, 2500);
         return f;
     }
 
@@ -254,6 +286,7 @@
             } catch (err) { /* 跨域，忽略 */ }
         }
         if (!f) return;
+        f.dataset.h = '1';
         var px = Math.ceil(h);
         var cur = parseInt(f.style.height, 10) || 0;
         if (Math.abs(cur - px) > 2) {

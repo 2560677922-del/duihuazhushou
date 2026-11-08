@@ -60,6 +60,8 @@ object GenBridge {
         imageInstruction: Boolean?,
         imageMax: Int,
         assetBinding: JSONObject? = null,
+        /** 显式预设 id：重新生成时也要带上，别让引擎靠全局状态猜 */
+        presetId: String = "",
         sink: Sink,
     ): String? {
         val wv: WebView = MainActivity.getWebView() ?: return null
@@ -85,6 +87,9 @@ object GenBridge {
             .put("imageInstruction", imageInstruction ?: JSONObject.NULL)
             .put("imageInstructionMax", imageMax)
             .put("config", ConnectionStore.llmRuntime())
+        // 顶层再带一份：web 侧 buildMessages 优先采用它，避免 assetBinding
+        // 缺 presetId 时回退到「引擎当前预设」猜错（重新生成拒答的常见原因）
+        if (presetId.isNotBlank()) req.put("presetId", presetId)
         // 本对话的资产引用（世界书/预设/正则）；为空走全局配置
         if (assetBinding != null && assetBinding.length() > 0) {
             req.put("assetBinding", assetBinding)

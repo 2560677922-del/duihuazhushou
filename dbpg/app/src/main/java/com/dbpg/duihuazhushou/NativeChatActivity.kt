@@ -376,6 +376,9 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         val isUser = item.role == "user"
         val items = if (isUser) {
             listOf(
+                ActionSheet.Item("📨", "重新发送", "用这句话再请求一次，旧回复留在「‹ ›」里") {
+                    controller.resend(item.actionId)
+                },
                 ActionSheet.Item("✏️", "编辑这句话", "改完会立刻用于后续生成") {
                     editText("编辑你的话", item.content) { controller.editUser(item.actionId, it) }
                 },

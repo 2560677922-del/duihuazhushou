@@ -226,7 +226,14 @@ class HtmlMessageView(context: Context) : WebView(context) {
             MotionEvent.ACTION_MOVE -> {
                 val dy = abs(event.y - downY)
                 val dx = abs(event.x - downX)
-                if (dy > touchSlop && dy > dx) {
+                /*
+                 * 横向同样交还给父列表：预设卡片里写了固定宽度/nowrap 时，
+                 * WebView 会把水平拖动当成"内容左右滚"，表现就是整个气泡
+                 * 能左右翻、每行字被切掉半边。CSS 已锁 overflow-x，这里
+                 * 再加一道双保险 —— 只要是明显拖动，一律不让 WebView 自己滚。
+                 * 点击（<details> 展开、卡片按钮）没有 MOVE，不受影响。
+                 */
+                if (kotlin.math.max(dx, dy) > touchSlop) {
                     parent?.requestDisallowInterceptTouchEvent(false)
                     return false
                 }

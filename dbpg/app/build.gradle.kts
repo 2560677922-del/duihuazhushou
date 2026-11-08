@@ -77,6 +77,8 @@ dependencies {
 
     // 原生生图网络层：OkHttp（长超时 / HTTP+HTTPS / 局域网 / 自定义中转站，天然无跨域）
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    testImplementation("junit:junit:4.13.2")
 }
 
 // ---------------------------------------------------------------------------

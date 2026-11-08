@@ -150,6 +150,8 @@ interface NativeGenRequest {
   /** 是否在请求末尾追加"可以用 [[IMG: 描述]] 配图"的指令 */
   imageInstruction?: boolean;
   imageInstructionMax?: number;
+  /** 显式预设 id（原生每次生成都带，含重新生成），优先于引擎全局当前预设 */
+  presetId?: string;
 }
 
 /** 请求 id → 中断句柄。停止生成时按 id 掐断，不会误伤别的会话。 */
@@ -329,13 +331,17 @@ async function generate(reqJson: string): Promise<void> {
     const imageMax = req.imageInstructionMax ?? auto.maxPerReply ?? 2;
 
     // 按对话资产绑定（世界书/预设/正则）过滤后再组装；没绑定走全局配置
+    // ★ 顶层 presetId 是原生权威源：会话没绑定预设时，用它锁定预设，
+    //   避免引擎重启 / 用户导入新预设后 getCurrentPreset() 猜错（重新生成拒答）。
+    const binding = { ...((req as any).assetBinding || {}) } as any;
+    if (!binding.presetId && req.presetId) binding.presetId = req.presetId;
     const finalMessages = buildMessages(
       history,
       cleanInput,
       wantImage,
       imageMax,
       sessionId,
-      (req as any).assetBinding,
+      binding,
     );
     if (!finalMessages) {
       callNative('onGenError', requestId, '还没有启用预设，请先在「资产」里选一个');

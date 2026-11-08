@@ -32,6 +32,20 @@ html, body {
     margin: 0;
     padding: 0;
     background: transparent;
+    /*
+     * ★ 禁止整页横向滚动：预设卡片里常写固定宽度 / nowrap，
+     *   WebView 一旦内容超宽就会"能左右翻"，每行字被切掉半边。
+     *   作者 CSS 后加载也压不住这条（!important），气泡边界即硬边界。
+     */
+    overflow-x: hidden !important;
+    width: 100%;
+    max-width: 100%;
+}
+
+#m {
+    overflow-x: hidden !important;
+    width: 100%;
+    max-width: 100%;
 }
 
 body {
@@ -129,6 +143,7 @@ body {
     border-radius: var(--r);
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    max-width: 100%;
 }
 
 #m pre code {
@@ -136,8 +151,9 @@ body {
     padding: 0;
     font-size: 0.88em;
     line-height: 1.5;
-    word-break: normal;
-    white-space: pre;
+    /* 长代码不撑破气泡：pre 自己可横向滚，但不能把整页撑宽 */
+    white-space: pre-wrap;
+    word-break: break-all;
 }
 
 /* ---------------------------------------------------------------- 列表 */
@@ -291,5 +307,11 @@ body {
  *   2. 绝对定位/超长内容 → 不横向溢出
  */
 #m * {
-    max-width: 100%;
+    /* !important 才能压住作者写的内联 style="width:900px" */
+    max-width: 100% !important;
+}
+
+#m iframe {
+    border: 0;
+    max-width: 100% !important;
 }
