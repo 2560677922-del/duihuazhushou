@@ -29,6 +29,7 @@ import { assemblePrompt } from '../engine/assembler';
 import { readVariables } from '../engine/variables';
 import { collectPresetMessages } from '../engine/summaryPreset';
 import { streamChatCompletion } from '../engine/apiClient';
+import type { ToolRequestOptions } from '../engine/apiClient';
 import { loadSpresetRuntime, stripPrivateDirectives } from '../engine/spresetRuntime';
 import { imageMarkerInstruction } from '../engine/imageMarker';
 import { flattenForEngine } from '../engine/regexGroups';
@@ -386,8 +387,45 @@ async function generate(reqJson: string): Promise<void> {
      */
     const sendMessages = stripPrivateDirectives(finalMessages, presetRaw);
     const spreset = loadSpresetRuntime(presetRaw);
+
+    /*
+     * 温和版工具调用（2026-11-09 第二次修订）。
+     *
+     * 纯文本路径下模型未必遵守「用 <summary>/<options>/<comment> 包住」的自然
+     * 语言指令 —— 实测 Gemini 3 直接吐成 `😟【继续搞钱】…` 散文选项，[13] 面板
+     * 正则只认标签，命中 0 次，折叠栏就不出现。这正是预设自带 soliumbra_reply
+     * 工具要解决的问题：结构化字段 + required 保证标签齐全。
+     *
+     * 但第一版照搬 FinalRequestProcessing 翻过车：它把 35 条 system 重写成
+     * 8 条 few-shot、再叠 tool_choice=required，模型按默认身份拒答。所以这里
+     * 只取脚本算出的**完整工具 schema**，丢弃它改写的 messages：
+     *   · 用「含宏」的 finalMessages 跑脚本 —— registerPart 指令是脚本动态生成
+     *     summary/options/comment 字段的输入，剥光了就只剩 think_nya 一个字段；
+     *   · 发送仍用「已清洗」的 sendMessages —— 35 条设定全在、私有宏清零；
+     *   · tool_choice 用 auto 而非 required —— 模型可选，不把中转逼到怪状态；
+     *   · 不传 rawMessages —— apiClient 默认就用传入的 messages。
+     *
+     * 因此这是只赚不亏的一层：模型用了工具 → 字段由 formatToolCalls 包成标签，
+     * [13] 一定有输入；模型没用 → 完全退回纯文本路径（标签或散文），零回归。
+     * 无 SPreset 的预设整段跳过，请求与旧版逐字节一致。
+     */
+    let toolOptions: ToolRequestOptions | undefined;
+    if (spreset.active && spreset.hasFinalRequest) {
+      const patch = spreset.applyRequest(
+        {
+          model: cfg.model,
+          temperature: cfg.temperature,
+          max_tokens: cfg.maxTokens,
+        },
+        finalMessages,
+      );
+      if (patch && patch.tools.length) {
+        toolOptions = { tools: patch.tools, toolChoice: 'auto' };
+        console.info('[gen][SPreset] 已注入可选工具定义：', patch.toolNames.join(', '));
+      }
+    }
     if (spreset.active) {
-      console.info('[gen][SPreset] 已装载（仅用于响应后格式化）：', spreset.name);
+      console.info('[gen][SPreset] 已装载：', spreset.name);
     }
 
     const controller = new AbortController();
@@ -415,6 +453,7 @@ async function generate(reqJson: string): Promise<void> {
         },
       },
       controller.signal,
+      toolOptions,
     );
   } catch (e: any) {
     running.delete(requestId);
