@@ -129,8 +129,19 @@ object SummaryService {
             proceed(emptyList())
             return
         }
+
+        /*
+         * 取预设是本地 JS 调用，正常几十毫秒。但 WebView 可能在回调前被销毁
+         * （用户退出聊天页），没有超时的话 summarizing 会永远卡住，之后再也
+         * 摘要不了。这里双保险：先到先得，只放行一次，超时就当"没有预设"继续。
+         */
+        val started = java.util.concurrent.atomic.AtomicBoolean(false)
+        val go = { preset: List<PresetMsg> ->
+            if (started.compareAndSet(false, true)) proceed(preset)
+        }
+        main.postDelayed({ go(emptyList()) }, 3000)
         EngineBridge.fetchJson("exportSummaryPreset", presetId.orEmpty()) { obj ->
-            proceed(parsePreset(obj))
+            go(parsePreset(obj))
         }
     }
 

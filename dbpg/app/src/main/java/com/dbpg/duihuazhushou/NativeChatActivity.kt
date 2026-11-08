@@ -185,6 +185,9 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         list.adapter = adapter
 
         controller = ChatController(applicationContext, ImageFileCache(this), this)
+        // 旋转/重建后把摘要入口的状态补上（否则"正在浓缩"的淡色会丢）
+        summaryBtn.alpha = if (controller.isSummarizing()) 0.35f else 1f
+        refreshSummaryBadge()
 
         /*
          * sessionId 直接从 Intent 拿，不在这里解析快照。

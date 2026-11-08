@@ -93,7 +93,7 @@
 
 - 包名 `com.dbpg.duihuazhushou`
 - 当前版本 `versionName 1.0.4` / `versionCode 6`
-- 产物 `app\build\outputs\apk\debug\app-debug.apk`，约 5.4 MiB（5,716,909 字节）
+- 产物 `app\build\outputs\apk\debug\app-debug.apk`，约 5.6 MiB（5,904,206 字节）
 
 ---
 
