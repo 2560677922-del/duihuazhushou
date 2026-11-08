@@ -47,6 +47,15 @@ class RenderSettingsActivity : Activity() {
         sum = SummaryConfig.load(this)
 
         findViewById<android.view.View>(R.id.rnd_back).setOnClickListener { finish() }
+        // 渲染插件：内置插件库，随时安装/卸载（插件本体不可删除）
+        findViewById<android.view.View>(R.id.rnd_plugins).setOnClickListener {
+            startActivity(
+                android.content.Intent(
+                    this,
+                    com.dbpg.duihuazhushou.settings.PluginSettingsActivity::class.java,
+                ),
+            )
+        }
 
         htmlSwitch = findViewById(R.id.rnd_html)
         scriptSwitch = findViewById(R.id.rnd_script)

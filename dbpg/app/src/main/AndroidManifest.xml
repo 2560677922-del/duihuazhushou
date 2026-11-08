@@ -90,6 +90,12 @@
             android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.DHP.Content" />
+        <!-- 渲染插件设置：内置插件库，随时安装/卸载（插件本体不可删除） -->
+        <activity
+            android:name=".settings.PluginSettingsActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP.Content" />
         <!-- 原生会话列表：底部「聊天」tab 落地页，点一条切会话并进原生聊天 -->
         <activity
             android:name=".session.SessionListActivity"

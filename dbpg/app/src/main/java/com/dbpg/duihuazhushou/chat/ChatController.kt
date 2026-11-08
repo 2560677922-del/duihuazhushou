@@ -7,6 +7,8 @@ import com.dbpg.duihuazhushou.appearance.AppearanceConfig
 import com.dbpg.duihuazhushou.chat.render.CardRenderer
 import com.dbpg.duihuazhushou.chat.render.HtmlSanitizer
 import com.dbpg.duihuazhushou.chat.render.RenderCache
+import com.dbpg.duihuazhushou.chat.render.plugin.PluginRegistry
+import com.dbpg.duihuazhushou.chat.render.plugin.PluginRenderMeta
 import com.dbpg.duihuazhushou.imagegen.AutoImageService
 import com.dbpg.duihuazhushou.session.SessionBindingStore
 import com.dbpg.duihuazhushou.session.SessionRepo
@@ -480,13 +482,29 @@ class ChatController(
         paths: List<String>,
         rich: String,
         appearance: AppearanceConfig,
+        meta: PluginRenderMeta? = null,
     ): RenderedMsg {
+        /*
+         * ★ 渲染插件槽（P0）：只在「装了插件、且插件认领这条消息」时介入。
+         *   插件只产出一串 HTML，后面 WebView / iframe 整套完全复用现有代码，
+         *   主渲染管线一行都没重写。没装插件（或插件放行）时 pluginHtml 为 null，
+         *   下面三行与改动前逐字节一致 —— 这是零回归的保证。
+         *
+         *   ★ 插件输出不写回 RenderedMsg.rich：缓存里永远存原始 rich。
+         *     renderCached 的命中分支会重跑本函数，若把改写结果写回缓存，
+         *     下次命中就会二次改写。返回给界面的内容走 web 字段即可。
+         */
+        val pluginHtml = if (meta != null) {
+            PluginRegistry.resolveHtml(appContext, rich, meta)
+        } else null
+        val effective = pluginHtml ?: rich
+
         /*
          * 先在 Kotlin 侧清洗再判：模型输出可以带 <script>，
          * 而 WebView 是开着 JS 的（marked + 高度回传都要用）。
          * 清洗放在判定之前，也顺带避免"只剩一个 <script> 也判成富文本"。
          */
-        val cleaned = HtmlSanitizer.clean(rich, appearance.allowScript)
+        val cleaned = HtmlSanitizer.clean(effective, appearance.allowScript)
         val web = if (cleaned.isNotBlank() && appearance.htmlRender && hasMarkup(cleaned)) cleaned else null
         // 用户关掉富渲染时，至少让 <details> 还能用原生折叠块看（只认这一种）
         val fold = if (web == null && rich.isNotBlank() && FoldParser.hasFold(rich)) rich else null
@@ -573,8 +591,15 @@ class ChatController(
         sessionId: String,
     ): RenderedMsg {
         if (text.isBlank()) return RenderedMsg("", emptyList(), "", null, null)
+        // 插件上下文：会话绑定预设优先，未绑定则跟随引擎全局当前预设。
+        val meta = PluginRenderMeta(
+            messageId = actionId,
+            depth = depth,
+            presetId = summaryPresetId?.takeIf { it.isNotBlank() } ?: activePresetId,
+            sessionId = sessionId,
+        )
         if (generating || sessionId.isEmpty() || !cacheable) {
-            return renderAi(text, images, depth, display, appearance)
+            return renderAi(text, images, depth, display, appearance, meta)
         }
 
         val imgSig = if (images.isEmpty()) "" else images.joinToString("\u0001") {
@@ -595,10 +620,10 @@ class ChatController(
             val live = e.paths.filter { java.io.File(it).exists() }
             // 缓存里存的是富 HTML，卡片/折叠的判定在这里重算 —— 判定依赖
             // appearance，而它已经进了 lookHash，配置一变缓存自然失效。
-            return decideRender(e.plain, live, e.html ?: "", appearance)
+            return decideRender(e.plain, live, e.html ?: "", appearance, meta)
         }
 
-        val out = renderAi(text, images, depth, display, appearance)
+        val out = renderAi(text, images, depth, display, appearance, meta)
         cache.put(sessionId, key, RenderCache.Entry(out.plain, out.rich, out.paths))
         return out
     }
@@ -609,6 +634,7 @@ class ChatController(
         depth: Int,
         display: DisplayConfig,
         appearance: AppearanceConfig,
+        meta: PluginRenderMeta? = null,
     ): RenderedMsg {
         if (text.isBlank()) return RenderedMsg("", emptyList(), "", null, null)
 
@@ -659,7 +685,7 @@ class ChatController(
             }
         }
         // 三种渲染路径的判定集中在 decideRender：折叠块 / 卡片位图 / 纯文本。
-        return decideRender(sb.toString(), paths, rich.html, appearance)
+        return decideRender(sb.toString(), paths, rich.html, appearance, meta)
     }
 
     // ------------------------------------------------------------ 发送 / 生成

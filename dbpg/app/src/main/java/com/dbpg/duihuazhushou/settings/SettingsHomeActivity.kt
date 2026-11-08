@@ -49,6 +49,10 @@ class SettingsHomeActivity : Activity() {
                 Intent(this, com.dbpg.duihuazhushou.appearance.RenderSettingsActivity::class.java),
             )
         }
+        // 渲染插件：内置插件库，随时安装/卸载（插件本体不可删除）
+        findViewById<View>(R.id.shome_plugins).setOnClickListener {
+            startActivity(Intent(this, PluginSettingsActivity::class.java))
+        }
         findViewById<View>(R.id.shome_gallery).setOnClickListener {
             startActivity(
                 Intent(this, com.dbpg.duihuazhushou.gallery.GalleryActivity::class.java),
