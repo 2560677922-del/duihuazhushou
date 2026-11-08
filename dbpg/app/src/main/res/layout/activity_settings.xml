@@ -477,6 +477,49 @@
                 android:max="90" />
         </LinearLayout>
 
+        <!--
+          底板不透明度：卡片 / 按钮 / 顶栏 / 输入栏 / 弹窗的统一实心度。
+          这是把"有的实心有的空心"收成一套的开关 —— 拖一下全界面一起变。
+        -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="14dp"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="底板不透明度"
+                    android:textColor="#3A4353"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/set_panel_opacity_value"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="88%"
+                    android:textColor="#66707F"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/set_panel_opacity"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:max="100" />
+        </LinearLayout>
+
         <!-- 主题色：按钮 / 高亮 / chip 的强调色 -->
         <LinearLayout
             android:id="@+id/set_accent_row"
@@ -559,6 +602,53 @@
 
             <TextView
                 android:id="@+id/set_base_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_btn_soft"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="7dp"
+                android:paddingBottom="7dp"
+                android:text="云白"
+                android:textColor="#2F66D8"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- 配色风格：一次性换「底色 + 主题色」，深色皮肤的文字会自动翻白 -->
+        <LinearLayout
+            android:id="@+id/set_style_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="14dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="配色风格"
+                    android:textColor="#1A2230"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="整套换（底色 + 主题色）；黑金/墨蓝会把文字自动转成浅色"
+                    android:textColor="#66707F"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/set_style_value"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:background="@drawable/bg_btn_soft"

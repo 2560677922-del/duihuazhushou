@@ -46,10 +46,29 @@ data class AppearanceConfig(
     val fontColor: String = "",
     /** 聊天背景遮罩浓度 0–90：越高字越清楚、图越淡。 */
     val bgDim: Int = 55,
+    /**
+     * 底板实心度 0–100。
+     *
+     * 管的是**卡片/按钮/顶栏/输入栏/弹窗**这些"面板"的不透明度：
+     * 100 = 纯实心底板（背景图完全被挡住），越低越透（露出背景图）。
+     *
+     * 之前只有 `bgDim`，它只作用于背景图那张遮罩，面板底色写死在 XML
+     * （bg_card 的 #FFFFFF 等），所以调滑块时"卡片纹丝不动"——
+     * 看着就像"有的实心有的空心"。现在两者分权：bgDim 管图，这个管板。
+     */
+    val panelOpacity: Int = 88,
     /** 主题色（按钮/高亮/chip 的强调色）。存 hex 字符串，不认识回落默认蓝。 */
     val accentColor: String = "#2F66D8",
     /** 页面底色：纯色背景，也是背景图没盖到的边条颜色。 */
     val bgBaseColor: String = "#F4F6FA",
+    /**
+     * 配色风格 id（cloud/peach/gold/ink）。
+     *
+     * 只是"上一次点了哪套预设"的标记：真正生效的是 base + accent 两个值。
+     * 留着它是为了设置页能显示"当前：云白"，以及以后加整套换肤时
+     * 有地方挂（字体、圆角、图标线宽都可以按风格走）。
+     */
+    val themeStyle: String = "cloud",
     /** 装饰风格：none / sakura（樱花）/ grass（青草）。自绘，不带图片资产。 */
     val decoration: String = "none",
 )
@@ -67,8 +86,10 @@ object Appearance {
     private const val K_FONT_FAMILY = "font_family"
     private const val K_FONT_COLOR = "font_color"
     private const val K_BG_DIM = "bg_dim"
+    private const val K_PANEL_OPACITY = "panel_opacity"
     private const val K_ACCENT = "accent_color"
     private const val K_BASE = "bg_base_color"
+    private const val K_THEME_STYLE = "theme_style"
     private const val K_DECO = "decoration"
 
     fun load(ctx: Context): AppearanceConfig {
@@ -84,8 +105,10 @@ object Appearance {
             fontFamily = p.getString(K_FONT_FAMILY, "") ?: "",
             fontColor = p.getString(K_FONT_COLOR, "") ?: "",
             bgDim = p.getInt(K_BG_DIM, 55).coerceIn(0, 90),
+            panelOpacity = p.getInt(K_PANEL_OPACITY, 88).coerceIn(0, 100),
             accentColor = p.getString(K_ACCENT, "#2F66D8") ?: "#2F66D8",
             bgBaseColor = p.getString(K_BASE, "#F4F6FA") ?: "#F4F6FA",
+            themeStyle = p.getString(K_THEME_STYLE, "cloud") ?: "cloud",
             decoration = p.getString(K_DECO, "none") ?: "none",
         )
     }
@@ -102,8 +125,10 @@ object Appearance {
             .putString(K_FONT_FAMILY, cfg.fontFamily)
             .putString(K_FONT_COLOR, cfg.fontColor)
             .putInt(K_BG_DIM, cfg.bgDim)
+            .putInt(K_PANEL_OPACITY, cfg.panelOpacity)
             .putString(K_ACCENT, cfg.accentColor)
             .putString(K_BASE, cfg.bgBaseColor)
+            .putString(K_THEME_STYLE, cfg.themeStyle)
             .putString(K_DECO, cfg.decoration)
             .apply()
     }

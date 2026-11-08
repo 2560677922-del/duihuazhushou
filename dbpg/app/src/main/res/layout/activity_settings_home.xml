@@ -77,12 +77,13 @@
             android:padding="16dp"
             android:elevation="1dp">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingEnd="14dp"
-                android:text="💬"
-                android:textSize="22sp" />
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="14dp"
+                android:contentDescription="LLM 运营商"
+                android:src="@drawable/ic_llm"
+                android:tint="#5A6B85" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -109,13 +110,13 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:text="›"
-                android:textColor="#8A94A6"
-                android:textSize="20sp" />
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginStart="8dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_chevron_right"
+                android:tint="#8A94A6" />
         </LinearLayout>
 
         <LinearLayout
@@ -132,12 +133,13 @@
             android:padding="16dp"
             android:elevation="1dp">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingEnd="14dp"
-                android:text="🖼️"
-                android:textSize="22sp" />
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="14dp"
+                android:contentDescription="生图运营商"
+                android:src="@drawable/ic_nav_image"
+                android:tint="#5A6B85" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -161,13 +163,13 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:text="›"
-                android:textColor="#8A94A6"
-                android:textSize="20sp" />
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginStart="8dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_chevron_right"
+                android:tint="#8A94A6" />
         </LinearLayout>
 
         <LinearLayout
@@ -184,12 +186,13 @@
             android:padding="16dp"
             android:elevation="1dp">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingEnd="14dp"
-                android:text="🎨"
-                android:textSize="22sp" />
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="14dp"
+                android:contentDescription="生图风格"
+                android:src="@drawable/ic_palette"
+                android:tint="#5A6B85" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -213,13 +216,13 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:text="›"
-                android:textColor="#8A94A6"
-                android:textSize="20sp" />
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginStart="8dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_chevron_right"
+                android:tint="#8A94A6" />
         </LinearLayout>
 
         <LinearLayout
@@ -235,12 +238,13 @@
             android:orientation="horizontal"
             android:padding="16dp">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingEnd="14dp"
-                android:text="💭"
-                android:textSize="22sp" />
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="14dp"
+                android:contentDescription="对话生图"
+                android:src="@drawable/ic_sparkle"
+                android:tint="#5A6B85" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -264,13 +268,13 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:text="›"
-                android:textColor="#8A94A6"
-                android:textSize="20sp" />
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginStart="8dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_chevron_right"
+                android:tint="#8A94A6" />
         </LinearLayout>
 
         <TextView
@@ -297,12 +301,13 @@
             android:padding="16dp"
             android:elevation="1dp">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingEnd="14dp"
-                android:text="👁️"
-                android:textSize="22sp" />
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="14dp"
+                android:contentDescription="显示"
+                android:src="@drawable/ic_eye"
+                android:tint="#5A6B85" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -326,13 +331,13 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:text="›"
-                android:textColor="#8A94A6"
-                android:textSize="20sp" />
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginStart="8dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_chevron_right"
+                android:tint="#8A94A6" />
         </LinearLayout>
 
         <LinearLayout
@@ -349,12 +354,13 @@
             android:padding="16dp"
             android:elevation="1dp">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingEnd="14dp"
-                android:text="🧭"
-                android:textSize="22sp" />
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="14dp"
+                android:contentDescription="UI 风格"
+                android:src="@drawable/ic_nav_adventure"
+                android:tint="#5A6B85" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -378,13 +384,13 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:text="›"
-                android:textColor="#8A94A6"
-                android:textSize="20sp" />
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginStart="8dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_chevron_right"
+                android:tint="#8A94A6" />
         </LinearLayout>
 
         <LinearLayout
@@ -401,12 +407,13 @@
             android:padding="16dp"
             android:elevation="1dp">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingEnd="14dp"
-                android:text="🎞️"
-                android:textSize="22sp" />
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="14dp"
+                android:contentDescription="图片库"
+                android:src="@drawable/ic_gallery"
+                android:tint="#5A6B85" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -430,13 +437,13 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:text="›"
-                android:textColor="#8A94A6"
-                android:textSize="20sp" />
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginStart="8dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_chevron_right"
+                android:tint="#8A94A6" />
         </LinearLayout>
 
         <LinearLayout
@@ -453,12 +460,13 @@
             android:padding="16dp"
             android:elevation="1dp">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingEnd="14dp"
-                android:text="📦"
-                android:textSize="22sp" />
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="14dp"
+                android:contentDescription="数据迁移"
+                android:src="@drawable/ic_archive"
+                android:tint="#5A6B85" />
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -482,13 +490,13 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingStart="8dp"
-                android:text="›"
-                android:textColor="#8A94A6"
-                android:textSize="20sp" />
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginStart="8dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_chevron_right"
+                android:tint="#8A94A6" />
         </LinearLayout>
 
         <TextView

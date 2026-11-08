@@ -39,6 +39,9 @@ class SettingsActivity : Activity() {
     private lateinit var bgValue: TextView
     private lateinit var dimBar: SeekBar
     private lateinit var dimValue: TextView
+    private lateinit var panelBar: SeekBar
+    private lateinit var panelValue: TextView
+    private lateinit var styleValue: TextView
     private lateinit var accentValue: TextView
     private lateinit var baseValue: TextView
     private lateinit var decoValue: TextView
@@ -52,6 +55,14 @@ class SettingsActivity : Activity() {
         cfg = Appearance.load(this)
 
         preview = findViewById(R.id.set_preview)
+        /*
+         * 预览块不吃全局染色。
+         *
+         * 它的字号/字体/颜色本来就是"所见即所得"地按设置渲染的，
+         * 如果 UiBackdrop 再把它按主题映射一遍，用户选"酒红"会被改回墨黑，
+         * 预览就不是预览了。
+         */
+        preview.tag = "dhp:keep-color"
         sizeValue = findViewById(R.id.set_size_value)
         lineValue = findViewById(R.id.set_line_value)
         widthValue = findViewById(R.id.set_width_value)
@@ -65,6 +76,9 @@ class SettingsActivity : Activity() {
         bgValue = findViewById(R.id.set_bg_value)
         dimBar = findViewById(R.id.set_bg_dim)
         dimValue = findViewById(R.id.set_bg_dim_value)
+        panelBar = findViewById(R.id.set_panel_opacity)
+        panelValue = findViewById(R.id.set_panel_opacity_value)
+        styleValue = findViewById(R.id.set_style_value)
         accentValue = findViewById(R.id.set_accent_value)
         baseValue = findViewById(R.id.set_base_value)
         decoValue = findViewById(R.id.set_deco_value)
@@ -73,6 +87,7 @@ class SettingsActivity : Activity() {
 
         bubbleBtn.setOnClickListener { pickBubbleStyle() }
         bgValue.setOnClickListener { pickUiBackground() }
+        styleValue.setOnClickListener { pickStyle() }
         accentValue.setOnClickListener { pickAccent() }
         baseValue.setOnClickListener { pickBaseColor() }
         decoValue.setOnClickListener { pickDecoration() }
@@ -80,6 +95,8 @@ class SettingsActivity : Activity() {
         fontColorValue.setOnClickListener { pickFontColor() }
         dimBar.max = 90
         dimBar.progress = cfg.bgDim
+        panelBar.max = 100
+        panelBar.progress = cfg.panelOpacity
 
         findViewById<TextView>(R.id.set_back).setOnClickListener { finish() }
         findViewById<TextView>(R.id.set_reset).setOnClickListener { reset() }
@@ -123,8 +140,11 @@ class SettingsActivity : Activity() {
             cfg = cfg.copy(htmlRender = checked)
             Appearance.save(this, cfg)
         }
-        dimBar.setOnSeekBarChangeListener(onChange { p ->
+        dimBar.setOnSeekBarChangeListener(onChangeLive { p ->
             cfg = cfg.copy(bgDim = p)
+        })
+        panelBar.setOnSeekBarChangeListener(onChangeLive { p ->
+            cfg = cfg.copy(panelOpacity = p)
         })
         scriptSwitch.setOnCheckedChangeListener { _, checked ->
             cfg = cfg.copy(allowScript = checked)
@@ -143,6 +163,25 @@ class SettingsActivity : Activity() {
         override fun onStopTrackingTouch(bar: SeekBar?) = Unit
     }
 
+    /**
+     * 松手后重铺整页的滑块。
+     *
+     * 背景遮罩、底板不透明度这类"要整页一起看效果"的，每动一格就全树重染会卡
+     * （拖动时回调很密），松手刷一次最合适。
+     */
+    private fun onChangeLive(apply: (Int) -> Unit) = object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+            apply(progress)
+            Appearance.save(this@SettingsActivity, cfg)
+            render()
+        }
+
+        override fun onStartTrackingTouch(bar: SeekBar?) = Unit
+        override fun onStopTrackingTouch(bar: SeekBar?) {
+            UiBackdrop.apply(this@SettingsActivity)
+        }
+    }
+
     private fun render() {
         sizeValue.text = String.format("%.1f sp", cfg.textSizeSp)
         lineValue.text = String.format("%.2f 倍", cfg.lineSpacing)
@@ -151,6 +190,8 @@ class SettingsActivity : Activity() {
         bubbleBtn.text = BubbleStyle.byId(cfg.bubbleStyle).label
         bgValue.text = if (ChatBackground.hasUi(this)) "已设置" else "选择图片"
         dimValue.text = "${cfg.bgDim}%"
+        panelValue.text = "${cfg.panelOpacity}%"
+        styleValue.text = ThemePalette.styleById(cfg.themeStyle).label
         accentValue.text = ThemePalette.labelOf(ThemePalette.ACCENTS, ThemePalette.accentHex(cfg))
         baseValue.text = ThemePalette.labelOf(ThemePalette.BASES, ThemePalette.baseHex(cfg))
         decoValue.text = when (cfg.decoration) {
@@ -217,6 +258,32 @@ class SettingsActivity : Activity() {
                     ChatBackground.clear(this, null)
                     render()
                 }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * 配色风格：一次同时换「页面底色 + 主题色」。
+     *
+     * 这是给以后留的换肤入口：想加新皮肤（比如"奶油""莫兰迪"），
+     * 只要往 [ThemePalette.STYLES] 里加一条，设置页会自动多一个选项，
+     * 底板/文字/图标/描边全部由 tokensOf 推导，不用改任何布局。
+     */
+    private fun pickStyle() {
+        val all = ThemePalette.STYLES
+        val labels = all.map { it.label }.toTypedArray()
+        val current = all.indexOfFirst { it.id == cfg.themeStyle }.coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("配色风格")
+            .setSingleChoiceItems(labels, current) { dialog, which ->
+                val s = all[which]
+                cfg = cfg.copy(themeStyle = s.id, bgBaseColor = s.base, accentColor = s.accent)
+                Appearance.save(this, cfg)
+                // 立刻重铺本页（否则要退出再进才看得到）
+                UiBackdrop.apply(this)
+                render()
+                dialog.dismiss()
             }
             .setNegativeButton("取消", null)
             .show()
@@ -329,6 +396,9 @@ class SettingsActivity : Activity() {
         htmlSwitch.isChecked = cfg.htmlRender
         scriptSwitch.isChecked = cfg.allowScript
         dimBar.progress = cfg.bgDim
+        panelBar.progress = cfg.panelOpacity
         render()
+        // 恢复默认后把本页也重铺回默认观感
+        UiBackdrop.apply(this)
     }
 }

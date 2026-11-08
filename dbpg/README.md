@@ -19,6 +19,43 @@
 >
 > `src/views/Settings.vue`、`src/stores/appearance.ts` 是**引擎内部页**，只有用浏览器跑
 > `npm run dev` 才看得到；**改它们不会改变 APK 的设置页**。这个坑已经踩过一次。
+>
+> ### 底板 / 图标规范（2026-11 统一，改之前先看这段）
+>
+> **底板（卡片、按钮、顶栏、输入栏、弹窗）只有一套色，来自 `ThemeTokens.panel`。**
+>
+> - 颜色由 `appearance/Theme.kt` 的 `ThemePalette.tokensOf(cfg)` 算：
+>   页面底色 + `panelOpacity`（设置里的「底板不透明度」）+ 明暗推导。
+> - 再由 `UiBackdrop.apply()` → `View.applyTokens()` **递归**套到每个 View 的 background 上，
+>   判据是「填充色亮度 + 饱和度」，不是逐个登记 drawable 名字。
+>   所以新写一个白色卡片，不用改代码也会自动跟随。
+> - **不要**在布局里新加 `android:background="#FFFFFF"` 这种实心白去"手动对齐"——
+>   它会先按白色渲染一帧，再被递归覆盖，白白多一次闪烁。用 `@drawable/bg_card` 就行。
+> - 想加一套新皮肤：往 `ThemePalette.STYLES` 加一条 `(id, 名称, 底色, 主题色)`，
+>   设置页会自动多一个选项；深色底的单子会自动翻白字（`tokensOf` 按底色亮度判 dark）。
+>
+> **图标一律用 VectorDrawable（Android 版的 SVG），不要用 emoji。**
+>
+> - 现成的在 `res/drawable/ic_*.xml`：24dp viewport、线宽 1.7、`strokeColor="#5A6B85"`。
+> - 布局里这样用（**必须带 `android:tint`**，否则 `UiBackdrop` 换主题色时染不到它）：
+>   ```xml
+>   <ImageView
+>       android:layout_width="24dp"
+>       android:layout_height="24dp"
+>       android:src="@drawable/ic_palette"
+>       android:tint="#5A6B85" />
+>   ```
+> - emoji（🎭🎨📦…）在不同 ROM 上字体不同、大小对不齐，看着廉价，已经全部替换掉了。
+>
+> **两个已知的 Android 限制（别踩）**
+>
+> 1. `GradientDrawable` 没有 `getStrokeWidth()`，只有 `setStroke()`。
+>    所以描边**不能**只换色——无条件 `setStroke` 会给本来没描边的 shape 硬加一圈框。
+>    描边保留 XML 原值（浅灰 `#EBEFF6`）。
+> 2. RecyclerView 的 item 是滚动时现 inflate 的，一次性递归覆盖不到。
+>    所以 `UiBackdrop.hookRecycler()` 会给每个 RecyclerView 挂
+>    `OnChildAttachStateChangeListener`，新项进场时按**当前** token 补色。
+>    自己写新的列表页时不用额外做什么，只要根布局里有 RecyclerView 就会自动挂上。
 
 把上一级目录（`duihuazhushou/`）的 Vue + Vite 网页应用打包成 Android APK。
 

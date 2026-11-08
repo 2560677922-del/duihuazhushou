@@ -77,7 +77,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     private lateinit var adapter: ChatAdapter
     private lateinit var input: EditText
     private lateinit var titleView: TextView
-    private lateinit var quickImgBtn: TextView
+    private lateinit var quickImgBtn: View
     private lateinit var modelChip: TextView
     private lateinit var jumpBottomBtn: TextView
 
@@ -173,7 +173,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         })
         sendBtn = findViewById(R.id.chat_send)
         stopBtn = findViewById(R.id.chat_stop)
-        val close = findViewById<TextView>(R.id.chat_close)
+        val close = findViewById<View>(R.id.chat_close)
         val more = findViewById<TextView>(R.id.chat_more)
 
         appearance = Appearance.load(this)

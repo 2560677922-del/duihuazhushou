@@ -2,11 +2,12 @@
 <!--
   底部导航（原生常驻）。
 
-  分类刻意和网页版 MainLayout 的 navItems 保持一致：
-    冒险 → 资产 → 设置 → 生图
+  分类和网页版 MainLayout 的 navItems 一致：冒险 → 资产 → 设置 → 生图。
 
-  每项 = emoji 图标 + 文字（两行），当前 tab 用主题蓝高亮
-  （导航只在首页常驻，首页即「冒险」，所以高亮写死即可）。
+  2026-11 改版：emoji 换成矢量图标（VectorDrawable，就是 Android 版的 SVG）。
+  原因：emoji 依赖系统字体，不同 ROM 上大小/笔画/基线都不一致，看着廉价；
+  矢量图标线条统一，还能跟着主题色一起染（UiBackdrop 统一处理）。
+  当前 tab（冒险）用主题蓝，其余用图标灰。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/bottom_nav"
@@ -15,24 +16,68 @@
     android:orientation="horizontal"
     android:background="@drawable/bg_nav">
 
-    <TextView
+    <LinearLayout
         android:id="@+id/nav_adventure"
-        style="@style/BottomNavItem"
-        android:text="🏕️\n冒险"
-        android:textColor="#2F66D8" />
+        style="@style/BottomNavItem">
 
-    <TextView
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="冒险"
+            android:src="@drawable/ic_nav_adventure"
+            android:tint="#2F66D8" />
+
+        <TextView
+            style="@style/BottomNavLabel"
+            android:text="冒险"
+            android:textColor="#2F66D8" />
+    </LinearLayout>
+
+    <LinearLayout
         android:id="@+id/nav_assets"
-        style="@style/BottomNavItem"
-        android:text="👤\n资产" />
+        style="@style/BottomNavItem">
 
-    <TextView
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="资产"
+            android:src="@drawable/ic_nav_assets"
+            android:tint="#5A6B85" />
+
+        <TextView
+            style="@style/BottomNavLabel"
+            android:text="资产" />
+    </LinearLayout>
+
+    <LinearLayout
         android:id="@+id/nav_settings"
-        style="@style/BottomNavItem"
-        android:text="⚙️\n设置" />
+        style="@style/BottomNavItem">
 
-    <TextView
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="设置"
+            android:src="@drawable/ic_nav_settings"
+            android:tint="#5A6B85" />
+
+        <TextView
+            style="@style/BottomNavLabel"
+            android:text="设置" />
+    </LinearLayout>
+
+    <LinearLayout
         android:id="@+id/nav_imagegen"
-        style="@style/BottomNavItem"
-        android:text="🎨\n生图" />
+        style="@style/BottomNavItem">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="生图"
+            android:src="@drawable/ic_nav_image"
+            android:tint="#5A6B85" />
+
+        <TextView
+            style="@style/BottomNavLabel"
+            android:text="生图" />
+    </LinearLayout>
 </LinearLayout>

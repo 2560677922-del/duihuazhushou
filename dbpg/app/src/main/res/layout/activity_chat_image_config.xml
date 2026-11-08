@@ -322,7 +322,7 @@
             android:gravity="center"
             android:paddingStart="24dp"
             android:paddingEnd="24dp"
-            android:text="聊天输入栏左侧的 🎨 按钮按这套配置快速出图。"
+            android:text="聊天输入栏左侧的调色板按钮按这套配置快速出图。"
             android:textColor="#9AA4B2"
             android:textSize="11sp" />
     </LinearLayout>

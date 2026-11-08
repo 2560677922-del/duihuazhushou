@@ -96,7 +96,7 @@
                 android:paddingTop="2dp"
                 android:paddingEnd="8dp"
                 android:paddingBottom="2dp"
-                android:text="🎨 生图"
+                android:text="生图"
                 android:textColor="#7F8DA6"
                 android:textSize="10sp"
                 android:visibility="gone" />

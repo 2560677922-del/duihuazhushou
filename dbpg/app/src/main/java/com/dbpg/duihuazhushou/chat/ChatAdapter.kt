@@ -83,6 +83,14 @@ class ChatAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val v = LayoutInflater.from(parent.context).inflate(R.layout.item_chat_message, parent, false)
+        /*
+         * 气泡整棵子树退出全局染色（UiBackdrop 见到这个 tag 只套字体）。
+         *
+         * 气泡底色/文字色由本 Adapter 按 BubbleStyle 与「字体颜色」算，
+         * 被全局规则再映射一次会把用户选的"酒红/纯白"改回默认墨黑。
+         * 聊天页的顶栏、输入栏、菜单不在这棵树里，照常跟随底板设置。
+         */
+        v.tag = "dhp:keep-color"
         return VH(
             v as FrameLayout,
             v.findViewById(R.id.bubble),
