@@ -1146,6 +1146,17 @@ async function apiCommand(raw: string): Promise<void> {
         await a.save();
         break;
       }
+      /** 世界书改名（不影响 _uid / 条目 / 当前启用状态）。 */
+      case 'wbRename': {
+        const a = useAssetsStore();
+        const book: any = (a.worldBooks || []).find((w: any) => w._uid === req.bookId);
+        if (!book) throw new Error('找不到世界书');
+        const name = String(req.name ?? '').trim();
+        if (!name) throw new Error('名称不能为空');
+        setAssetName(book, name);
+        await a.save();
+        break;
+      }
       /** 世界书新建条目（uid 取现有最大值 +1）。 */
       case 'wbAddEntry': {
         const a = useAssetsStore();
@@ -1204,6 +1215,20 @@ async function apiCommand(raw: string): Promise<void> {
           it.enabled = p.enabled;
           syncPromptEnabled(ps, String(it.identifier ?? req.identifier), p.enabled);
         }
+        await a.save();
+        break;
+      }
+      /**
+       * 预设改名。只改显示名，不动 id / 子条目 / prompt_order，
+       * 所以正在进行的对话引用的 presetId 不会失效。
+       */
+      case 'presetRename': {
+        const a = useAssetsStore();
+        const ps: any = (a.presets || []).find((x: any) => x._uid === req.presetId);
+        if (!ps) throw new Error('找不到预设');
+        const name = String(req.name ?? '').trim();
+        if (!name) throw new Error('名称不能为空');
+        setAssetName(ps, name);
         await a.save();
         break;
       }
@@ -1278,6 +1303,18 @@ async function apiCommand(raw: string): Promise<void> {
         if (Array.isArray(p.trimStrings)) s.trimStrings = p.trimStrings;
         if (p.minDepth !== undefined) s.minDepth = p.minDepth === '' || p.minDepth === null ? null : Number(p.minDepth);
         if (p.maxDepth !== undefined) s.maxDepth = p.maxDepth === '' || p.maxDepth === null ? null : Number(p.maxDepth);
+        g.updatedAt = Date.now();
+        await a.save();
+        break;
+      }
+      /** 正则组改名：只改组名，组内脚本与启用状态原样保留。 */
+      case 'regexRename': {
+        const a = useAssetsStore();
+        const g: any = (a.regexGroups || []).find((x: any) => x._uid === req.groupId);
+        if (!g) throw new Error('找不到正则组');
+        const name = String(req.name ?? '').trim();
+        if (!name) throw new Error('名称不能为空');
+        setAssetName(g, name);
         g.updatedAt = Date.now();
         await a.save();
         break;
@@ -1471,6 +1508,20 @@ function syncPromptEnabled(ps: any, identifier: string, enabled: boolean): void 
   if (typeof ps?.setPromptEnabled === 'function') {
     try { ps.setPromptEnabled(identifier, enabled); } catch { /* 普通对象无此方法 */ }
   }
+}
+
+/**
+ * 资产改名：ST 的预设/世界书有两种落盘形态 —— 扁平 `{ name }` 与
+ * `{ data: { name } }`；预设还可能有 `preset_name`，正则组可能带 `scriptName`。
+ *
+ * 显示层取 `name || data.name`，web 资产页改名时也是「存在哪个就同步哪个」，
+ * 这里保持同一套写法，避免原生改完、网页打开还是旧名字。
+ */
+function setAssetName(obj: any, name: string): void {
+  obj.name = name;
+  if (obj.preset_name !== undefined) obj.preset_name = name;
+  if (obj.scriptName !== undefined) obj.scriptName = name;
+  if (obj.data && typeof obj.data === 'object') obj.data.name = name;
 }
 
 /**

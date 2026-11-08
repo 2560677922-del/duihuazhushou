@@ -142,7 +142,7 @@ class AssetsHomeActivity : Activity() {
                 val arr = a.optJSONArray("presets") ?: JSONArray()
                 var total = 0
                 for (i in 0 until arr.length()) total += arr.optJSONObject(i)?.optJSONArray("prompts")?.length() ?: 0
-                status.text = "共 ${arr.length()} 个预设 / $total 条子条目；点名称展开，每条可单独开关、编辑"
+                status.text = "共 ${arr.length()} 个预设 / $total 条子条目；点名称展开，每条可单独开关、编辑；长按组名可改名 / 导出"
                 for (i in 0 until arr.length()) {
                     val p = arr.getJSONObject(i)
                     renderPreset(box, a, p)
@@ -153,7 +153,7 @@ class AssetsHomeActivity : Activity() {
                 val arr = a.optJSONArray("regexGroups") ?: JSONArray()
                 var total = 0
                 for (i in 0 until arr.length()) total += arr.optJSONObject(i)?.optJSONArray("scripts")?.length() ?: 0
-                status.text = "共 ${arr.length()} 个正则组 / $total 条脚本；点名称展开，逐条开关、编辑"
+                status.text = "共 ${arr.length()} 个正则组 / $total 条脚本；点名称展开，逐条开关、编辑；长按组名可改名 / 导出"
                 for (i in 0 until arr.length()) {
                     renderRegexGroup(box, a, arr.getJSONObject(i))
                 }
@@ -302,7 +302,21 @@ class AssetsHomeActivity : Activity() {
                 if (open) openBooks.remove("preset:$id") else openBooks.add("preset:$id")
                 lastAssets?.let { render(it) }
             }
-            setOnLongClickListener { exportAsset(id); true }
+            setOnLongClickListener {
+                assetMenu(
+                    name,
+                    {
+                        renameDialog("重命名预设", name) { newName ->
+                            EngineBridge.command(
+                                JSONObject().put("cmd", "presetRename")
+                                    .put("presetId", id).put("name", newName),
+                            )
+                        }
+                    },
+                    { exportAsset(id) },
+                )
+                true
+            }
         }
         head.addView(TextView(this).apply {
             text = (if (current) "✓ " else "") + name
@@ -496,7 +510,21 @@ class AssetsHomeActivity : Activity() {
                 if (open) openBooks.remove("regex:$id") else openBooks.add("regex:$id")
                 lastAssets?.let { render(it) }
             }
-            setOnLongClickListener { exportAsset(id); true }
+            setOnLongClickListener {
+                assetMenu(
+                    name,
+                    {
+                        renameDialog("重命名正则组", name) { newName ->
+                            EngineBridge.command(
+                                JSONObject().put("cmd", "regexRename")
+                                    .put("groupId", id).put("name", newName),
+                            )
+                        }
+                    },
+                    { exportAsset(id) },
+                )
+                true
+            }
         }
         head.addView(TextView(this).apply {
             text = (if (current) "✓ " else "") + name
@@ -937,7 +965,7 @@ class AssetsHomeActivity : Activity() {
 
     private fun renderWorldBooks(a: JSONObject, box: LinearLayout, status: TextView) {
         val arr = a.optJSONArray("worldBooks") ?: JSONArray()
-        status.text = "共 ${arr.length()} 本世界书，点书名展开条目；长按导出"
+        status.text = "共 ${arr.length()} 本世界书，点书名展开条目；长按书名可改名 / 导出"
         for (i in 0 until arr.length()) {
             val b = arr.getJSONObject(i)
             val id = b.optString("id")
@@ -955,6 +983,21 @@ class AssetsHomeActivity : Activity() {
                 setOnClickListener {
                     if (open) openBooks.remove(id) else openBooks.add(id)
                     lastAssets?.let { render(it) }
+                }
+                setOnLongClickListener {
+                    assetMenu(
+                        name,
+                        {
+                            renameDialog("重命名世界书", name) { newName ->
+                                EngineBridge.command(
+                                    JSONObject().put("cmd", "wbRename")
+                                        .put("bookId", id).put("name", newName),
+                                )
+                            }
+                        },
+                        { exportAsset(id) },
+                    )
+                    true
                 }
             }
             head.addView(TextView(this).apply {
@@ -1294,6 +1337,43 @@ class AssetsHomeActivity : Activity() {
         return null
     }
 
+    /**
+     * 组头长按菜单：重命名 / 导出。
+     *
+     * 之前长按直接导出，改名没有入口 —— 预设、正则、世界书这三类都缺。
+     * 统一成一个菜单，顺手把世界书「长按导出」的文案补上实际行为。
+     */
+    private fun assetMenu(title: String, onRename: () -> Unit, onExport: () -> Unit) {
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setItems(arrayOf("重命名", "导出 JSON")) { _, which ->
+                when (which) {
+                    0 -> onRename()
+                    1 -> onExport()
+                }
+            }
+            .show()
+    }
+
+    /** 单行改名弹窗：空名不提交，避免列表里出现「未命名」。 */
+    private fun renameDialog(title: String, old: String, onSave: (String) -> Unit) {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(6), dp(18), dp(6))
+        }
+        val input = newInput(box, old)
+        input.setSelection(old.length)
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(box)
+            .setPositiveButton("保存") { _, _ ->
+                val name = input.text?.toString()?.trim().orEmpty()
+                if (name.isEmpty()) toast("名称不能为空") else onSave(name)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
     private fun exportAsset(id: String) {
         EngineBridge.command(JSONObject().put("cmd", "exportAsset").put("id", id))
     }
@@ -1355,9 +1435,9 @@ class AssetsHomeActivity : Activity() {
                 "setAssets" -> {
                     if (obj.optBoolean("ok")) load() else toast("切换失败：${obj.optString("error")}")
                 }
-                "wbSaveEntry", "wbAddEntry", "wbRemoveEntry",
-                "presetSavePrompt", "presetAddPrompt", "presetRemovePrompt",
-                "regexSaveScript", "regexAddScript", "regexRemoveScript" -> {
+                "wbSaveEntry", "wbAddEntry", "wbRemoveEntry", "wbRename",
+                "presetSavePrompt", "presetAddPrompt", "presetRemovePrompt", "presetRename",
+                "regexSaveScript", "regexAddScript", "regexRemoveScript", "regexRename" -> {
                     if (obj.optBoolean("ok")) load()
                     else toast("操作失败：${obj.optString("error")}")
                 }
