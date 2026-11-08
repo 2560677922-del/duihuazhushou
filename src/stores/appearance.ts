@@ -168,8 +168,68 @@ export const BACKGROUND_PRESETS: BackgroundPreset[] = [
 /* 保留一个自定义背景占位（有自定义图时不显示这些预设） */
 void 0;
 
-/** 背景是浅色时需要切到浅色主题，否则文字看不清 */
-export const LIGHT_PRESETS = new Set(['paper']);
+/**
+ * 背景是浅色时需要切到浅色主题（黑字），否则文字看不清。
+ *
+ * ★ 2026-11 修正：原来只有 'paper'（暖纸）。但 'white'（纯白）和
+ * 'cream'（乳黄）明明也是浅色底，却没进名单 —— 结果它们仍走深色
+ * 文字变量（白字压在白底上，几乎看不见）。现已补齐。
+ * 另外自定义纯色背景（'solid'）按颜色亮度单独判定，见下方 isLightColor。
+ */
+export const LIGHT_PRESETS = new Set(['paper', 'white', 'cream']);
+
+/**
+ * 计算一个十六进制颜色是不是"浅色"（相对亮度 > 0.6）。
+ * 用于自定义纯色背景：用户选了任意底色，我们据此决定用黑字还是白字，
+ * 而不是靠一张写死的名单。
+ */
+export function isLightColor(hex: string): boolean {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return false;
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  // 感知亮度（sRGB 近似）
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum > 0.6;
+}
+
+/**
+ * 字体预设（系统字体栈，零体积、不打包字体文件）。
+ *
+ * 为什么不用 Web 字体：打包几 MB 的字体在安卓 WebView 里收益有限，
+ * 且中文 Web 字体体积惊人；系统字体栈借助设备自带的 CJK 字体，
+ * 跨平台都有合理回退。用户要的是"换个气质"，不是精确到像素。
+ */
+export const FONT_PRESETS: { id: string; name: string; value: string }[] = [
+  {
+    id: 'system',
+    name: '系统默认',
+    value:
+      'system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif',
+  },
+  {
+    id: 'sans',
+    name: '无衬线',
+    value: '"Helvetica Neue", Arial, "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif',
+  },
+  {
+    id: 'serif',
+    name: '衬线',
+    value: 'Georgia, "Times New Roman", "Songti SC", "SimSun", "Noto Serif CJK SC", serif',
+  },
+  {
+    id: 'mono',
+    name: '等宽',
+    value: '"SF Mono", "Cascadia Code", Consolas, "Courier New", "Noto Sans Mono CJK SC", monospace',
+  },
+  {
+    id: 'rounded',
+    name: '圆润',
+    value: '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Noto Sans CJK SC", sans-serif',
+  },
+];
 
 export const ACCENT_PRESETS = [
   { id: 'blue', name: '天蓝', value: '#6ea8fe' },
@@ -252,8 +312,10 @@ export const THEME_PRESETS: ThemePreset[] = [
 
 
 export const useAppearanceStore = defineStore('appearance', () => {
-  /** 背景预设 id，或 'custom'（使用 customImage） */
+  /** 背景预设 id，或 'custom'（使用 customImage），或 'solid'（自定义纯色） */
   const background = ref('default');
+  /** 自定义纯色背景色值（background === 'solid' 时生效），满足"白底切成任意颜色" */
+  const solidColor = ref('#f6f7f9');
   /** 自定义背景图（dataURL），直接存在本地/落盘文件里 */
   const customImage = ref('');
   /** 自定义背景图的不透明度，避免盖住界面 */
@@ -262,6 +324,8 @@ export const useAppearanceStore = defineStore('appearance', () => {
   const panelOpacity = ref(0.92);
   /** 主色 */
   const accent = ref('#6ea8fe');
+  /** 字体预设 id（见 FONT_PRESETS） */
+  const fontFamily = ref('system');
   /** 正文宽度上限（阅读舒适度） */
   const contentWidth = ref(1200);
   /**
@@ -309,7 +373,11 @@ export const useAppearanceStore = defineStore('appearance', () => {
         `linear-gradient(rgba(8,10,16,${d}), rgba(8,10,16,${Math.min(0.92, d + 0.14)}))`,
       );
     } else {
-      root.style.setProperty('--app-bg', preset?.css || '#0f1115');
+      // 自定义纯色背景：用用户选的颜色，不再依赖写死的预设 css。
+      // 这样"白色底板"可以切成任意底色，配套文字色由下方 isLight 按亮度决定。
+      const bgCss =
+        background.value === 'solid' ? solidColor.value : preset?.css || '#0f1115';
+      root.style.setProperty('--app-bg', bgCss);
       root.style.setProperty('--app-bg-size', 'auto');
       root.style.setProperty('--app-bg-repeat', 'no-repeat');
       root.style.setProperty('--app-bg-position', 'center center');
@@ -319,7 +387,14 @@ export const useAppearanceStore = defineStore('appearance', () => {
     // 2. 浅色背景切换文字与面板配色。
     //    注意必须在这里显式写全部颜色：:root 上的内联自定义属性优先级高于
     //    样式表里的同名声明，所以不能指望 CSS 里的 [data-theme] 规则生效。
-    const isLight = LIGHT_PRESETS.has(background.value) && background.value !== 'custom';
+    // 浅色判定：预设走写死名单（paper/white/cream）；
+    // 自定义纯色背景按颜色亮度实时算；custom 图片与 default 当深色。
+    let isLight = false;
+    if (background.value === 'solid') {
+      isLight = isLightColor(solidColor.value);
+    } else if (background.value !== 'custom') {
+      isLight = LIGHT_PRESETS.has(background.value);
+    }
     root.dataset.theme = isLight ? 'light' : 'dark';
 
     if (isLight) {
@@ -352,30 +427,30 @@ export const useAppearanceStore = defineStore('appearance', () => {
      * 结果浅色主题下顶部栏/输入区/标签栏变成"深灰底 + 深色文字"，
      * 整个看不清。凡是与明暗相关的颜色，都不能写死在一处。
      */
+    const po = panelOpacity.value;
+    // 玻璃与表面高光的不透明度都跟随面板不透明度 po：滑块一动，
+    // 顶栏/输入区/标签栏（glass）和所有卡片表面（surface）同步变，
+    // 不再"只能管极少部分"。栏保留下限 0.86，避免透出底下内容。
+    const glassAlpha = Math.max(0.86, po);
     if (isLight) {
       /*
-       * 毛玻璃的不透明度要够高。
-       *
-       * 一开始给了 0.86，结果正文从输入区/标签栏后面透出来 ——
-       * 黑字隐约浮在栏后面，看起来非常乱。商业级 App 的固定栏
-       * 基本是"接近不透明"，模糊只是让边缘柔和一点，
-       * 不是拿来当"滤镜"的。所以这里给到 0.97。
+       * 毛玻璃的不透明度跟随面板不透明度（glassAlpha，保底 0.86）。
        */
-      root.style.setProperty('--glass', 'rgba(250, 248, 244, 0.97)');
+      root.style.setProperty('--glass', `rgba(250, 248, 244, ${glassAlpha})`);
       root.style.setProperty('--hairline', 'rgba(255, 255, 255, 0.6)');
       root.style.setProperty('--hairline-strong', 'rgba(255, 255, 255, 0.9)');
-      root.style.setProperty('--surface-1', 'linear-gradient(180deg, rgba(255,255,255,0.55), rgba(255,255,255,0.2))');
-      root.style.setProperty('--surface-2', 'linear-gradient(180deg, rgba(255,255,255,0.7), rgba(255,255,255,0.3))');
+      root.style.setProperty('--surface-1', `linear-gradient(180deg, rgba(255,255,255,${(0.55 * po).toFixed(3)}), rgba(255,255,255,${(0.2 * po).toFixed(3)}))`);
+      root.style.setProperty('--surface-2', `linear-gradient(180deg, rgba(255,255,255,${(0.7 * po).toFixed(3)}), rgba(255,255,255,${(0.3 * po).toFixed(3)}))`);
       root.style.setProperty('--shadow-1', '0 1px 2px rgba(90, 78, 58, 0.1), 0 2px 6px rgba(90, 78, 58, 0.07)');
       root.style.setProperty('--shadow-2', '0 2px 6px rgba(90, 78, 58, 0.12), 0 10px 26px rgba(90, 78, 58, 0.1)');
       root.style.setProperty('--shadow-3', '0 10px 24px rgba(90, 78, 58, 0.16), 0 24px 56px rgba(90, 78, 58, 0.14)');
       root.style.setProperty('--shadow-up', '0 -6px 22px rgba(90, 78, 58, 0.13)');
     } else {
-      root.style.setProperty('--glass', 'rgba(18, 21, 29, 0.94)');
+      root.style.setProperty('--glass', `rgba(18, 21, 29, ${glassAlpha})`);
       root.style.setProperty('--hairline', 'rgba(255, 255, 255, 0.07)');
       root.style.setProperty('--hairline-strong', 'rgba(255, 255, 255, 0.12)');
-      root.style.setProperty('--surface-1', 'linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.014))');
-      root.style.setProperty('--surface-2', 'linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.022))');
+      root.style.setProperty('--surface-1', `linear-gradient(180deg, rgba(255,255,255,${(0.05 * po).toFixed(3)}), rgba(255,255,255,${(0.014 * po).toFixed(3)}))`);
+      root.style.setProperty('--surface-2', `linear-gradient(180deg, rgba(255,255,255,${(0.075 * po).toFixed(3)}), rgba(255,255,255,${(0.022 * po).toFixed(3)}))`);
       root.style.setProperty('--shadow-1', '0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.22)');
       root.style.setProperty('--shadow-2', '0 2px 6px rgba(0, 0, 0, 0.38), 0 10px 26px rgba(0, 0, 0, 0.32)');
       root.style.setProperty('--shadow-3', '0 10px 24px rgba(0, 0, 0, 0.46), 0 24px 56px rgba(0, 0, 0, 0.42)');
@@ -415,10 +490,14 @@ export const useAppearanceStore = defineStore('appearance', () => {
 
     // 5. 内容宽度
     root.style.setProperty('--content-max', `${contentWidth.value}px`);
+
+    // 6. 字体（系统字体栈，零体积、跨平台有回退）
+    const fp = FONT_PRESETS.find((f) => f.id === fontFamily.value);
+    root.style.setProperty('--font-sans', fp?.value || FONT_PRESETS[0].value);
   }
 
   async function load() {
-    const [bg, img, dim, po, ac, cw, th] = await Promise.all([
+    const [bg, img, dim, po, ac, cw, th, solid, font] = await Promise.all([
       store.getItem<string>('appearanceBackground'),
       store.getItem<string>('appearanceCustomImage'),
       store.getItem<number>('appearanceCustomDim'),
@@ -426,6 +505,8 @@ export const useAppearanceStore = defineStore('appearance', () => {
       store.getItem<string>('appearanceAccent'),
       store.getItem<number>('appearanceContentWidth'),
       store.getItem<string>('appearanceThemeId'),
+      store.getItem<string>('appearanceSolidColor'),
+      store.getItem<string>('appearanceFontFamily'),
     ]);
     background.value = bg ?? 'default';
     customImage.value = img ?? '';
@@ -434,6 +515,8 @@ export const useAppearanceStore = defineStore('appearance', () => {
     accent.value = ac ?? '#6ea8fe';
     contentWidth.value = cw ?? 1200;
     themeId.value = th ?? '';
+    solidColor.value = solid ?? '#f6f7f9';
+    fontFamily.value = font ?? 'system';
     apply();
   }
 
@@ -447,6 +530,8 @@ export const useAppearanceStore = defineStore('appearance', () => {
       store.setItem('appearanceAccent', accent.value),
       store.setItem('appearanceContentWidth', contentWidth.value),
       store.setItem('appearanceThemeId', themeId.value),
+      store.setItem('appearanceSolidColor', solidColor.value),
+      store.setItem('appearanceFontFamily', fontFamily.value),
     ]);
   }
 
@@ -507,9 +592,12 @@ export const useAppearanceStore = defineStore('appearance', () => {
   }
 
   // 任何一项变化都立即生效
-  watch([background, customImage, customImageDim, panelOpacity, accent, contentWidth], () => {
-    apply();
-  });
+  watch(
+    [background, customImage, customImageDim, panelOpacity, accent, contentWidth, solidColor, fontFamily],
+    () => {
+      apply();
+    },
+  );
 
   /*
    * 用户手动改了「背景 / 主色 / 面板透明度」→ 取消预设的选中态。
@@ -548,6 +636,8 @@ export const useAppearanceStore = defineStore('appearance', () => {
     accent,
     contentWidth,
     themeId,
+    solidColor,
+    fontFamily,
     load,
     save,
     apply,

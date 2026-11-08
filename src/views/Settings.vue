@@ -14,7 +14,7 @@ import { useStorageSettingsStore } from '../stores/storageSettings';
 import { useVariablesStore } from '../stores/variables';
 import { useAdventureStore } from '../stores/adventure';
 import { VARIABLE_MACRO_HELP, type VariableScope } from '../engine/variables';
-import { useAppearanceStore, BACKGROUND_PRESETS, ACCENT_PRESETS, THEME_PRESETS } from '../stores/appearance';
+import { useAppearanceStore, BACKGROUND_PRESETS, ACCENT_PRESETS, THEME_PRESETS, FONT_PRESETS } from '../stores/appearance';
 import { TAG_CATEGORIES, buildTagReference, searchImportedTags, parseTagLibrary } from '../engine/tagLibrary';
 import { testGithubConnection } from '../engine/githubStorage';
 import type { StoredApiConfig } from '../stores/apiConfig';
@@ -1855,6 +1855,20 @@ function toggleApiKey() {
           </button>
         </div>
 
+        <!--
+          自定义纯色背景：点上方「纯色」色块后这里出现取色器。
+          满足"白色底板换成任意颜色"——选完自动按亮度切黑/白字。
+        -->
+        <div class="row" style="margin-top: 8px;" v-if="appearance.background === 'solid'">
+          <div class="col">
+            <label>自定义底板颜色</label>
+            <div class="color-pick">
+              <input type="color" v-model="appearance.solidColor" @change="appearance.save()" />
+              <span class="mono">{{ appearance.solidColor }}</span>
+            </div>
+          </div>
+        </div>
+
         <div class="row" style="margin-top: 8px;">
           <div class="col">
             <label>自定义背景图（PNG / JPG / WebP）</label>
@@ -1896,6 +1910,18 @@ function toggleApiKey() {
             :style="{ background: a.value }" :title="a.name"
             @click="appearance.accent = a.value; appearance.save()"></button>
         </div>
+
+        <label class="block-label" style="margin-top: 12px;">字体</label>
+        <div class="chip-row">
+          <button v-for="f in FONT_PRESETS" :key="f.id" class="font-chip"
+            :class="{ active: appearance.fontFamily === f.id }"
+            :style="{ fontFamily: f.value }"
+            :title="f.name"
+            @click="appearance.fontFamily = f.id; appearance.save()">{{ f.name }}</button>
+        </div>
+        <p class="tip">
+          字体用系统字体栈切换（零体积、跨平台有回退）；切换后当前页即时预览，个别已渲染区块按需刷新。
+        </p>
       </div>
     </section>
 
@@ -3004,6 +3030,41 @@ function toggleApiKey() {
 .accent-chip.active {
   border-color: var(--text);
   box-shadow: 0 0 0 2px var(--accent);
+}
+/* 字体选择：胶囊文字按钮，与全局按钮语言一致（实心主色激活态） */
+.font-chip {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.font-chip:hover {
+  border-color: var(--accent);
+}
+.font-chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-2));
+  font-weight: 600;
+}
+/* 纯色背景取色器 */
+.color-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.color-pick input[type='color'] {
+  width: 46px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
 }
 .tag-cat-grid {
   display: grid;
