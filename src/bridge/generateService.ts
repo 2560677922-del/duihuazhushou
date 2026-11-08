@@ -29,6 +29,8 @@ import { assemblePrompt } from '../engine/assembler';
 import { readVariables } from '../engine/variables';
 import { collectPresetMessages } from '../engine/summaryPreset';
 import { streamChatCompletion } from '../engine/apiClient';
+import type { ToolRequestOptions } from '../engine/apiClient';
+import { loadSpresetRuntime } from '../engine/spresetRuntime';
 import { imageMarkerInstruction } from '../engine/imageMarker';
 import { flattenForEngine } from '../engine/regexGroups';
 import {
@@ -200,6 +202,12 @@ function toChatMessages(raw: { role: string; content: string }[]): ChatMessage[]
  * 正则是否作用于上下文）完全一致 —— 这些是"用户在资产页选了什么"，
  * 属于全局设置，两边共用同一份。
  */
+interface BuiltMessages {
+  messages: ChatMessage[];
+  /** 本次实际生效的预设原始对象，供 SPreset 运行时读取 extensions.SPreset */
+  presetRaw: any;
+}
+
 function buildMessages(
   history: ChatMessage[],
   userInput: string,
@@ -207,7 +215,7 @@ function buildMessages(
   imageMax: number,
   sessionId: string,
   assetBinding?: { worldBookIds?: string[]; presetId?: string; regexGroupIds?: string[] },
-): ChatMessage[] | null {
+): BuiltMessages | null {
   const assets = useAssetsStore();
   // 按对话绑定取资产：绑定 ∩ 资产页启用项。没绑定的对话跟随全局（旧行为）。
   // 资产页停用/删除后绑定自然失效（读不到就当没选）。
@@ -270,7 +278,7 @@ function buildMessages(
       content: tail.content + imageMarkerInstruction(true, imageMax),
     };
   }
-  return msgs;
+  return { messages: msgs, presetRaw };
 }
 
 async function generate(reqJson: string): Promise<void> {
@@ -335,7 +343,7 @@ async function generate(reqJson: string): Promise<void> {
     //   避免引擎重启 / 用户导入新预设后 getCurrentPreset() 猜错（重新生成拒答）。
     const binding = { ...((req as any).assetBinding || {}) } as any;
     if (!binding.presetId && req.presetId) binding.presetId = req.presetId;
-    const finalMessages = buildMessages(
+    const built = buildMessages(
       history,
       cleanInput,
       wantImage,
@@ -343,10 +351,11 @@ async function generate(reqJson: string): Promise<void> {
       sessionId,
       binding,
     );
-    if (!finalMessages) {
+    if (!built) {
       callNative('onGenError', requestId, '还没有启用预设，请先在「资产」里选一个');
       return;
     }
+    const { messages: finalMessages, presetRaw } = built;
 
     const cfg = nativeLlm() ?? useApiConfigStore().currentConfig;
     if (!cfg) {
@@ -356,6 +365,38 @@ async function generate(reqJson: string): Promise<void> {
     if (!cfg.apiKey) {
       callNative('onGenError', requestId, '对话 API 缺少 Key');
       return;
+    }
+
+    /*
+     * SPreset / Tavo 预设脚本运行时（可选层）。
+     *
+     * 只有预设带 extensions.SPreset 且脚本可执行时才启用：
+     *   · 请求前跑 FinalRequestProcessing → 注入 tools / tool_choice，
+     *     并把 messages 重写成预设要求的 few-shot 结构；
+     *   · 响应后把 tool_calls 交给 toolCallFormatter → 产出
+     *     <summary>/<options>/<comment> 等标签，交给已有显示正则渲染卡片。
+     * 没有 SPreset 的预设这里全部是 no-op，请求与旧版逐字节一致。
+     * 脚本任何一步失败都降级回原链路，不会让一段预设脚本把聊天搞崩。
+     */
+    const spreset = loadSpresetRuntime(presetRaw);
+    let toolOptions: ToolRequestOptions | undefined;
+    if (spreset.active && spreset.hasFinalRequest) {
+      const patch = spreset.applyRequest(
+        {
+          model: cfg.model,
+          temperature: cfg.temperature,
+          max_tokens: cfg.maxTokens,
+        },
+        finalMessages,
+      );
+      if (patch) {
+        toolOptions = {
+          tools: patch.tools,
+          toolChoice: patch.toolChoice,
+          rawMessages: patch.messages,
+        };
+        console.info('[gen][SPreset]', spreset.name, spreset.notes.join(' / '));
+      }
     }
 
     const controller = new AbortController();
@@ -369,14 +410,24 @@ async function generate(reqJson: string): Promise<void> {
           acc += delta;
           push(false);
         },
-        onDone: (text: string) => {
-          if (text) acc = text;
+        onDone: (text, _usage, toolCalls) => {
+          /*
+           * 工具调用模式下，模型的正文在 tool_calls 的结构化字段里，
+           * content 往往只有 <think> 草稿或干脆为空。用预设自带脚本把
+           * tool_calls 转成标签文本作为最终落盘内容 —— 显示正则需要的正是这些标签。
+           */
+          let finalText = text || '';
+          if (toolCalls && toolCalls.length && spreset.active && spreset.hasFormatter) {
+            finalText = spreset.formatToolCalls(toolCalls, finalText);
+          }
+          if (finalText) acc = finalText;
           running.delete(requestId);
           push(true);
           callNative('onGenDone', requestId, acc);
         },
       },
       controller.signal,
+      toolOptions,
     );
   } catch (e: any) {
     running.delete(requestId);

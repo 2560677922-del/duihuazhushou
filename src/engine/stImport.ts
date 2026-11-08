@@ -463,6 +463,15 @@ export function normalizePreset(raw: any): { value: any; notes: string[] } {
   //   tavern_helper  可能内嵌几十万字符的脚本（这份档案里有一个 304KB 的）
   // 留着既占空间又没意义（前端不执行 STscript），所以剥掉。
   // 顺带把任何超过 64KB 的扩展值也丢掉，避免预设文件把存储撑爆。
+  //
+  // ★ SPreset 例外（2026-11-09）：Tavo / SPreset 生态的预设把「整条生成
+  //   管线的脚本」放在 extensions.SPreset 里 —— FinalRequestProcessing 负责
+  //   组装工具调用（tools / tool_choice），OutputPreprocessing.toolCallFormatter
+  //   负责把模型返回的结构化字段包成 <summary>/<options>/<comment> 标签。
+  //   这些标签是显示正则（如「前端综合面板」）的输入，丢了就等于整个美化
+  //   面板不出现。SPreset 常带一份与 regex_scripts 重复的 RegexBinding，
+  //   单块就有 60KB+，早期会被 64KB 规则整块丢掉 —— 现在按白名单放行。
+  //   其余未知扩展仍受体积上限约束，避免预设文件把存储撑爆。
   if (out.extensions && typeof out.extensions === 'object') {
     const ext: Record<string, unknown> = { ...out.extensions };
     const hadRegex = Array.isArray(ext.regex_scripts) ? ext.regex_scripts.length : 0;
@@ -471,7 +480,13 @@ export function normalizePreset(raw: any): { value: any; notes: string[] } {
 
     const kept: Record<string, unknown> = {};
     let dropped = 0;
+    let keptSpreset = false;
     for (const [k, v] of Object.entries(ext)) {
+      if (k === 'SPreset' && v && typeof v === 'object') {
+        kept[k] = v;
+        keptSpreset = true;
+        continue;
+      }
       let size = 0;
       try {
         size = JSON.stringify(v)?.length ?? 0;
@@ -486,6 +501,7 @@ export function normalizePreset(raw: any): { value: any; notes: string[] } {
     }
     out.extensions = kept;
     if (hadRegex) notes.push(`预设内嵌的 ${hadRegex} 条正则已一并导入`);
+    if (keptSpreset) notes.push('已保留 SPreset 脚本扩展（工具调用 / 结构化输出）');
     if (dropped) notes.push(`另有 ${dropped} 个超大扩展数据已跳过（多为内嵌脚本）`);
   }
 
