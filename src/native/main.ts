@@ -55,13 +55,23 @@ async function boot(): Promise<void> {
    * assets / adventure / variables 是异步读盘（文件或 IndexedDB），
    * 不 await 的话第一次生成会拿着空预设、「建会话」甚至会把旧会话覆盖掉。
    * apiConfig 是同步读的，但配置桥要用，顺手 load 一次。
+   *
+   * 用 allSettled 而不是 all：某个 store 的盘坏了（比如一条脏数据）
+   * 不应该让整个引擎起不来 —— 那样用户看到的是「App 完全不能用」，
+   * 而实际情况只是某一类资产读不出来。失败的记日志，其余照常。
    */
-  await Promise.all([
-    useAssetsStore().load(),
-    useAdventureStore().load(),
-    useVariablesStore().load(),
-    useApiConfigStore().load(),
-  ]);
+  const stores: Array<[string, Promise<unknown>]> = [
+    ['assets', useAssetsStore().load()],
+    ['adventure', useAdventureStore().load()],
+    ['variables', useVariablesStore().load()],
+    ['apiConfig', useApiConfigStore().load()],
+  ];
+  const settled = await Promise.allSettled(stores.map(([, p]) => p));
+  settled.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      console.warn(`[引擎] ${stores[i][0]} 加载失败（其余照常）：`, r.reason);
+    }
+  });
 
   /*
    * 3) 装桥。顺序：先 __dhpNative（openCharacterChat 依赖它），

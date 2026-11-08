@@ -130,7 +130,6 @@ class AssetsHomeActivity : Activity() {
 
         when (tab) {
             TAB_CHARACTER -> {
-                val count = (a.optJSONArray("presets")?.length() ?: 0) // 占位避免误判
                 status.text = "角色卡的导入、浏览与启用在原生卡库"
                 box.addView(actionCard("🎭  打开角色卡库", "导入 .png / .json 卡 · 分段浏览设定 · 换当前角色") {
                     startActivity(
