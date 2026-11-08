@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      底部操作面板的进出动画。
+      单独开一个 style 而不是在代码里 setWindowAnimations(android.R.style.*)：
+      系统那套是"缩放淡入"，从屏幕中间弹出来，和底部面板的语义不符。
+    -->
+    <style name="SheetAnim" parent="@android:style/Animation.Dialog">
+        <item name="android:windowEnterAnimation">@anim/sheet_in</item>
+        <item name="android:windowExitAnimation">@anim/sheet_out</item>
+    </style>
+</resources>

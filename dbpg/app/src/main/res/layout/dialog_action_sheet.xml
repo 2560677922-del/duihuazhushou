@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  底部操作面板的骨架。
+
+  ★ 这里**不写任何颜色**：底色、文字色、图标底、按钮全部由
+    `chat/ActionSheet.kt` 按当前主题（ThemeTokens）着色。
+    以前的 dialog_chat_menu.xml 把 #FFFFFF / #1A2230 写死，深色主题下
+    弹出来就是一张白纸，和聊天界面完全两个世界 —— 这就是"出戏"的来源。
+
+  结构：把手 → 标题 → 可滚动的行区 → 取消按钮。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/sheet_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingTop="10dp"
+    android:paddingBottom="12dp">
+
+    <!-- 顶部的把手：告诉用户"这是可以下拉关掉的底部面板"，也是视觉上的呼吸位 -->
+    <View
+        android:id="@+id/sheet_handle"
+        android:layout_width="36dp"
+        android:layout_height="4dp"
+        android:layout_gravity="center_horizontal" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingTop="14dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="6dp">
+
+        <TextView
+            android:id="@+id/sheet_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/sheet_subtitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:textSize="11sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!--
+      ScrollView 没有 maxHeight，高度上限在代码里按屏幕 62% 卡（见 ActionSheet.show）。
+      不卡的话，主菜单十几条会把取消按钮顶出屏幕，用户只能按返回键。
+    -->
+    <ScrollView
+        android:id="@+id/sheet_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:overScrollMode="never"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/sheet_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="10dp"
+            android:paddingTop="2dp"
+            android:paddingEnd="10dp"
+            android:paddingBottom="2dp" />
+    </ScrollView>
+
+    <TextView
+        android:id="@+id/sheet_cancel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="18dp"
+        android:layout_marginTop="10dp"
+        android:layout_marginEnd="18dp"
+        android:gravity="center"
+        android:paddingTop="13dp"
+        android:paddingBottom="13dp"
+        android:text="取消"
+        android:textSize="14sp" />
+</LinearLayout>

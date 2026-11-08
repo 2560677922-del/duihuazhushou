@@ -2,22 +2,17 @@ package com.dbpg.duihuazhushou
 
 import android.app.Activity
 import android.app.AlertDialog
-import android.app.Dialog
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
-import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.util.Base64
-import android.view.LayoutInflater
 import android.view.View
-import android.view.Window
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.PopupMenu
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -25,6 +20,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.dbpg.duihuazhushou.appearance.Appearance
 import com.dbpg.duihuazhushou.appearance.AppearanceConfig
+import com.dbpg.duihuazhushou.chat.ActionSheet
 import com.dbpg.duihuazhushou.chat.ChatAdapter
 import com.dbpg.duihuazhushou.chat.ChatController
 import com.dbpg.duihuazhushou.chat.ChatItem
@@ -67,10 +63,6 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         /** ⋯ 菜单「出图参考图」选图 */
         private const val REQ_GEN_REF = 3102
 
-        private const val M_EDIT = 1
-        private const val M_REGEN = 2
-        private const val M_DELETE = 3
-        private const val M_BRANCH = 4
     }
 
     private lateinit var list: RecyclerView
@@ -341,7 +333,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         }
 
         override fun onActionMenu(item: ChatItem, anchor: View) {
-            showActionMenu(item, anchor)
+            showActionMenu(item)
         }
 
         override fun onImageGen(item: ChatItem) {
@@ -362,41 +354,78 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             )
         }
 
-        /** 点 AI 气泡：从这条分支（编号与跳转由 controller / onBranchCreated 处理）。 */
-        override fun onBranchFrom(item: ChatItem) {
-            controller.branchFrom(item.actionId)
-        }
     }
 
-    private fun showActionMenu(item: ChatItem, anchor: View) {
-        val popup = PopupMenu(this, anchor)
-        if (item.role == "user") {
-            popup.menu.add(0, M_EDIT, 0, "编辑这句")
-            popup.menu.add(0, M_DELETE, 1, "删除这句")
-        } else {
-            popup.menu.add(0, M_REGEN, 0, "重新生成")
-            popup.menu.add(0, M_EDIT, 1, "编辑这条回复")
-            popup.menu.add(0, M_BRANCH, 2, "从这条分出新会话（含本条）")
-            popup.menu.add(0, M_DELETE, 3, "删除这条回复")
-        }
-        popup.setOnMenuItemClickListener { mi ->
-            when (mi.itemId) {
-                M_EDIT -> if (item.role == "user") editText("编辑你的话", item.content) {
-                    controller.editUser(item.actionId, it)
-                } else editText("编辑这条回复", item.content) {
-                    controller.editAi(item.actionId, it)
-                }
-                M_REGEN -> controller.regenerate(item.actionId)
-                M_BRANCH -> controller.branchFrom(item.actionId)
-                M_DELETE -> if (item.role == "user") {
+    /**
+     * 单条消息的操作面板。
+     *
+     * 以前是系统 `PopupMenu`：白色小窗、一行纯文字、没有说明，深色主题下特别出戏。
+     * 现在走 [ActionSheet]，和聊天界面同一套配色与圆角。
+     */
+    private fun showActionMenu(item: ChatItem) {
+        val isUser = item.role == "user"
+        val items = if (isUser) {
+            listOf(
+                ActionSheet.Item("✏️", "编辑这句话", "改完会立刻用于后续生成") {
+                    editText("编辑你的话", item.content) { controller.editUser(item.actionId, it) }
+                },
+                ActionSheet.Item("🗑️", "删除这句", "这条和它对应的 AI 回复一起删", danger = true) {
                     controller.deleteUser(item.actionId)
-                } else {
+                },
+            )
+        } else {
+            listOf(
+                ActionSheet.Item("🔄", "重新生成", "让 AI 重写这条，旧版留在「‹ ›」里") {
+                    controller.regenerate(item.actionId)
+                },
+                ActionSheet.Item("✏️", "编辑这条回复", "手动改字，改完立刻生效") {
+                    editText("编辑这条回复", item.content) { controller.editAi(item.actionId, it) }
+                },
+                ActionSheet.Item("🎨", "给这条配图", "以这条和上文为参考出一张图") {
+                    promptImageGenFor(item)
+                },
+                ActionSheet.Item("🌿", "从这里分出新会话", "复制到这条（含）另开一条线，原会话不动") {
+                    confirmBranch(item)
+                },
+                ActionSheet.Item("🗑️", "删除这条回复", "只删 AI 这一侧，你那句话还在", danger = true) {
                     controller.deleteAi(item.actionId)
-                }
-            }
-            true
+                },
+            )
         }
-        popup.show()
+        val who = when {
+            isUser -> "你的发言"
+            item.role == "system" -> "系统提示"
+            else -> "角色回复"
+        }
+        ActionSheet.show(
+            this,
+            appearance,
+            title = "消息操作",
+            subtitle = "$who · ${item.content.length} 字",
+            sections = listOf(ActionSheet.Section(items = items)),
+        )
+    }
+
+    /**
+     * 分支前的二次确认。
+     *
+     * 分支会**跳到一个新会话**，误触的代价是"聊着聊着突然换了对话"，
+     * 而且新会话会留在列表里。所以这里多问一句，把"复制几条、原会话不动"
+     * 说清楚 —— 比事后去会话列表删掉一条便宜得多。
+     */
+    private fun confirmBranch(item: ChatItem) {
+        val d = controller?.doc ?: return
+        val idx = d.actions.indexOfFirst { it.id == item.actionId }
+        val count = if (idx >= 0) idx + 1 else 0
+        ActionSheet.confirm(
+            this,
+            appearance,
+            title = "从这里分出新会话？",
+            message = "会复制前 $count 条消息（含这一条）到新会话，标题自动加编号避免重名。\n" +
+                "原会话保持不动，随时可以返回。",
+            okText = "分出新会话",
+            onOk = { controller.branchFrom(item.actionId) },
+        )
     }
 
     /** 简单文本编辑弹窗（原生，不用 WebView 的 prompt）。 */
@@ -475,6 +504,8 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         val icon: String,
         val title: String,
         val desc: String,
+        /** 危险操作（删除会话）用红字，避免和普通项长一样 */
+        val danger: Boolean = false,
         val action: () -> Unit,
     )
 
@@ -514,7 +545,9 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         }
         if (sid.isNotBlank()) {
             sessionItems.add(
-                MenuEntry("🗑️", "删除会话", "连同全部消息一起删除，不可恢复") { confirmDeleteSession(sid) },
+                MenuEntry("🗑️", "删除会话", "连同全部消息一起删除，不可恢复", danger = true) {
+                    confirmDeleteSession(sid)
+                },
             )
         }
         val sections = listOf(
@@ -537,44 +570,22 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             ),
         )
 
-        val dialog = Dialog(this)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        val view = LayoutInflater.from(this).inflate(R.layout.dialog_chat_menu, null)
-        dialog.setContentView(view)
-        // 系统默认白底方角会盖住自定义圆角，必须显式设透明
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        dialog.window?.setLayout(
-            (resources.displayMetrics.widthPixels * 0.9f).toInt(),
-            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-        )
-
         val title = controller?.doc?.title.orEmpty()
-        view.findViewById<TextView>(R.id.menu_subtitle).text =
-            if (title.isEmpty()) "当前会话"
-            else if (title.length > 10) title.take(10) + "…" else title
-        val box = view.findViewById<LinearLayout>(R.id.menu_container)
-        for ((section, entries) in sections) {
-            box.addView(TextView(this).apply {
-                text = section
-                textSize = 11f
-                setTextColor(0xFF8A94A6.toInt())
-                setPadding(dp(4), dp(8), 0, dp(2))
-            })
-            for (e in entries) {
-                val row = LayoutInflater.from(this@NativeChatActivity)
-                    .inflate(R.layout.item_chat_menu, box, false)
-                row.findViewById<TextView>(R.id.menu_icon).text = e.icon
-                row.findViewById<TextView>(R.id.menu_title).text = e.title
-                row.findViewById<TextView>(R.id.menu_desc).text = e.desc
-                row.setOnClickListener {
-                    dialog.dismiss()
-                    e.action()
-                }
-                box.addView(row)
-            }
-        }
-        view.findViewById<TextView>(R.id.menu_cancel).setOnClickListener { dialog.dismiss() }
-        dialog.show()
+        ActionSheet.show(
+            this,
+            appearance,
+            title = "会话操作",
+            subtitle = if (title.isEmpty()) "当前会话"
+            else if (title.length > 10) title.take(10) + "…" else title,
+            sections = sections.map { (label, entries) ->
+                ActionSheet.Section(
+                    label,
+                    entries.map { e ->
+                        ActionSheet.Item(e.icon, e.title, e.desc, e.danger) { e.action() }
+                    },
+                )
+            },
+        )
     }
 
     /**
@@ -957,22 +968,24 @@ class NativeChatActivity : Activity(), ChatController.Sink {
      */
     private fun confirmDeleteSession(id: String) {
         val title = controller?.doc?.title.orEmpty().ifBlank { "当前会话" }
-        android.app.AlertDialog.Builder(this)
-            .setTitle("删除会话")
-            .setMessage("「$title」及其全部消息会被删除，此操作不可恢复。")
-            .setPositiveButton("删除") { _, _ ->
-                ChatBackground.clear(this, id)
-                com.dbpg.duihuazhushou.session.SessionRepo.delete(id) { ok ->
-                    if (ok) {
-                        toast("已删除")
-                        finish()
-                    } else {
-                        toast("删除失败")
-                    }
+        ActionSheet.confirm(
+            this,
+            appearance,
+            title = "删除这个会话？",
+            message = "「$title」及其全部消息会被删除，不可恢复。",
+            okText = "删除",
+            danger = true,
+        ) {
+            ChatBackground.clear(this, id)
+            com.dbpg.duihuazhushou.session.SessionRepo.delete(id) { ok ->
+                if (ok) {
+                    toast("已删除")
+                    finish()
+                } else {
+                    toast("删除失败")
                 }
             }
-            .setNegativeButton("取消", null)
-            .show()
+        }
     }
 
     private fun dp(v: Int): Int = Math.round(v * resources.displayMetrics.density)

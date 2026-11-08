@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 关闭时略快：用户已经做了决定，不需要再看一遍动画。 -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:interpolator/accelerate_cubic">
+    <translate
+        android:duration="150"
+        android:fromYDelta="0"
+        android:toYDelta="100%p" />
+    <alpha
+        android:duration="120"
+        android:fromAlpha="1.0"
+        android:toAlpha="0.6" />
+</set>
