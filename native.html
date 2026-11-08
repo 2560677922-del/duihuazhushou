@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0d1018" />
+    <title>引擎</title>
+    <!--
+      这是 APK 里的页面：**只加载引擎，不加载任何界面**。
+
+      为什么不复用 index.html：
+        网页版入口要 mount Vue App、挂 router、加载全部 views/components，
+        而 APK 的原生界面完全不需要这些 —— 那些代码只会拖慢低端机冷启动
+        （解析 JS、建 DOM、跑布局）。这里只保留 store + engine + bridge。
+
+      网页版仍在 index.html，两者共用 src/ 下的引擎层，互不影响。
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0d1018;
+        color: #8a94a6;
+        font: 13px/1.6 system-ui, -apple-system, sans-serif;
+      }
+      #engine-status {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 6px 12px;
+        font-size: 11px;
+        opacity: 0.55;
+        pointer-events: none;
+        transition: opacity 0.3s;
+      }
+      #engine-status.ready {
+        opacity: 0;
+      }
+      #engine-status.error {
+        color: #ff8a8a;
+        opacity: 1;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="engine-status">引擎启动中…</div>
+    <script type="module" src="/src/native/main.ts"></script>
+  </body>
+</html>

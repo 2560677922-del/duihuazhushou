@@ -33,7 +33,7 @@ import java.util.Set;
 /**
  * 唯一的 Activity：一个全屏 WebView 加载打包在 APK 里的 Web 版本。
  *
- * <p>页面来源：{@code https://dbpg.local/index.html}。域名是虚构的，请求在
+ * <p>页面来源：{@code https://dbpg.local/native.html}（只跑引擎，不含界面）。域名是虚构的，请求在
  * {@link AppWebViewClient#shouldInterceptRequest} 里被拦下来，直接读
  * {@code assets/www/} 下的文件返回，全程不联网。
  *
@@ -59,7 +59,7 @@ public final class MainActivity extends Activity {
 
     /** 应用自己的虚构域名。assets/www/ 被映射到这个域名的根。 */
     private static final String HOST = "dbpg.local";
-    private static final String APP_URL = "https://" + HOST + "/index.html";
+    private static final String APP_URL = "https://" + HOST + "/native.html";
     /** assets 里 Web 资源的子目录 */
     private static final String ASSETS_WEB = "www";
 
@@ -388,7 +388,7 @@ public final class MainActivity extends Activity {
             if (scheme == null || !scheme.equals("https") || !HOST.equals(host)) return null;
 
             String path = uri.getPath();
-            if (path == null || path.isEmpty() || path.equals("/")) path = "/index.html";
+            if (path == null || path.isEmpty() || path.equals("/")) path = "/native.html";
             if (!path.startsWith("/")) return null;
             path = path.substring(1);
             if (path.contains("..") || path.startsWith("/")) return null;   // 拒绝目录穿越
@@ -427,8 +427,8 @@ public final class MainActivity extends Activity {
                     ? String.valueOf(error.getErrorCode())
                     : error.getDescription().toString();
             Log.e(TAG, "主框架加载失败: " + desc);
-            showError("应用加载失败：" + desc + "\n\n通常是 Web 版本还没构建，\n"
-                    + "请在上一级目录执行 npm run build，再重新打包。\n\n点一下重试");
+            showError("应用加载失败：" + desc + "\n\n通常是引擎还没构建，\n"
+                    + "请在上一级目录执行 npm run build:native，再重新打包。\n\n点一下重试");
         }
 
         @Override

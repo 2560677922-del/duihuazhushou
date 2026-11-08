@@ -2,10 +2,43 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import { VitePWA } from 'vite-plugin-pwa';
 import { fileURLToPath, URL } from 'node:url';
+import fs from 'node:fs';
 import { persistPlugin } from './vite-plugins/local-persist';
 
-export default defineConfig({
-  plugins: [
+/**
+ * 引擎构建只带「原生真的会读」的静态资源。
+ *
+ * public/ 里 3.2MB：tags 是原生标签库（TagLibrary.kt 直接读 assets/www/tags），
+ * 必须留；bg/ 与 splash 只有网页版界面用，原生背景走自己的 res，带了也是白占安装包。
+ */
+function copyNativeStatic() {
+  return {
+    name: 'copy-native-static',
+    apply: 'build' as const,
+    closeBundle() {
+      const from = fileURLToPath(new URL('./public/tags', import.meta.url));
+      const to = fileURLToPath(new URL('./dist-native/tags', import.meta.url));
+      fs.cpSync(from, to, { recursive: true });
+    },
+  };
+}
+
+export default defineConfig(({ mode }) => {
+  /*
+   * 两套构建，共用同一份 src/：
+   *
+   *   npm run build          → dist/         网页版（index.html，完整 UI）
+   *   npm run build:native   → dist-native/  APK 引擎（native.html，无 UI）
+   *
+   * APK 只需要引擎，不需要 Vue 应用。把界面排除在构建之外（而不是运行时
+   * 判断），低端机冷启动不用解析/执行整套 views —— 这是「裁 web UI」的落点。
+   */
+  const nativeBuild = mode === 'native';
+
+  return {
+  plugins: nativeBuild
+    ? [copyNativeStatic()]
+    : [
     vue(),
     // 开发服务器本地落盘：配置/资产存到 data/app-data.json，启动自动读回
     persistPlugin(),
@@ -45,6 +78,25 @@ export default defineConfig({
       },
     }),
   ],
+  /*
+   * APK 构建只出 native.html 一个入口。
+   * 单入口 + 无动态 import → 产物就是「入口 js + 引擎依赖」，没有路由分包。
+   */
+  build: nativeBuild
+    ? {
+        outDir: 'dist-native',
+        emptyOutDir: true,
+        target: 'es2020',
+        rollupOptions: {
+          input: { native: fileURLToPath(new URL('./native.html', import.meta.url)) },
+        },
+      }
+    : {},
+  /*
+   * 引擎构建关掉 public 自动拷贝：那 3.2MB 里 1.1MB 是网页背景图、128KB 是 PWA 图标，
+   * 原生一个都不读。只由 copyNativeStatic 补回 tags/。
+   */
+  publicDir: nativeBuild ? false : 'public',
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -82,4 +134,5 @@ export default defineConfig({
       ignored: ['**/scripts/**', '**/data/**', '**/dbpg/**'],
     },
   },
+  };
 });

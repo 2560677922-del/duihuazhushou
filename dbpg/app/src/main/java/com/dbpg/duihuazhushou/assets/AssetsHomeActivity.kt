@@ -1431,32 +1431,35 @@ class AssetsHomeActivity : Activity() {
     private fun onApiResult(json: String) {
         try {
             val obj = JSONObject(json)
-            when (obj.optString("kind")) {
-                "setAssets" -> {
-                    if (obj.optBoolean("ok")) load() else toast("切换失败：${obj.optString("error")}")
-                }
-                "wbSaveEntry", "wbAddEntry", "wbRemoveEntry", "wbRename",
-                "presetSavePrompt", "presetAddPrompt", "presetRemovePrompt", "presetRename",
-                "regexSaveScript", "regexAddScript", "regexRemoveScript", "regexRename" -> {
-                    if (obj.optBoolean("ok")) load()
-                    else toast("操作失败：${obj.optString("error")}")
-                }
-                "importAsset" -> {
-                    if (obj.optBoolean("ok")) {
+            val kind = obj.optString("kind")
+            val ok = obj.optBoolean("ok")
+            /*
+             * 不再维护「命令名 → 是否刷新」白名单。
+             *
+             * 以前每加一条命令（比如这次的三条改名），都要回来这里补一次名字，
+             * 漏了就是「保存成功但列表不动」，而且编译完全通过。资产页发出的
+             * 命令只有两种非重载语义（导入要提示数量、导出要拿 JSON），其余
+             * 一律「成功即重载」，默认分支兜住，新增命令零维护。
+             */
+            when {
+                kind == "importAsset" -> {
+                    if (ok) {
                         toast("已导入 ${obj.optInt("imported", 0)} 项")
                         load()
                     } else {
                         toast("导入失败：${obj.optString("error")}")
                     }
                 }
-                "exportAsset" -> {
-                    if (obj.optBoolean("ok")) {
+                kind == "exportAsset" -> {
+                    if (ok) {
                         pendingExportJson = obj.optString("json")
                         createExportFile(obj.optString("name").ifBlank { "asset" })
                     } else {
                         toast("导出失败：${obj.optString("error")}")
                     }
                 }
+                ok -> load()
+                else -> toast("操作失败：${obj.optString("error")}")
             }
         } catch (_: Throwable) {
         }

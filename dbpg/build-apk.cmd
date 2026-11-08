@@ -45,7 +45,7 @@ exit /b 1
 :sdk_ok
 echo.
 REM ---------------------------------------------------------------- 2. Web
-echo [1/3] 构建 Web 版本（在上一级目录执行 npm run build）...
+echo [1/3] 构建 Web 版本（在上一级目录执行 npm run build:native）...
 cd /d "%~dp0\.."
 where node >nul 2>nul
 if errorlevel 1 (
@@ -53,10 +53,10 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-call npm run build
+call npm run build:native
 if errorlevel 1 (
     echo.
-    echo [错误] Web 版本构建失败，请到上一级目录单独跑 npm run build 看具体报错。
+    echo [错误] Web 版本构建失败，请到上一级目录单独跑 npm run build:native 看具体报错。
     pause
     exit /b 1
 )

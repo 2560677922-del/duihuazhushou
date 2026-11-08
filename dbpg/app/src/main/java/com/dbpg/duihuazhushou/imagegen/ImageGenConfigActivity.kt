@@ -523,6 +523,10 @@ class ImageGenConfigActivity : Activity() {
                     }
                 }
                 "imgSaveConn" -> if (!ok) status.text = "保存失败：${obj.optString("error")}"
+                // 兜底：新增命令忘了登记分支时也能刷新，而不是静默无反应
+                else -> {
+                    if (ok) load() else status.text = "操作失败：${obj.optString("error")}"
+                }
             }
         } catch (t: Throwable) {
             status.text = "结果解析失败：${t.message}"

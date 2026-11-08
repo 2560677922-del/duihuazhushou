@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAssetsStore } from '../stores/assets';
+import { openCharacterChat } from '../bridge/characterEntry';
 import { useApiConfigStore } from '../stores/apiConfig';
 import { useAdventureStore } from '../stores/adventure';
 import { assemblePrompt } from '../engine/assembler';
@@ -638,41 +639,10 @@ onMounted(async () => {
     /*
      * 原生角色卡库点「用它开聊」时走这里。
      *
-     * 原生只负责读文件、解析 PNG/JSON，拿到的是标准 V2 JSON；
-     * 建档、选中、建会话这些仍由网页 store 做（单一数据源，避免两套角色库）。
-     * 建完会话后主动拉起原生聊天，用户点一下卡就直接进对话。
+     * 实现已抽到 bridge/characterEntry.ts —— 引擎模式下（APK 不加载界面）
+     * 同一个函数由 native 入口挂上去，两边共用一份，不会各写一遍再漂。
      */
-    useCharacter: async (rawJson: string) => {
-      try {
-        const raw = JSON.parse(rawJson);
-        const name = (raw?.data?.name ?? raw?.name ?? '').toString().trim();
-
-        /*
-         * 按名字去重。
-         *
-         * 原生角色库每次点「用它开聊」都会把卡发过来；如果直接 import，
-         * 同一张卡会被重复建档，用几次角色库就变成一列同名副本。
-         * 同名直接复用已有条目（角色卡本身不合并、不覆盖）。
-         */
-        let obj = name ? assets.characters.find((c: any) => c?.name === name) : undefined;
-        if (!obj) obj = await assets.importCharacter(raw);
-
-        assets.currentCharacterId = obj._uid;
-        await assets.save();
-        await adventure.addSession(obj.name || '新的冒险', '');
-        /*
-         * 走统一入口，不要在这里凭空调 AndroidNative.openNativeChat('')。
-         * 以前传空串，原生解析不出 sessionId 就直接 finish() ——
-         * 用户看到的就是"点了角色卡，闪一下又回来了"。
-         */
-        const bridge = (window as any).__dhpNative;
-        if (bridge && typeof bridge.openNativeChat === 'function') {
-          bridge.openNativeChat();
-        }
-      } catch (e) {
-        console.error('原生角色卡导入失败', e);
-      }
-    },
+    useCharacter: (rawJson: string) => openCharacterChat(rawJson),
   };
 
   /*

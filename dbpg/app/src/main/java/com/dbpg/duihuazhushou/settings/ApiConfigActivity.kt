@@ -598,6 +598,14 @@ class ApiConfigActivity : Activity() {
                         status.text = "保存失败：${obj.optString("error")}"
                     }
                 }
+                /*
+                 * 兜底：新增命令即使忘了在上面写分支，也不至于「点了没反应」。
+                 * 以前每个命令都要在这里登记一次，漏了就静默失败 —— 这是
+                 * 本页面最容易出的 bug，而且编译期完全看不出来。
+                 */
+                else -> {
+                    if (ok) loadConfig() else status.text = "操作失败：${obj.optString("error")}"
+                }
             }
         } catch (t: Throwable) {
             status.text = "结果解析失败：${t.message}"

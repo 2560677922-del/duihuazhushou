@@ -95,7 +95,12 @@ dependencies {
 // 注意：这里只读 ../dist，不改动 Web 工程里任何文件。
 // ---------------------------------------------------------------------------
 
-val distDir: File = rootProject.file("../dist")
+// APK 只用引擎产物（dist-native，无界面）；网页版仍是 ../dist。
+// 回退到 ../dist 只为兼容"还没跑 build:native"的老流程，patchWebIndex 会明确报错。
+val distNativeDir: File = rootProject.file("../dist-native")
+val distDir: File =
+    if (File(distNativeDir, "native.html").exists()) distNativeDir
+    else rootProject.file("../dist")
 val wwwDir: File = file("src/main/assets/www")
 val vendorDir: File = file("src/main/assets/vendor")
 
@@ -113,10 +118,11 @@ val patchWebIndex = tasks.register("patchWebIndex") {
     dependsOn(syncWeb)
 
     doLast {
-        val index = File(wwwDir, "index.html")
+        // 引擎入口是 native.html（无界面）。index.html 是网页版，不进 APK。
+        val index = File(wwwDir, "native.html")
         if (!index.exists()) {
-            error("找不到 " + distDir + "/index.html\n" +
-                  "        请先在上一级目录执行：npm run build\n" +
+            error("找不到 " + distDir + "/native.html\n" +
+                  "        请先在上一级目录执行：npm run build:native\n" +
                   "        （或者直接双击 dbpg/build-apk.cmd 一键完成）")
         }
         val shim = File(vendorDir, "capacitor-compat.js")
@@ -129,7 +135,7 @@ val patchWebIndex = tasks.register("patchWebIndex") {
 
         val html = index.readText()
         if (html.contains("capacitor-compat.js")) {
-            logger.lifecycle("[web] index.html 已含原生桥接，跳过注入")
+            logger.lifecycle("[web] native.html 已含原生桥接，跳过注入")
             return@doLast
         }
 
@@ -142,12 +148,12 @@ val patchWebIndex = tasks.register("patchWebIndex") {
         // 会被解析成 (CharSequence, String) 导致编译失败，所以直接用 find + 字符串拼接。
         val headOpen = Regex("<head[^>]*>").find(html)
         if (headOpen == null) {
-            error("没有在 index.html 里找到 <head>，无法注入 import map")
+            error("没有在 native.html 里找到 <head>，无法注入 import map")
         }
         val cut = headOpen.range.last + 1
         val patched = html.substring(0, cut) + "\n" + inject + html.substring(cut)
         index.writeText(patched)
-        logger.lifecycle("[web] 已注入原生桥接垫片 -> assets/www/index.html")
+        logger.lifecycle("[web] 已注入原生桥接垫片 -> assets/www/native.html")
     }
 }
 

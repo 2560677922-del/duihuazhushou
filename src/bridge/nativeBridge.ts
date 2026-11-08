@@ -182,8 +182,14 @@ function injectEntryButton(): void {
   document.body.appendChild(btn);
 }
 
-/** 在 app 启动后调用（见 main.ts）。 */
-export function installNativeBridge(): void {
+/**
+ * 在 app 启动后调用（见 src/main.ts 与 src/native/main.ts）。
+ *
+ * @param opts.injectButton 是否注入「原生聊天」浮动按钮。
+ *   网页版需要这个入口；引擎模式（APK）没有界面，传 false，
+ *   否则会往一个不存在的 body 上挂按钮、还白跑 8 秒轮询。
+ */
+export function installNativeBridge(opts: { injectButton?: boolean } = {}): void {
   (window as any).__dhpNative = {
     getSnapshot,
     getSessions,
@@ -191,6 +197,7 @@ export function installNativeBridge(): void {
     openNativeChat: openNativeChatCurrent,
     isNativeAvailable,
   };
+  if (opts.injectButton === false) return;
   // WebView 注入 AndroidNative 略晚于页面脚本执行，轮询一小会儿确保按钮出现
   let tries = 0;
   const timer = setInterval(() => {
