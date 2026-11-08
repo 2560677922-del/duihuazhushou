@@ -344,6 +344,7 @@ class AssetsHomeActivity : Activity() {
                         }
                     },
                     { exportAsset(id) },
+                    { confirmDeleteAsset("preset", id, name, prompts.length()) },
                 )
                 true
             }
@@ -683,6 +684,7 @@ class AssetsHomeActivity : Activity() {
                         }
                     },
                     { exportAsset(id) },
+                    { confirmDeleteAsset("regexGroup", id, name, scripts.length()) },
                 )
                 true
             }
@@ -1157,6 +1159,7 @@ class AssetsHomeActivity : Activity() {
                             }
                         },
                         { exportAsset(id) },
+                        { confirmDeleteAsset("worldBook", id, name, entries.length()) },
                     )
                     true
                 }
@@ -1499,20 +1502,51 @@ class AssetsHomeActivity : Activity() {
     }
 
     /**
-     * 组头长按菜单：重命名 / 导出。
+     * 组头长按菜单：重命名 / 导出 / 删除。
      *
      * 之前长按直接导出，改名没有入口 —— 预设、正则、世界书这三类都缺。
-     * 统一成一个菜单，顺手把世界书「长按导出」的文案补上实际行为。
+     * 顺手补齐第三项：这三类「整项删除」此前完全没有入口，只有子条目能删，
+     * 而数据层的 removePreset / removeWorldBook / removeRegexGroup 早就写好了，
+     * 只是桥接层一直没注册整项删除命令，属于死代码（见 §22）。
      */
-    private fun assetMenu(title: String, onRename: () -> Unit, onExport: () -> Unit) {
+    private fun assetMenu(
+        title: String,
+        onRename: () -> Unit,
+        onExport: () -> Unit,
+        onDelete: () -> Unit,
+    ) {
         AlertDialog.Builder(this)
             .setTitle(title)
-            .setItems(arrayOf("重命名", "导出 JSON")) { _, which ->
+            .setItems(arrayOf("重命名", "导出 JSON", "删除")) { _, which ->
                 when (which) {
                     0 -> onRename()
                     1 -> onExport()
+                    2 -> onDelete()
                 }
             }
+            .show()
+    }
+
+    /** 整项删除的二次确认：说清会连带删掉多少子条目，避免误删几十条。 */
+    private fun confirmDeleteAsset(kind: String, id: String, name: String, count: Int) {
+        val label = when (kind) {
+            "preset" -> "预设"
+            "regexGroup" -> "正则组"
+            else -> "世界书"
+        }
+        AlertDialog.Builder(this)
+            .setTitle("删除$label")
+            .setMessage(
+                "「$name」及其 $count 条子条目将被删除，不可恢复。\n" +
+                    "若已启用，会自动取消选中。",
+            )
+            .setPositiveButton("删除") { _, _ ->
+                EngineBridge.command(
+                    JSONObject().put("cmd", "assetRemove")
+                        .put("kind", kind).put("id", id),
+                )
+            }
+            .setNegativeButton("取消", null)
             .show()
     }
 

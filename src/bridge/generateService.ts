@@ -1430,6 +1430,37 @@ async function apiCommand(raw: string): Promise<void> {
         await a.save();
         break;
       }
+      /**
+       * 整项删除：预设 / 世界书 / 正则组 / 角色卡。
+       *
+       * store 里的 remove* action 早已写好（会顺带清掉 current* 选中态），
+       * 但此前桥接层从未注册整项删除命令，UI 也没有入口 —— 只有子条目
+       * 的 presetRemovePrompt / wbRemoveEntry / regexRemoveScript 能用。
+       * 这里用一个通用命令收口，kind 由原生组头传入，不硬编码任何资产名。
+       */
+      case 'assetRemove': {
+        const a = useAssetsStore();
+        const uid = String(req.id || '');
+        const kind = String(req.kind || '');
+        if (!uid) throw new Error('缺少资产 id');
+        switch (kind) {
+          case 'preset':
+            await a.removePreset(uid);
+            break;
+          case 'worldBook':
+            await a.removeWorldBook(uid);
+            break;
+          case 'regexGroup':
+            await a.removeRegexGroup(uid);
+            break;
+          case 'character':
+            await a.removeCharacter(uid);
+            break;
+          default:
+            throw new Error(`未知资产类型：${kind}`);
+        }
+        break;
+      }
 
       default:
         throw new Error(`未知命令：${cmd}`);
