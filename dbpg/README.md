@@ -72,7 +72,7 @@ dbpg/                           Android 工程（本仓库）
 ├─ build-apk.cmd                一键：npm run build → syncWeb → assembleDebug
 ├─ settings.gradle.kts          include(":app", ":stcore")
 ├─ README.md                    本文件
-├─ docs/                        架构 / 避坑 / 兼容性 / 验证 / 改动记录
+├─ docs/                        架构 / 避坑 / 兼容性 / 灵感方向 / 验证 / 改动记录
 ├─ stcore/                      纯 Kotlin 引擎（218 个单测）
 │  └─ src/main/java/com/dbpg/stcore/
 │     ├─ RegexEngine.kt         正则语义（与 ST 对齐 + 两处刻意不同）
@@ -211,6 +211,7 @@ App 内还有两个自查入口：
 | [`docs/架构.md`](docs/架构.md) | 三层边界、渲染链路、插件契约、存储布局、线程模型 |
 | [`docs/预设兼容性.md`](docs/预设兼容性.md) | ST/Tavo 字段覆盖表、两处刻意差异、已知边界、扩展方法 |
 | [`docs/避坑清单.md`](docs/避坑清单.md) | 按主题的 30 条「现象 → 原因 → 解法」 |
+| [`docs/灵感方向.md`](docs/灵感方向.md) | 做新功能前先看谁做过：ST 官方 → 插件源码 → 同类客户端 → 通用库 |
 | [`docs/验证与实验台.md`](docs/验证与实验台.md) | 单测、自检、`st-lab` 脚本、真机验证清单 |
 | [`docs/改动记录.md`](docs/改动记录.md) | 33 节完整流水（含每次实测截图/探针数据） |
 
