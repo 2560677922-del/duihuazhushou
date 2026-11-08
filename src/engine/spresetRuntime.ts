@@ -5,19 +5,25 @@
  * ---------------------------------------------------------------------------
  * Meowssiah 这类 Tavo 预设的「底部可折叠摘要 / 行动选项」不是靠显示正则凭空
  * 生成的：显示正则（如「前端综合面板」）只认 `<options>` / `<summary>` /
- * `<comment>` 这些标签。而标签是**模型用工具调用返回的结构化字段**，再由预设
- * 自带的脚本包成标签的：
+ * `<comment>` 这些标签。标签有两个来源：
  *
- *   模型输出(tool_calls)
- *     └─ OutputPreprocessing.toolCallFormatter  → `<summary>…</summary>` 等标签
- *         └─ 显示正则「前端综合面板」           → 整页 HTML 卡片
- *             └─ WebView / iframe                → 美化折叠面板
+ *   ① 主路径（默认）：预设提示词本身写着「正文用 <game> 包上」「用 <summary>
+ *      包住」「在 <comment> 里放留言」「<options><option>…</option></options>」，
+ *      **模型直接吐标签** → 显示正则 → 整页 HTML 卡片 → WebView / iframe。
+ *   ② 可选路径：模型用 tool_calls 返回结构化字段，由
+ *      OutputPreprocessing.toolCallFormatter 包成同样的标签 → 同一条渲染链路。
  *
- * 同时，请求也不是直接把组装好的 messages 发出去：预设的
- * `FinalRequestProcessing` 会在请求前扫描消息里的 `<<<|catgodml|…>>>` 指令、
- * 剥离宏、动态拼出工具 schema、注入 `tools` / `tool_choice`，甚至把整段 messages
- * 重写成 few-shot 结构。少了这一层，模型根本不会返回 tool_calls，底部面板自然
- * 永远不出现 —— 这就是之前「正则开了却没生效」的真正原因。
+ * 2026-11-09 修订（重要）：第一版误判「非得靠 ② 才有标签」，于是执行
+ * FinalRequestProcessing 把 35 条 system 提示词整段替换成 8 条 few-shot，并
+ * 强制 tool_choice=required。结果角色设定只剩 context 工具描述里一份，模型
+ * 拿不到上下文，直接按 Gemini 默认身份拒答（用户实测：「我是 Gemini…无法
+ * 继续参与这个设定…也没有名为 soliumbra_reply 的工具可以调用」）。
+ *
+ * 现在默认走 ①：保留全部提示词，只用 stripPrivateDirectives 剥掉 Tavo 私有
+ * 指令宏（<<<|catgodml|…>>> / <run_tool_replacement> / <|sep|> / <|merge|>），
+ * 不注入 tools、不强制 tool_choice、不改写 messages。这些宏是给预设脚本用的，
+ * 原样发给模型会污染提示词 —— 这才是当初「正则开了却没生效」的真正原因。
+ * applyRequest / formatToolCalls 保留为可选能力，默认不介入请求。
  *
  * 为什么是「通用运行时」而不是针对性补丁
  * ---------------------------------------------------------------------------
@@ -216,6 +222,102 @@ function noopRuntime(): SpresetRuntime {
 }
 
 /**
+ * 找出预设里的 SPreset 配置，含「内嵌备份」自愈。
+ *
+ * 早期导入器按 64KB 上限丢掉过 extensions.SPreset，旧存档因此永远读不到
+ * 脚本。但这类预设通常会在 prompts 里塞一条禁用的「SPreset配置」提示词，
+ * 内容就是**完整配置 JSON**（Meowssiah 实测与 extensions 那份逐字节相同）。
+ * 所以顶层读不到时，扫一遍 prompts 就能自愈，不必逼用户重新导入。
+ *
+ * 不硬编码提示词名字或下标，只按「内容是可解析的配置对象」识别：
+ * 至少带 ToolBindings 或 FinalRequestProcessing 之一。
+ */
+export function findSpresetConfig(presetRaw: any): any | null {
+  const direct =
+    presetRaw?.extensions?.SPreset ?? presetRaw?.data?.extensions?.SPreset ?? null;
+  if (direct && typeof direct === 'object') return direct;
+
+  const lists: unknown[] = [presetRaw?.prompts, presetRaw?.data?.prompts];
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const p of list as any[]) {
+      const s = typeof p?.content === 'string' ? p.content.trim() : '';
+      // 配置至少上千字符；短 prompt 不必尝试 JSON.parse
+      if (s.length < 1000 || !s.startsWith('{')) continue;
+      try {
+        const obj = JSON.parse(s);
+        if (
+          obj &&
+          typeof obj === 'object' &&
+          (obj.ToolBindings || obj.FinalRequestProcessing)
+        ) {
+          return obj;
+        }
+      } catch {
+        /* 不是配置 JSON，跳过 */
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 请求前的**通用清洗**：把 Tavo / SPreset 的私有指令标记从消息里剥掉。
+ *
+ * 这是本轮修复的核心。上一版误判「必须靠工具调用才有 <summary>/<options>
+ * 标签」，于是执行 FinalRequestProcessing 把 35 条 system 提示词整段换成
+ * 8 条 few-shot 并强制 tool_choice=required —— 角色设定只剩工具描述里一份，
+ * 模型拿不到上下文，直接按 Gemini 默认身份拒答。
+ *
+ * 实际上预设的提示词本身就写着「正文用 <game> 包上」「用 <summary> 包住」
+ * 「<comment>」「<options><option>…</option></options>」，全是给模型的自然
+ * 语言指令。只要**保留全文、剥掉私有宏**，模型就会直接吐标签，已有的
+ * 「前端综合面板」正则就能替换成美化卡片 —— 这也正是 Tavo 的行为
+ * （用户对照：Tavo 输出正常，只是正则替换偶尔不完美）。
+ *
+ * 为什么这些宏必须剥：
+ *   · <<<|catgodml|registerPart:…>>> / setLastMessage / deepthink 等是
+ *     给预设脚本解析的，不是给模型读的；
+ *   · <run_tool_replacement> 是脚本的触发开关；
+ *   · <|sep|> / <|merge|> 是 ChatSquash 的分隔符（配置里叫 conditional_tag）。
+ * 原样发出去会污染提示词，模型要么困惑、要么照抄 few-shot 里的拒答反例。
+ *
+ * 通用性：不写死某份预设的标记名 —— 三竖线宏按形态整块删，
+ * <|xxx|> 按形态删，触发标记从预设自带脚本里动态提取，再带一组兜底常量。
+ * 换个用同类机制的预设同样生效；不含这些标记的预设逐字节不变。
+ */
+const FALLBACK_MARKERS = ['<run_tool_replacement>'];
+
+export function stripPrivateDirectives(messages: ChatMessage[], presetRaw?: any): ChatMessage[] {
+  const sp = findSpresetConfig(presetRaw);
+  const markers = new Set<string>(FALLBACK_MARKERS);
+
+  // 从预设脚本里动态取 marker 常量，避免硬编码
+  const src = asScriptSource(sp?.FinalRequestProcessing) ?? '';
+  for (const m of src.matchAll(/const\s+marker\s*=\s*['"`]([^'"`]+)['"`]/g)) {
+    if (m[1]) markers.add(m[1]);
+  }
+  const ct = sp?.ChatSquash?.conditional_tag;
+  if (typeof ct === 'string' && ct) markers.add(ct);
+
+  return messages.map((msg) => {
+    const content = (msg as any).content;
+    if (typeof content !== 'string') return msg;
+    // ① <<<|任意标识|…>>> 整块删（宏指令，不是正文）
+    let text = content.replace(/<<<\|[^|]*\|[\s\S]*?>>>/g, '');
+    // ② 脚本声明的触发标记 / ChatSquash 分隔符
+    for (const mk of markers) if (mk) text = text.split(mk).join('');
+    // ③ 兜底：<|xxx|> 形态的私有分隔符
+    text = text.replace(/<\|[A-Za-z_]+\|>/g, '');
+    // ④ ST 行内注释 {{// … }}：作者声明 / 给用户看的调参说明，不是给模型的
+    //    （macro.ts 只处理标准宏，实测这份预设里残留 3 块，会污染提示词）
+    text = text.replace(/\{\{\/\/[\s\S]*?\}\}/g, '');
+    const trimmed = text.trim();
+    return trimmed === content ? msg : ({ ...msg, content: trimmed } as ChatMessage);
+  });
+}
+
+/**
  * 从一份预设原始对象里装载 SPreset 运行时。
  *
  * 预设可能有扁平 `{ extensions }` 与嵌套 `{ data: { extensions } }` 两种形态
@@ -225,10 +327,8 @@ export function loadSpresetRuntime(presetRaw: any): SpresetRuntime {
   const noop = noopRuntime();
   if (!presetRaw || typeof presetRaw !== 'object') return noop;
 
-  const sp =
-    presetRaw?.extensions?.SPreset ??
-    presetRaw?.data?.extensions?.SPreset ??
-    null;
+  // 顶层读不到时会自动扫 prompts 里的内嵌配置备份（见 findSpresetConfig）
+  const sp = findSpresetConfig(presetRaw);
   if (!sp || typeof sp !== 'object') return noop;
 
   const notes: string[] = [];

@@ -29,8 +29,7 @@ import { assemblePrompt } from '../engine/assembler';
 import { readVariables } from '../engine/variables';
 import { collectPresetMessages } from '../engine/summaryPreset';
 import { streamChatCompletion } from '../engine/apiClient';
-import type { ToolRequestOptions } from '../engine/apiClient';
-import { loadSpresetRuntime } from '../engine/spresetRuntime';
+import { loadSpresetRuntime, stripPrivateDirectives } from '../engine/spresetRuntime';
 import { imageMarkerInstruction } from '../engine/imageMarker';
 import { flattenForEngine } from '../engine/regexGroups';
 import {
@@ -368,35 +367,27 @@ async function generate(reqJson: string): Promise<void> {
     }
 
     /*
-     * SPreset / Tavo 预设脚本运行时（可选层）。
+     * Tavo / SPreset 私有指令宏清洗（2026-11-09 修订，替换掉第一版方案）。
      *
-     * 只有预设带 extensions.SPreset 且脚本可执行时才启用：
-     *   · 请求前跑 FinalRequestProcessing → 注入 tools / tool_choice，
-     *     并把 messages 重写成预设要求的 few-shot 结构；
-     *   · 响应后把 tool_calls 交给 toolCallFormatter → 产出
-     *     <summary>/<options>/<comment> 等标签，交给已有显示正则渲染卡片。
-     * 没有 SPreset 的预设这里全部是 no-op，请求与旧版逐字节一致。
-     * 脚本任何一步失败都降级回原链路，不会让一段预设脚本把聊天搞崩。
+     * 第一版误判「标签只能由 tool_calls 生成」，于是执行
+     * FinalRequestProcessing 把 35 条 system 整段换成 8 条 few-shot 并强制
+     * tool_choice=required，角色设定只剩 context 工具描述一份 —— 模型拿到的是
+     * 「请初始化神域剧场并测试工具连通性」这类 few-shot，没有角色设定，直接
+     * 按 Gemini 默认身份拒答。用户对照 Tavo：输出完全正常。
+     *
+     * 实际上预设提示词本身就用自然语言要求模型输出 <game>/<summary>/
+     * <comment>/<options> 标签，模型直接吐标签即可交给已有的显示正则渲染。
+     * 所以这里只做一件事：保留全部提示词，剥掉「给预设脚本看」的私有宏
+     * （<<<|catgodml|…>>> / <run_tool_replacement> / <|sep|> / <|merge|>），
+     * 不注入 tools、不强制 tool_choice、不改写 messages。
+     *
+     * 清洗是独立函数，不依赖 SPreset 配置是否存在：旧存档即使丢了
+     * extensions.SPreset，宏照样会被剥干净（配置本身由 findSpresetConfig 自愈）。
      */
+    const sendMessages = stripPrivateDirectives(finalMessages, presetRaw);
     const spreset = loadSpresetRuntime(presetRaw);
-    let toolOptions: ToolRequestOptions | undefined;
-    if (spreset.active && spreset.hasFinalRequest) {
-      const patch = spreset.applyRequest(
-        {
-          model: cfg.model,
-          temperature: cfg.temperature,
-          max_tokens: cfg.maxTokens,
-        },
-        finalMessages,
-      );
-      if (patch) {
-        toolOptions = {
-          tools: patch.tools,
-          toolChoice: patch.toolChoice,
-          rawMessages: patch.messages,
-        };
-        console.info('[gen][SPreset]', spreset.name, spreset.notes.join(' / '));
-      }
+    if (spreset.active) {
+      console.info('[gen][SPreset] 已装载（仅用于响应后格式化）：', spreset.name);
     }
 
     const controller = new AbortController();
@@ -404,18 +395,15 @@ async function generate(reqJson: string): Promise<void> {
 
     await streamChatCompletion(
       { ...cfg },
-      finalMessages,
+      sendMessages,
       {
         onToken: (delta: string) => {
           acc += delta;
           push(false);
         },
         onDone: (text, _usage, toolCalls) => {
-          /*
-           * 工具调用模式下，模型的正文在 tool_calls 的结构化字段里，
-           * content 往往只有 <think> 草稿或干脆为空。用预设自带脚本把
-           * tool_calls 转成标签文本作为最终落盘内容 —— 显示正则需要的正是这些标签。
-           */
+          // 正常路径下模型直接吐标签文本；万一有中转自愿返回 tool_calls，
+          // 仍用预设脚本包成标签，不影响主链路。
           let finalText = text || '';
           if (toolCalls && toolCalls.length && spreset.active && spreset.hasFormatter) {
             finalText = spreset.formatToolCalls(toolCalls, finalText);
@@ -427,7 +415,6 @@ async function generate(reqJson: string): Promise<void> {
         },
       },
       controller.signal,
-      toolOptions,
     );
   } catch (e: any) {
     running.delete(requestId);
