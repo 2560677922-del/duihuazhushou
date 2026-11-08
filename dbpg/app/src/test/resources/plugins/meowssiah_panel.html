@@ -437,6 +437,27 @@
       .status { overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
       .status.is-error { color: #b64f63; }
 
+      /* ─── 整卡折叠：点标题栏收起 / 展开 ─── */
+      .oracle-header {
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+      }
+      .oracle-panel.is-collapsed .oracle-body { display: none; }
+      .oracle-panel.is-collapsed .oracle-header { border-bottom: none; }
+      .oracle-panel.is-collapsed .mode-toggle { display: none; }
+      .panel-chevron {
+        display: inline-block;
+        margin-left: 7px;
+        font-size: 12px;
+        line-height: 1;
+        color: var(--rose);
+        opacity: 0.72;
+        vertical-align: middle;
+        transition: transform 220ms ease;
+      }
+      .oracle-panel.is-collapsed .panel-chevron { transform: rotate(-90deg); }
+
       @keyframes option-arrive { to { opacity: 1; transform: translateY(0); } }
 
       @media (max-width: 520px) {
@@ -468,12 +489,12 @@
   <body>
     <template id="raw-data">__DHP_PANEL_DATA__</template>
 
-    <main class="oracle-panel" aria-labelledby="oracle-title">
-      <header class="oracle-header">
+    <main class="oracle-panel is-collapsed" id="oraclePanel" aria-labelledby="oracle-title">
+      <header class="oracle-header" id="oracleHeader" role="button" tabindex="0" aria-expanded="false" aria-controls="oracleBody" aria-label="展开面板">
         <div class="cat-avatar" aria-hidden="true"><img src="https://files.catbox.moe/y9gi00.png" alt="" /></div>
         <div class="title-block">
           <div class="eyebrow">Cat oracle · 小猫之神</div>
-          <h1 id="oracle-title">请选择回应喵</h1>
+          <h1 id="oracle-title">请选择回应喵<span class="panel-chevron" aria-hidden="true">▾</span></h1>
           <p class="subtitle" id="oracleSubtitle" hidden></p>
         </div>
         <button class="mode-toggle" id="directSendToggle" type="button" data-mode="send" aria-label="当前模式：直接发送；点击切换">
@@ -485,6 +506,7 @@
         </button>
       </header>
 
+      <div class="oracle-body" id="oracleBody">
       <!-- 1. 小猫之神的留言 (<comment>) -->
       <section class="comment-region" id="commentRegion" aria-label="小猫之神的留言" hidden>
         <div class="comment-card">
@@ -515,6 +537,8 @@
         </details>
       </section>
 
+      </div>
+
       <footer class="oracle-footer">
         <span id="optionCount">正在读取神谕…</span>
         <span class="status" id="statusText" role="status" aria-live="polite">选一条就好</span>
@@ -542,13 +566,27 @@
 
         const optionCount = document.getElementById('optionCount');
         const statusText = document.getElementById('statusText');
-        const panel = document.querySelector('.oracle-panel');
+        const panelRoot = document.querySelector('.oracle-panel');
+        const header = document.getElementById('oracleHeader');
+
+        header.addEventListener('click', (event) => {
+          if (event.target.closest('.mode-toggle')) return;
+          setCollapsed(!collapsed);
+        });
+        header.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            setCollapsed(!collapsed);
+          }
+        });
 
         const optionModes = ['send', 'replace', 'append'];
         let optionMode = 'send';
         let selectedButton = null;
         let resizeFrame = 0;
         let hasExtraSections = false;
+        let panelHasOptions = false;
+        let collapsed = true;
 
         function getSillyTavern() {
           try {
@@ -664,6 +702,7 @@
           const entries = parseOptionsEntries(rawOptionsMatches);
           const hasOptions = entries.length > 0;
           hasExtraSections = hasComment || hasSummary;
+          panelHasOptions = hasOptions;
 
           if (hasOptions) {
             optionRegion.hidden = false;
@@ -725,6 +764,7 @@
             setStatus('喵呼呼~');
           }
 
+          refreshCollapsedHint();
           scheduleHeightUpdate();
         }
 
@@ -738,6 +778,28 @@
           toggle.setAttribute('aria-label', `当前模式：${modeCopy[0]}；点击切换`);
           modeTitle.textContent = modeCopy[0];
           modeHint.textContent = modeCopy[1];
+        }
+
+        function refreshCollapsedHint() {
+          if (collapsed) {
+            statusText.textContent = panelHasOptions ? '点标题展开' : '点标题查看';
+          } else {
+            setStatus(panelHasOptions ? '选一条就好喵' : '喵呼呼~');
+          }
+        }
+
+        function setCollapsed(next) {
+          collapsed = !!next;
+          panelRoot.classList.toggle('is-collapsed', collapsed);
+          header.setAttribute('aria-expanded', String(!collapsed));
+          header.setAttribute('aria-label', collapsed ? '展开面板' : '收起面板');
+          refreshCollapsedHint();
+          scheduleHeightUpdate();
+          requestAnimationFrame(() => {
+            updateHeight();
+            setTimeout(updateHeight, 180);
+            setTimeout(updateHeight, 420);
+          });
         }
 
         function initToggle() {
@@ -855,7 +917,7 @@
           summaryDetails.addEventListener('toggle', scheduleHeightUpdate);
           scheduleHeightUpdate();
           window.addEventListener('resize', scheduleHeightUpdate);
-          if ('ResizeObserver' in window) new ResizeObserver(scheduleHeightUpdate).observe(panel);
+          if ('ResizeObserver' in window) new ResizeObserver(scheduleHeightUpdate).observe(panelRoot);
           document.fonts?.ready?.then(scheduleHeightUpdate);
         });
       })();

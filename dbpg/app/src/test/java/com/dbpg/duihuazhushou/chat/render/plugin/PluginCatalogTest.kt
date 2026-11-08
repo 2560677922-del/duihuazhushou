@@ -28,9 +28,9 @@ class PluginCatalogTest {
         sessionId = "s1",
     )
 
-    private val strict = PluginCatalog.ALL.first { it.descriptor.id == "frontend_card_strict" }
-    private val loose = PluginCatalog.ALL.first { it.descriptor.id == "frontend_card_loose" }
-    private val panel = PluginCatalog.ALL.first { it.descriptor.id == "panel_data_adapter" }
+    /** 一体化插件：整页 / 片段 / 散文面板都由它处理。 */
+    private val card = PluginCatalog.ALL.first { it.descriptor.id == "panel_data_adapter" }
+    private val panel = card
 
     /** 模拟 PluginRegistry 注入的 assets 读取：单测用 classpath 里的真实模板。 */
     private val assetMeta = meta.copy(readAsset = { path ->
@@ -63,21 +63,20 @@ class PluginCatalogTest {
 
     @Test
     fun catalogIsBuiltInStableAndContractCompatible() {
-        assertEquals(3, PluginCatalog.ALL.size)
-        assertNotNull(PluginCatalog.byId("frontend_card_strict"))
-        assertNotNull(PluginCatalog.byId("frontend_card_loose"))
+        assertEquals("内置库只保留一个一体化插件", 1, PluginCatalog.ALL.size)
         assertNotNull(PluginCatalog.byId("panel_data_adapter"))
         assertNull(PluginCatalog.byId("does_not_exist"))
+        assertNull("早期的两个前端卡插件已合并，不应再出现在目录里",
+            PluginCatalog.byId("frontend_card_strict"))
+        assertNull(PluginCatalog.byId("frontend_card_loose"))
         assertTrue(PluginCatalog.ALL.all { it.descriptor.apiVersion == PLUGIN_API_VERSION })
-        assertTrue("严格插件优先级必须高于宽松插件（仲裁靠它）",
-            strict.descriptor.priority > loose.descriptor.priority)
     }
 
     @Test
     fun strictRewritesNonHtmlFenceAndKeepsSurroundingProse() {
         val raw = listOf("剧情前文。", "", fenced("ui", doc), "", "剧情后文。").joinToString(NL)
-        assertTrue(strict.claim(raw, meta))
-        val out = strict.render(raw, meta)!!
+        assertTrue(card.claim(raw, meta))
+        val out = card.render(raw, meta)!!
         assertTrue("围栏语言必须被统一成 html", out.contains("```html"))
         assertFalse(out.contains("```ui"))
         assertTrue("围栏外的正文不能丢", out.contains("剧情前文") && out.contains("剧情后文"))
@@ -91,8 +90,8 @@ class PluginCatalogTest {
     fun strictHardensStandardHtmlFenceToo() {
         // 标准写法也要做加固（vh 变量 / 横滚锁），不再只是放行 —— 这正是渲染器的活
         val raw = fenced("html", doc)
-        assertTrue(strict.claim(raw, meta))
-        val out = strict.render(raw, meta)!!
+        assertTrue(card.claim(raw, meta))
+        val out = card.render(raw, meta)!!
         assertTrue(out.contains("```html"))
         assertTrue(out.contains("--TH-viewport-height"))
         assertTrue(out.contains("dhp-render-plugin"))
@@ -102,12 +101,12 @@ class PluginCatalogTest {
     @Test
     fun looseWrapsHtmlFragmentIntoDocument() {
         val raw = listOf("```", fragment, "```").joinToString(NL)
-        assertFalse("完整文档才算严格插件的活", strict.claim(raw, meta))
-        assertTrue(loose.claim(raw, meta))
-        val out = loose.render(raw, meta)!!
+        assertTrue("片段也归一体化插件管", card.claim(raw, meta))
+        assertTrue(card.claim(raw, meta))
+        val out = card.render(raw, meta)!!
         assertTrue(out.contains("```html"))
         assertTrue("片段必须补成独立文档", out.contains("<!DOCTYPE html>"))
-        assertTrue(out.contains("data-render-plugin=\"frontend_card_loose\""))
+        assertTrue(out.contains("data-render-plugin=\"panel_data_adapter\""))
         assertTrue(out.contains("--TH-viewport-height"))
         assertTrue(out.contains("statusbar"))
         assertTrue(
@@ -119,28 +118,23 @@ class PluginCatalogTest {
     @Test
     fun rewritingIsIdempotent() {
         val raw = listOf("```", fragment, "```").joinToString(NL)
-        val once = loose.render(raw, meta)!!
-        assertNull("对插件输出再跑一次必须放行，不能二次补文档", loose.render(once, meta))
-        assertNull("严格插件也不能对加固结果二次动手", strict.render(once, meta))
-        assertEquals(once, loose.render(once, meta) ?: once)
-        assertFalse("幂等后再跑 claim 也不该认领", loose.claim(once, meta))
+        val once = card.render(raw, meta)!!
+        assertNull("对插件输出再跑一次必须放行，不能二次补文档", card.render(once, meta))
+        assertEquals(once, card.render(once, meta) ?: once)
+        assertFalse("幂等后再跑 claim 也不该认领", card.claim(once, meta))
     }
 
     @Test
-    fun realPanelTemplateKeepsScriptAndRawDataIntact() {
-        // 这是「折叠窗能不能出来」的关键：模板数据与脚本必须逐字节保留
+    fun existingPanelCardIsPassedThroughUntouched() {
+        // 预设正则正常命中、已经吐出带 raw-data 的面板卡片 → 插件必须整体放行，
+        // 交给内置渲染。否则插件会把卡片再包一层，折叠窗被套两层直接坏掉。
         val raw = listOf("她抬起头。「要往前走吗？」", "", fenced("html", panelDoc)).joinToString(NL)
-        assertTrue(strict.claim(raw, meta))
-        val out = strict.render(raw, meta)!!
-        assertTrue("剧情正文不能丢", out.contains("要往前走吗"))
-        assertTrue("<template id=\"raw-data\"> 必须原样保留", out.contains("<template id=\"raw-data\">"))
-        assertTrue("选项标签必须原样保留", out.contains("<option>① 举盾格挡</option>"))
-        assertTrue("生成折叠窗的 <script> 必须原样保留", out.contains("<script>(function(){parseAndRender()"))
-        assertTrue(out.contains("oracle-panel"))
-        // 加固只发生在 head：head 之后应该出现 GUARD，body 里的标签一个不少
-        assertTrue(out.contains("--TH-viewport-height"))
-        // 幂等
-        assertNull(strict.render(out, meta))
+        assertFalse("已有承载面板数据的卡片 → 放行", card.claim(raw, meta))
+        assertNull(card.render(raw, meta))
+        // 卡片本来就完整：数据容器与脚本都在，内置通道直接能渲染
+        assertTrue("<template id=\"raw-data\"> 原样在", raw.contains("<template id=\"raw-data\">"))
+        assertTrue("选项标签原样在", raw.contains("<option>① 举盾格挡</option>"))
+        assertTrue("生成折叠窗的 <script> 原样在", raw.contains("<script>(function(){parseAndRender()"))
     }
 
     @Test
@@ -148,8 +142,8 @@ class PluginCatalogTest {
         // 文档前带生成注释时，内置 DOC_START 失败、会显示成源码，插件要接住
         val withComment = "<!-- generated by preset -->" + NL + doc
         val raw = fenced("ui", withComment)
-        assertTrue(strict.claim(raw, meta))
-        val out = strict.render(raw, meta)!!
+        assertTrue(card.claim(raw, meta))
+        val out = card.render(raw, meta)!!
         assertTrue(out.contains("```html"))
         assertTrue(out.contains("generated by preset"))
         assertTrue(out.contains("状态栏"))
@@ -158,10 +152,9 @@ class PluginCatalogTest {
     @Test
     fun plainTextIsNeverClaimed() {
         val plain = "她抬起头，指尖还沾着夜露。「……要往前走吗？」"
-        assertFalse(strict.claim(plain, meta))
-        assertFalse(loose.claim(plain, meta))
-        assertNull(strict.render(plain, meta))
-        assertNull(loose.render(plain, meta))
+        assertFalse(card.claim(plain, meta))
+        assertNull(card.render(plain, meta))
+        assertNull(card.render(plain, meta))
     }
 
     @Test
@@ -192,10 +185,8 @@ class PluginCatalogTest {
     ).joinToString(NL)
 
     @Test
-    fun panelAdapterClaimsProseButNotHtmlCards() {
+    fun panelAdapterClaimsProseButPassesRenderedCards() {
         assertTrue("散文式面板必须被认领", panel.claim(prosePanel, meta))
-        assertFalse("没有 HTML 卡片时前端卡渲染器应当放行", strict.claim(prosePanel, meta))
-        assertFalse(loose.claim(prosePanel, meta))
         assertFalse("纯正文没有分隔线不该认领", panel.claim("她抬起头。「要往前走吗？」", meta))
         assertFalse(
             "预设正则已正常吐出 HTML 卡片时必须 Pass，不能重复包裹",

@@ -23,8 +23,15 @@ package com.dbpg.duihuazhushou.chat.render.plugin
  */
 object PluginCatalog {
 
-    /** 顺序无关，仲裁按 descriptor.priority。 */
-    val ALL: List<RenderPlugin> = listOf(StrictFrontendCard, LooseFrontendCard, PanelDataAdapter)
+    /**
+     * 内置库只有一个「一体化」渲染器。
+     *
+     * ★ 为什么合并：早期按社区做法拆成「严格整页 / 宽松片段 / 面板适配」三个，
+     *   但真实消息里三者会同时出现（一条消息 = 折叠栏卡片 + 正文 + 散文面板），
+     *   拆开后只能整条二选一，用户还要自己判断装哪个。合并成一个后：
+     *   装上即覆盖全部写法，卸载即回退，设置页也只剩一行。
+     */
+    val ALL: List<RenderPlugin> = listOf(FrontendCardPlugin)
 
     fun byId(id: String): RenderPlugin? = ALL.firstOrNull { it.descriptor.id == id }
 }
@@ -164,111 +171,45 @@ internal object FenceAdapter {
 // ---------------------------------------------------------------- 内置插件
 
 /**
- * 严格渲染器：对齐「酒馆助手」`is_frontend` 的保守约定，只认完整整页文档。
+ * 早期这里有 StrictFrontendCard（只认整页文档）与 LooseFrontendCard
+ * （片段也当界面）两个独立插件，靠优先级仲裁二选一。
  *
- * 对认领到的文档做 createSrcContent 式加固（reset / vh / 横滚锁 / 标记），
- * 并把非 html 的围栏标注统一改成 html —— 文档前面带了注释 / BOM / 生成
- * 标记时，内置的 DOC_START 会失败、直接显示成源码，插件正好接住这类写法。
- * 已是加固过的标准写法时放行（幂等），最不容易误伤正文。
+ * ★ 合并原因：真实消息里两类写法会同时出现（预设折叠栏是整页文档、模型
+ *   自写的界面常是片段），拆成两个插件时用户必须猜着装哪个，装错就「没反应」。
+ *   现在能力整体并入 FrontendCardPlugin 的围栏硬化分支，一个插件全覆盖。
  */
-private object StrictFrontendCard : RenderPlugin {
 
-    override val descriptor = PluginDescriptor(
-        id = "frontend_card_strict",
-        name = "前端卡渲染器 · 严格整页",
-        convention = "``` 围栏里是完整 HTML 文档（<!DOCTYPE / <html> / <body>）",
-        description = "抄「酒馆助手」的保守判定：只认完整整页文档，补 viewport / reset CSS / vh 变量 / 横滚锁后交给 iframe 渲染，折叠窗、状态栏、选项面板里的脚本原样保留。不认 HTML 片段，最不容易误伤正文。装上生效、卸载即回退。",
-        version = "1.1.0",
-        priority = 100,
-    )
-
-    override fun claim(rich: String, meta: PluginRenderMeta): Boolean =
-        FenceAdapter.all(rich).any { FenceAdapter.isFullDoc(it.body) && !FenceAdapter.isHardened(it.body) }
-
-    override fun render(rich: String, meta: PluginRenderMeta): String? =
-        FenceAdapter.rewrite(rich) { f ->
-            when {
-                !FenceAdapter.isFullDoc(f.body) -> null
-                FenceAdapter.isHardened(f.body) -> null
-                else -> FenceAdapter.rebuild(FenceAdapter.hardenDoc(f.body, descriptor.id))
-            }
-        }
-}
+// ---------------------------------------------------------------- 一体化渲染器
 
 /**
- * 通用渲染器：对齐「小白X」`shouldRenderCodeBlock` 的宽松约定，片段也算界面。
+ * 通用前端卡渲染器（一体化）：一条消息里的所有「界面写法」都由它处理。
  *
- * 完整文档走加固、HTML 片段（`<div>` / `<style>` / `<details>` / `<script>`…）
- * 补成独立文档，再统一标成 html —— 这正是「预设以后换写法」时最可能遇到的
- * 情况，也是这类预设在社区里需要第三方渲染插件的原因。与严格渲染器同时
- * 安装时仲裁只让优先级高的生效，不会出现「两个渲染都开了 → 重复 / 闪烁」。
- */
-private object LooseFrontendCard : RenderPlugin {
-
-    override val descriptor = PluginDescriptor(
-        id = "frontend_card_loose",
-        name = "前端卡渲染器 · 通用片段",
-        convention = "任意 ``` 围栏里的 HTML 整页或片段（<div> / <style> / <details> / <script>…）",
-        description = "抄「小白X」的宽松判定：HTML 片段也当界面渲染，补成独立文档并加固后交给 iframe，卡片里的折叠窗 / 选项脚本照常运行。预设改用片段写法、换了围栏语言、或文档前带注释时，装这个就能接住；不想要随时卸载，内置渲染立刻恢复原样。",
-        version = "1.1.0",
-        priority = 90,
-    )
-
-    override fun claim(rich: String, meta: PluginRenderMeta): Boolean =
-        FenceAdapter.all(rich).any { f ->
-            !FenceAdapter.isHardened(f.body) &&
-                (FenceAdapter.isFragment(f.body) || FenceAdapter.isFullDoc(f.body))
-        }
-
-    override fun render(rich: String, meta: PluginRenderMeta): String? =
-        FenceAdapter.rewrite(rich) { f ->
-            if (FenceAdapter.isHardened(f.body)) null
-            else FenceAdapter.rebuild(
-                if (FenceAdapter.isFullDoc(f.body)) {
-                    FenceAdapter.hardenDoc(f.body, descriptor.id)
-                } else if (FenceAdapter.isFragment(f.body)) {
-                    FenceAdapter.toDocument(f.body, descriptor.id)
-                } else {
-                    return@rewrite null
-                },
-            )
-        }
-}
-
-// ---------------------------------------------------------------- 面板数据适配器
-
-/**
- * 面板数据适配器：模型没按预设约定吐标签、把面板内容写成散文时，把折叠窗补出来。
+ * 三类输入，按顺序：
+ *   ① 散文面板 —— 模型没按预设约定吐标签，把「剧情小总结 + 连续选项 +
+ *      结尾吐槽」写成散文。这正是「能看到一条横线、折叠窗却没出来」的成因：
+ *      预设模板自带的解析只认 `<summary>` / `<comment>` / `<options>`。
+ *   ② 围栏卡片（整页文档）—— 补 viewport / reset / vh / 横滚锁。
+ *   ③ 围栏卡片（HTML 片段）—— 补成独立文档再交给 iframe。
  *
- * ★ 为什么需要它：预设的「前端综合面板」显示正则只认
- *   `<summary> / <comment> / <options>` 三种标签，命中后才会吐出那份 32KB 的
- *   ` ```html ` 前端模板。模型（尤其是 tool_choice=auto 时）常常把这些内容
- *   直接写成散文：「本段剧情发生在……」+ 三个 😏 选项 + 一段吐槽，
- *   于是正则一次都不命中，消息里**连一个 HTML 卡片都没有** —— 此时
- *   StrictFrontendCard / LooseFrontendCard 都会 Pass，界面只剩正文和一条
- *   `---` 横线。这正是「能看到一条横线给分开了，但没正常渲染」的成因。
- *
- * ★ 做法：抄的还是预设自己那份前端模板（随 APK 放在 assets/plugins/），
- *   把分隔线之后的散文整理成预设约定的标签，填进模板的
- *   `<template id="raw-data">`，再交给现有 iframe 通道。折叠窗、选项按钮、
- *   状态栏、悄悄话、剧情小总结**全是预设模板自带的 JS 渲染的**，插件不造 UI、
+ * ★ 视觉部分抄的是预设自己那份 32KB 前端模板（随 APK 放在 assets/plugins/）。
+ *   把散文整理成预设约定的标签，填进 `<template id="raw-data">`，折叠窗、
+ *   选项按钮、状态栏、悄悄话、剧情小总结全由模板自带 JS 渲染 —— 插件不造 UI、
  *   不改模型输出、不改请求体、不改正则引擎，正文原样留在卡片之外。
  *
- * ★ 幂等：插件输出不写回缓存，且只在「消息里没有 HTML 卡片」时认领；
- *   一旦预设正则正常命中产出 ` ```html ` 文档，本插件立即 Pass，
- *   交给前端卡渲染器 / 内置渲染，绝不重复包裹。
+ * ★ 幂等：消息里已有承载面板数据的卡片（`<template id="raw-data">` /
+ *   `<options>` / `<comment>`）就整体放行；输出不写回缓存，绝不二次包裹。
  */
-private object PanelDataAdapter : RenderPlugin {
+private object FrontendCardPlugin : RenderPlugin {
 
     private const val ASSET = "plugins/meowssiah_panel.html"
     private const val PLACEHOLDER = "__DHP_PANEL_DATA__"
 
     override val descriptor = PluginDescriptor(
         id = "panel_data_adapter",
-        name = "面板数据适配器 · 折叠窗",
-        convention = "模型把剧情总结 / 吐槽 / 选项写成散文（连续选项行为准，前面可有 --- 分隔线，也可没有）",
-        description = "抄预设自带的前端模板：模型没按约定吐 <summary> / <comment> / <options>、把面板内容写成散文时，把「剧情小总结 + 连续选项 + 结尾吐槽」整理成标签填进随 APK 内置的 32KB 模板，产出 ```html 整页卡片交给 iframe —— 折叠窗、选项按钮、状态栏都是预设自己的脚本渲染的。不要求消息里有 --- 分隔线；同一条消息里已有的思维链折叠栏 / 状态栏卡片原样保留，只有消息里已经有面板卡片时才放行。不改请求体、不改正则引擎、不改正文；装上才生效、卸载即回退。",
-        version = "1.2.0",
+        name = "通用前端卡 · 折叠窗",
+        convention = "围栏里的 HTML（整页 / 片段）+ 散文面板（剧情总结 / 连续选项行 / 结尾吐槽，分隔线可有可无）",
+        description = "一个插件覆盖三类写法：① 围栏里是完整网页 → 补 viewport / reset / 横滚锁后交给 iframe；② 围栏里是 HTML 片段 → 补成独立网页再渲染；③ 模型把 summary / comment / options 写成散文 → 整理成标签填进随 APK 内置的模板，折叠窗、选项、状态栏都由模板自带脚本渲染。判据只看结构，不认预设名、不认专有标签，换预设只要还吐这几类写法就继续有效。不改正则、不改请求体、不改正文；装上才生效，卸载立即回退。",
+        version = "2.0.0",
         priority = 120,
     )
 
@@ -570,14 +511,28 @@ private object PanelDataAdapter : RenderPlugin {
     override fun claim(rich: String, meta: PluginRenderMeta): Boolean {
         // 已经有面板卡片（预设正则命中 / 本插件已产出）→ Pass，绝不重复包裹
         if (hasPanelCard(rich)) return false
-        val span = findPanelSpan(rich) ?: return false
-        return span.optionCount >= 2 && span.narrative
+        // ① 散文面板：模型没按约定吐标签
+        val span = findPanelSpan(rich)
+        if (span != null && span.optionCount >= 2 && span.narrative) return true
+        // ② 围栏卡片：整页文档或 HTML 片段，还没被加固过
+        return FenceAdapter.all(rich).any { f ->
+            !FenceAdapter.isHardened(f.body) &&
+                (FenceAdapter.isFullDoc(f.body) || FenceAdapter.isFragment(f.body))
+        }
     }
 
     override fun render(rich: String, meta: PluginRenderMeta): String? {
-        // 模板是随 APK 打包的插件资源；读不到就 Pass（零影响，不硬编码兜底 UI）
-        val tmpl = meta.readAsset(ASSET)?.takeIf { it.contains(PLACEHOLDER) } ?: return null
         if (hasPanelCard(rich)) return null
+        // ① 散文面板优先。head 里已有的卡片（思维链折叠栏 / 状态栏）**一字不动**：
+        //    它们本来就能正常渲染，插件只在正文之后补一张模板卡片，同条共存。
+        renderPanel(rich, meta)?.let { return it }
+        // ② 没有面板数据 → 只做围栏卡片加固
+        return hardenFences(rich)
+    }
+
+    /** 散文面板 → 内置模板卡片。读不到模板就 Pass（不硬编码兜底 UI）。 */
+    private fun renderPanel(rich: String, meta: PluginRenderMeta): String? {
+        val tmpl = meta.readAsset(ASSET)?.takeIf { it.contains(PLACEHOLDER) } ?: return null
         val span = findPanelSpan(rich) ?: return null
         if (span.optionCount < 2 || !span.narrative) return null
         // head 取原始 rich（保留主 App 的 <br> 排版），tail 取归一化视图（可按行拆）
@@ -597,6 +552,22 @@ private object PanelDataAdapter : RenderPlugin {
         val card = FenceAdapter.rebuild(tmpl.replace(PLACEHOLDER, tags.toString()))
         return if (head.isBlank()) card else head + "\n\n" + card
     }
+
+    /**
+     * 围栏卡片硬化：整页补 head（viewport / reset / vh），片段包成独立文档。
+     * 已硬化的块跳过 → 对插件输出再跑一次必为 null（幂等）。
+     */
+    private fun hardenFences(rich: String): String? =
+        FenceAdapter.rewrite(rich) { f ->
+            when {
+                FenceAdapter.isHardened(f.body) -> null
+                FenceAdapter.isFullDoc(f.body) ->
+                    FenceAdapter.rebuild(FenceAdapter.hardenDoc(f.body, descriptor.id))
+                FenceAdapter.isFragment(f.body) ->
+                    FenceAdapter.rebuild(FenceAdapter.toDocument(f.body, descriptor.id))
+                else -> null
+            }
+        }
 
     /** 设置页「渲染自检」用：把识别过程的关键数字摊开，不用再靠猜。 */
     override fun probe(rich: String): String {

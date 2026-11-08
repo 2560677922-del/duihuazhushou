@@ -41,6 +41,9 @@ object PluginRegistry {
 
     @Volatile private var disposables: Map<String, Disposable> = emptyMap()
 
+    /** 旧三插件 → 一体化插件的状态迁移只跑一次（进程内）。 */
+    @Volatile private var migrated = false
+
     @Volatile var lastDiagnostic: RenderDiagnostic? = null
         private set
 
@@ -101,6 +104,12 @@ object PluginRegistry {
      *   所以这里每次拿到的都是原始 rich，插件实现必须幂等（见 RenderPlugin.render）。
      */
     fun resolveHtml(ctx: Context, rich: String, meta: PluginRenderMeta): String? {
+        if (!migrated) {
+            runCatching { PluginStore.migrateLegacy(ctx) }.onFailure {
+                Log.w(TAG, "插件安装状态迁移失败（不影响本次渲染）", it)
+            }
+            migrated = true
+        }
         val installed = PluginStore.installed(ctx)
         if (installed.isEmpty()) {
             record(rich, emptyList(), null, null, "没有安装任何插件 → 内置渲染原样工作")
