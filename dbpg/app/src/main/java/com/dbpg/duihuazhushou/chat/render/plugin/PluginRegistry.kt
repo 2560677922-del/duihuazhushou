@@ -14,12 +14,54 @@ import android.util.Log
  * 没装插件 / 全 Pass / apiVersion 不匹配 / scope 不匹配 → 返回 null，
  * `ChatController.decideRender` 随即走原逻辑，效果逐字节不变。
  */
+/**
+ * 最近一次渲染的诊断快照（只在内存里，不落盘、不写会话）。
+ *
+ * ★ 给插件设置页的「渲染自检」用：以后预设换了写法、或怀疑插件没生效，
+ *   不用猜、也不用连电脑抓日志 —— 设置页直接能看到「主 App 送进来的 rich
+ *   长什么样、每个插件认没认领、最后产出多少字符」。
+ */
+data class RenderDiagnostic(
+    val at: Long,
+    val richLength: Int,
+    val richHead: String,
+    val htmlified: Boolean,
+    val claims: List<Pair<String, Boolean>>,
+    val winner: String?,
+    val outputLength: Int?,
+    val note: String,
+)
+
 object PluginRegistry {
 
     private const val TAG = "RenderPlugins"
     private val lock = Any()
 
     @Volatile private var disposables: Map<String, Disposable> = emptyMap()
+
+    @Volatile var lastDiagnostic: RenderDiagnostic? = null
+        private set
+
+    private fun record(
+        rich: String,
+        claims: List<Pair<String, Boolean>>,
+        winner: String?,
+        outputLength: Int?,
+        note: String,
+    ) {
+        // 只截前 160 字符；换行画成 ⏎ 方便在设置页里读
+        val head = rich.take(160).replace("\n", "⏎").replace("\r", "")
+        lastDiagnostic = RenderDiagnostic(
+            at = System.currentTimeMillis(),
+            richLength = rich.length,
+            richHead = head,
+            htmlified = rich.contains("<br", ignoreCase = true),
+            claims = claims,
+            winner = winner,
+            outputLength = outputLength,
+            note = note,
+        )
+    }
 
     /** 当前预设下、已安装且已启用且契约兼容的插件，按优先级降序。设置页也用它展示仲裁顺序。 */
     fun activeCandidates(ctx: Context, presetId: String): List<PluginDescriptor> {
@@ -43,21 +85,32 @@ object PluginRegistry {
      */
     fun resolveHtml(ctx: Context, rich: String, meta: PluginRenderMeta): String? {
         val installed = PluginStore.installed(ctx)
-        if (installed.isEmpty()) return null            // 零插件：极快返回
+        if (installed.isEmpty()) {
+            record(rich, emptyList(), null, null, "没有安装任何插件 → 内置渲染原样工作")
+            return null                                 // 零插件：极快返回
+        }
         val enabled = PluginStore.enabled(ctx)
         val live = PluginCatalog.ALL.filter { p ->
             val d = p.descriptor
             d.id in installed && d.id in enabled &&
                 d.apiVersion == PLUGIN_API_VERSION && d.scope.matches(meta.presetId)
         }.sortedByDescending { it.descriptor.priority }
-        if (live.isEmpty()) return null
+        if (live.isEmpty()) {
+            record(rich, emptyList(), null, null, "插件都未启用 / 契约或范围不匹配 → 回退内置")
+            return null
+        }
 
-        val candidates = live.filter { p ->
-            runCatching { p.claim(rich, meta) }.onFailure {
+        val claims = live.associate { p ->
+            p.descriptor.id to runCatching { p.claim(rich, meta) }.onFailure {
                 Log.w(TAG, "插件 ${p.descriptor.id} claim 失败，跳过", it)
             }.getOrDefault(false)
         }
-        if (candidates.isEmpty()) return null
+        val claimList = claims.toList()
+        val candidates = live.filter { claims[it.descriptor.id] == true }
+        if (candidates.isEmpty()) {
+            record(rich, claimList, null, null, "全部放行 → 这条消息不是插件负责的写法")
+            return null
+        }
         if (candidates.size > 1) {
             Log.w(
                 TAG,
@@ -73,9 +126,15 @@ object PluginRegistry {
                 ctx.applicationContext.assets.open(path).bufferedReader().use { it.readText() }
             }.getOrNull()
         })
-        return runCatching { winner.render(rich, enriched) }.onFailure {
+        val out = runCatching { winner.render(rich, enriched) }.onFailure {
             Log.w(TAG, "插件 ${winner.descriptor.id} 渲染失败，回退内置", it)
         }.getOrNull()
+        record(
+            rich, claimList, winner.descriptor.id, out?.length,
+            if (out == null) "渲染返回 null（模板读不到 / 无面板结构）→ 回退内置"
+            else "已产出卡片，交给 WebView / iframe",
+        )
+        return out
     }
 
     private fun ensureActive(plugin: RenderPlugin) {

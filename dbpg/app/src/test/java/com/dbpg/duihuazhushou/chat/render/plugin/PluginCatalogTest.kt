@@ -303,6 +303,59 @@ class PluginCatalogTest {
         assertTrue("闭合围栏仍要独占一行", out.contains("</html>" + NL + "```"))
     }
 
+    /**
+     * ★ 真实 App 的输入形态：`transformForDisplayRich` 会把普通消息的 `\n`
+     *   全部转成 `<br>`（`ImageMarker.kt:272` → `htmlifyNewlines`）。
+     *   插件拿到的是**一整行 HTML**，不是按行的 Markdown —— 旧实现按 `\n`
+     *   分行、要求 `---` 独占一行，于是 claim 恒为 false。这就是「沙盒里
+     *   复刻成功、APK 里没出来」的真正断点。
+     */
+    private val brRich = listOf(
+        "午后的阳光穿透半闭的百叶窗，在原木色的地板上切割出七八条明暗交替的狭长光斑。",
+        "你仰起头，看着白色的天花板，大腿上的白丝在昏暗的光线里泛着一层淡淡的、犹如珍珠般的哑光。",
+        "",
+        "---",
+        "",
+        "本段剧情发生在午后的一间小卧室里。详细描写了神宫雏首次出场的外貌特征：幼态娇憨的脸蛋、八字刘海，以及身穿宽大草莓卫衣与白丝袜的穿着细节，最后她放下手机仰面靠在地板上稍作休息。",
+        "😏 拿起手机，打开前置摄像头，稍微调整一下卫衣",
+        "😂 门外突然传来敲门声，伴随着母亲喊你出去帮忙",
+        "🥺 觉得地板有点凉，你双手撑着地毯站起身",
+        "喵呼——！写完啦写完啦喵！快把草莓味小鱼干交出来吧喵！",
+        "(๑•̀ㅂ•́)و✧ 下一步你想怎么走？快选一个，或者自己写回复喵！",
+    ).joinToString("<br>")
+
+    @Test
+    fun panelAdapterClaimsHtmlifiedRichWithBrTags() {
+        assertTrue("真实 rich 是 <br> 形态时必须认领", panel.claim(brRich, meta))
+        val out = panel.render(brRich, assetMeta)!!
+        assertTrue(out.contains("```html"))
+        assertTrue("正文必须保留原始 <br> 形态，不能被改写成裸换行",
+            out.contains("犹如珍珠般的哑光") && out.contains("<br>"))
+        assertTrue("三个选项都要进模板",
+            out.contains("<option>拿起手机") && out.contains("<option>门外突然传来敲门声") &&
+                out.contains("<option>觉得地板有点凉"))
+        assertFalse("分隔线不该留在正文里变成一条孤立的横线",
+            out.substringBefore("```html").contains("---"))
+        assertFalse("幂等", panel.claim(out, meta))
+        // 真实主链路端到端：插件产物 → HtmlSanitizer.clean(allowScript=false)
+        // → 真 render.html 的 DHP.render()。用来回答「气泡层有没有问题」。
+        runCatching {
+            val dir = "/workspace/st-lab/plugin-slot"
+            java.io.File("$dir/kotlin_br_output.txt").writeText(out)
+            java.io.File("$dir/kotlin_br_sanitized.txt")
+                .writeText(com.dbpg.duihuazhushou.chat.render.HtmlSanitizer.clean(out, false))
+        }
+    }
+
+    @Test
+    fun panelAdapterClaimsRichWithHrTag() {
+        val hrRich = brRich.replace("<br>---<br>", "<br><hr><br>")
+        assertTrue(panel.claim(hrRich, meta))
+        val out = panel.render(hrRich, assetMeta)!!
+        assertTrue(out.contains("```html"))
+        assertTrue(out.contains("<option>拿起手机"))
+    }
+
     @Test
     fun panelAdapterPassesWhenNoPanelStructure() {
         val noDivider = "剧情正文。" + NL + "😏 选项一" + NL + "😏 选项二"

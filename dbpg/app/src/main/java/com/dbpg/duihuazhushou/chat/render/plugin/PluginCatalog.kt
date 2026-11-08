@@ -290,6 +290,54 @@ private object PanelDataAdapter : RenderPlugin {
         RegexOption.IGNORE_CASE,
     )
 
+    /**
+     * ★★ 真机断点的根因（本轮修正的核心）。
+     *
+     * 主 App `transformForDisplayRich`（`ImageMarker.kt:272`）送来的 rich 有**两种形态**：
+     *   - 消息里含整页 HTML 卡片 → `isFullHtmlDocument` 命中，原样保留 `\n`；
+     *   - 普通消息 → 走 `htmlifyNewlines`，每个 `\n` 变成 `<br>`，整条消息
+     *     变成**一整行 HTML**，`---` 也不再独占一行。
+     *
+     * 旧插件只按 `\n` 分行、要求 `---` 独占一行 —— 沙盒单测喂的是原始 Markdown
+     * 所以一路全绿，真机拿到 `<br>` 形态却恒为 `claim=false`。这正是「你那边
+     * 复刻出来了、我这边 APK 里没出来」的原因，与气泡 / WebView / iframe 无关。
+     *
+     * 修法：**等长归一化**。把 `<br>` / 块级闭合标签换成 `\n` + 等长空格，
+     * `<hr>` 换成 `\n---` + 等长空格。字符偏移与原始 rich 完全一致，于是
+     * 「扫描用的行坐标」可以直接切原始字符串：head 保留 `<br>` 原样（正文格式
+     * 不乱），tail 用归一化视图做散文拆分。两种输入、同一套判据。
+     */
+    private val BR_TAG = Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE)
+    private val HR_TAG = Regex("""<hr\s*/?>""", RegexOption.IGNORE_CASE)
+    private val BLOCK_END = Regex(
+        """</(?:p|div|li|h[1-6]|section|tr|blockquote)\s*>""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val INLINE_TAG = Regex("""</?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^>]*)?/?>""")
+    private val ZERO_WIDTH = Regex("""&#8203;|&#x200b;|&ZeroWidthSpace;|\u200B""", RegexOption.IGNORE_CASE)
+
+    private fun lineBreak(len: Int): String = "\n" + " ".repeat((len - 1).coerceAtLeast(0))
+
+    private fun scanView(rich: String): String {
+        var s = BR_TAG.replace(rich) { m -> lineBreak(m.value.length) }
+        s = BLOCK_END.replace(s) { m -> lineBreak(m.value.length) }
+        s = HR_TAG.replace(s) { m ->
+            // `<hr>` 恰好 4 字符 → "\n---"（4 字符）；更长的写法尾部补空格保持等长
+            "\n---" + " ".repeat((m.value.length - 4).coerceAtLeast(0))
+        }
+        return s
+    }
+
+    /** 面板区散文行：剥行内标签、解常见实体，别把 HTML 塞进 `<option>` 里显示成源码。 */
+    private fun plainOf(line: String): String {
+        var s = INLINE_TAG.replace(line, "")
+        s = ZERO_WIDTH.replace(s, "")
+        s = s.replace("&lt;", "<").replace("&gt;", ">")
+            .replace("&quot;", "\"").replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+        return s.trim()
+    }
+
     /** 面板区末尾的引导语，不算选项也不算正文。 */
     private val HINT_LINE = Regex("""下一步.{0,10}(怎么走|想怎么|选)|快选一个|自己写回复|请选择回应""")
 
@@ -343,10 +391,12 @@ private object PanelDataAdapter : RenderPlugin {
      *   开头就有预设「思维链折叠 2.5」吐出的整页折叠栏，旧判据会让整条消息
      *   被放行，散文面板永远补不出来。折叠栏 / 状态栏与面板本就可以同条共存。
      */
-    private fun hasPanelCard(rich: String): Boolean =
-        fenceRanges(rich).any { r ->
-            PANEL_CARD_MARK.containsMatchIn(rich.substring(r.first, minOf(r.last + 1, rich.length)))
+    private fun hasPanelCard(rich: String): Boolean {
+        val view = scanView(rich)
+        return fenceRanges(view).any { r ->
+            PANEL_CARD_MARK.containsMatchIn(view.substring(r.first, minOf(r.last + 1, view.length)))
         }
+    }
 
     private data class PanelSpan(
         /** tail 起点（分隔线之后，或散文面板第一行）。 */
@@ -366,14 +416,18 @@ private object PanelDataAdapter : RenderPlugin {
      * 两条路径都只扫围栏外的行，卡片内部的 `---` / 符号行不会误判。
      */
     private fun findPanelSpan(rich: String): PanelSpan? {
-        val ranges = fenceRanges(rich)
-        val lines = linesOf(rich)
+        // 在归一化视图上扫描；等长替换保证这里的行坐标能直接切回原始 rich
+        val view = scanView(rich)
+        val ranges = fenceRanges(view)
+        val lines = linesOf(view)
         fun inFence(off: Int) = ranges.any { off >= it.first && off <= it.last }
 
         val dividers = lines.filter { !inFence(it.start) && DIVIDER_LINE.matches(it.text.trim()) }
         var headEnd = -1
         val start = if (dividers.isNotEmpty()) {
-            headEnd = dividers.last().start
+            // 停在前一个行边界（也就是那个 `<br>` / `\n` 的第一个字符）之前，
+            // 别把标签劈成半个 `<` 留在正文里，也别把 --- 留成一条孤立横线
+            headEnd = (dividers.last().start - 1).coerceAtLeast(0)
             minOf(dividers.last().end + 1, rich.length)
         } else {
             var curStart = -1
@@ -423,8 +477,9 @@ private object PanelDataAdapter : RenderPlugin {
         if (hasPanelCard(rich)) return null
         val span = findPanelSpan(rich) ?: return null
         if (span.optionCount < 2 || !span.narrative) return null
+        // head 取原始 rich（保留主 App 的 <br> 排版），tail 取归一化视图（可按行拆）
         val head = rich.substring(0, span.headEnd).trimEnd()
-        val p = splitPanel(rich.substring(span.start))
+        val p = splitPanel(scanView(rich).substring(span.start))
         if (p.options.size < 2) return null
 
         val tags = StringBuilder()
@@ -446,7 +501,7 @@ private object PanelDataAdapter : RenderPlugin {
         val summary = StringBuilder()
         val comment = StringBuilder()
         for (raw in tail.lines()) {
-            val line = raw.trim()
+            val line = plainOf(raw)
             if (line.isEmpty() || HINT_LINE.containsMatchIn(line)) continue
             if (isOptionStart(line)) {
                 val t = stripPrefix(line)
@@ -466,7 +521,7 @@ private object PanelDataAdapter : RenderPlugin {
         // 一条选项都没识别到时，退化为「按行当选项」——对齐模板自带的
         // looseOptionLinesFromHtml 兜底，至少不让面板空着。
         if (opts.isEmpty()) {
-            tail.lines().map { it.trim() }
+            tail.lines().map { plainOf(it) }
                 .filter { it.isNotEmpty() && !HINT_LINE.containsMatchIn(it) }
                 .map { stripPrefix(TAG_SHELL.replace(it, "").trim()) }
                 .filter { it.length >= 2 }

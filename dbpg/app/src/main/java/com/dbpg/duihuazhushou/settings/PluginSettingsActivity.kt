@@ -10,6 +10,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.dbpg.duihuazhushou.Insets
 import com.dbpg.duihuazhushou.R
+import com.dbpg.duihuazhushou.appearance.AppearanceConfig
+import com.dbpg.duihuazhushou.chat.render.HtmlMessageView
 import com.dbpg.duihuazhushou.chat.render.plugin.PLUGIN_API_VERSION
 import com.dbpg.duihuazhushou.chat.render.plugin.PluginCatalog
 import com.dbpg.duihuazhushou.chat.render.plugin.PluginDescriptor
@@ -33,6 +35,9 @@ class PluginSettingsActivity : Activity() {
 
     private lateinit var listBox: LinearLayout
     private lateinit var arbText: TextView
+    private lateinit var diagText: TextView
+    private lateinit var previewHost: LinearLayout
+    private var previewWeb: HtmlMessageView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -94,6 +99,10 @@ class PluginSettingsActivity : Activity() {
         listBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(listBox, matchWidth())
 
+        // 渲染自检：把主 App 送进来的 rich 形态、插件认领结果直接摊开给用户看，
+        // 再用内置模板走一遍**同一条气泡通道**，一眼分清「插件没生效」还是「气泡没渲染」。
+        root.addView(diagnosticCard(), cardParams())
+
         root.addView(
             infoCard(
                 "以后预设换了写法怎么办：卸载旧插件、在插件库里内置一条新约定即可，主渲染管线一行都不用改。\n\n" +
@@ -115,6 +124,13 @@ class PluginSettingsActivity : Activity() {
         if (::listBox.isInitialized) refresh()
     }
 
+    override fun onDestroy() {
+        // 设置页自己造的 WebView 自己销毁，不带累聊天页那一批
+        previewWeb?.destroy()
+        previewWeb = null
+        super.onDestroy()
+    }
+
     // ------------------------------------------------------------ 刷新
 
     private fun refresh() {
@@ -133,6 +149,115 @@ class PluginSettingsActivity : Activity() {
         } else {
             "仲裁顺序：" + candidates.joinToString(" → ") { it.name } + "（同时认领时只有第一个生效）"
         }
+        refreshDiagnostic()
+    }
+
+    /** 主 App 送进来的 rich 是「原样 \n」还是「<br> HTML」、插件认没认领，全摊开。 */
+    private fun refreshDiagnostic() {
+        if (!::diagText.isInitialized) return
+        val d = PluginRegistry.lastDiagnostic
+        diagText.text = if (d == null) {
+            "还没有渲染记录。回聊天生成 / 重新生成一条消息，再回这里点「刷新诊断」即可。"
+        } else {
+            buildString {
+                append("输入形态：")
+                    .append(if (d.htmlified) "HTML 化（含 <br>，已按行归一化）" else "原样换行文本")
+                    .append(" · rich 长度 ").append(d.richLength).append(" 字符\n")
+                append("插件认领：").append(
+                    if (d.claims.isEmpty()) "（无可用插件）"
+                    else d.claims.joinToString("，") { "${it.first}=${if (it.second) "是" else "否"}" },
+                ).append('\n')
+                append("生效插件：").append(d.winner ?: "无（全部放行）")
+                    .append(" · 产出 ").append(d.outputLength?.toString() ?: "0").append(" 字符\n")
+                append("结果：").append(d.note).append('\n')
+                append("rich 开头：").append(d.richHead)
+            }
+        }
+    }
+
+    /**
+     * 自检渲染：直接用 APK 内置的预设模板 + 固定标签，走和聊天气泡完全相同的
+     * HtmlMessageView / render.html / iframe srcdoc 通道。能看到 01/02/03 三个
+     * 选项就说明气泡层没问题，问题在插件输入或认领；看不到就是气泡层坏了。
+     */
+    private fun togglePreview() {
+        if (previewWeb != null) {
+            previewHost.removeAllViews()
+            previewWeb?.destroy()
+            previewWeb = null
+            previewHost.visibility = View.GONE
+            return
+        }
+        val tmpl = runCatching {
+            assets.open("plugins/meowssiah_panel.html").bufferedReader().use { it.readText() }
+        }.getOrNull()
+        if (tmpl == null || !tmpl.contains("__DHP_PANEL_DATA__")) {
+            diagText.text = "自检失败：读不到内置模板 assets/plugins/meowssiah_panel.html"
+            return
+        }
+        val tags =
+            "<summary>自检：这张卡片由 APK 内置的预设模板渲染，和聊天气泡走同一条 WebView / iframe 通道。</summary>\n" +
+                "<comment>能看到下面 01 / 02 / 03 三个选项，就说明气泡层没问题；看不到请把上面的诊断截图发我。</comment>\n" +
+                "<options>\n" +
+                "<option>选项一：插件没认领，看诊断里的「插件认领」</option>\n" +
+                "<option>选项二：输入形态不对，看诊断里的「输入形态」</option>\n" +
+                "<option>选项三：气泡层坏了，卸载插件回退</option>\n" +
+                "</options>"
+        val doc = tmpl.replace("__DHP_PANEL_DATA__", tags)
+        val html = "```html\n" + doc + (if (doc.endsWith("\n")) "" else "\n") + "```"
+        val web = HtmlMessageView(this)
+        previewWeb = web
+        previewHost.addView(
+            web,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(520)),
+        )
+        web.heightListener = HtmlMessageView.HeightListener { px ->
+            val lp = web.layoutParams ?: return@HeightListener
+            if (lp.height != px) {
+                lp.height = px
+                web.layoutParams = lp
+            }
+        }
+        web.bind(html, HtmlMessageView.cssOf(AppearanceConfig()))
+        previewHost.visibility = View.VISIBLE
+    }
+
+    private fun diagnosticCard(): View {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundResource(R.drawable.bg_card)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+        }
+        card.addView(TextView(this).apply {
+            text = "渲染自检 · 最近一条消息"
+            textSize = 15f
+            setTextColor(Color.parseColor("#1A2230"))
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        })
+        diagText = TextView(this).apply {
+            textSize = 12f
+            setTextColor(Color.parseColor("#5A6B85"))
+            setLineSpacing(dp(2).toFloat(), 1f)
+            val lp = matchWidth()
+            lp.topMargin = dp(8)
+            layoutParams = lp
+        }
+        card.addView(diagText)
+        val acts = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            setPadding(0, dp(8), 0, 0)
+        }
+        acts.addView(actionButton("用内置模板自检渲染") { togglePreview() })
+        acts.addView(actionButton("刷新诊断") { refreshDiagnostic() })
+        card.addView(acts, matchWidth())
+        previewHost = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(0, dp(10), 0, 0)
+        }
+        card.addView(previewHost, matchWidth())
+        return card
     }
 
     private fun changed(block: () -> Unit) {
