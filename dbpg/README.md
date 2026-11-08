@@ -1,450 +1,225 @@
-# dbpg — 冒险模拟器 Android 工程
+# dbpg · 冒险模拟器（Android 原生聊天）
 
-> ## ⚠ 先读这里：这是「原生优先」App，不是网页套壳（2026-11-08 更新）
->
-> 本文下面「把 Vue 打包成 APK」描述的是**最早的套壳形态**，现状已经变了：
->
-> - **用户在手机上看到的界面，全部是原生 Kotlin**：首页 / 会话列表 / 聊天 / 设置 / 资产 / 生图 / 图库，都在 `app/src/main/java/com/dbpg/duihuazhushou/`。
-> - **网页（上一级 `src/`，构建产物 `dist` → `assets/www/`）只剩对话引擎**：SillyTavern 兼容层（预设 / 正则 / 世界书 / 角色卡 / 变量 / 宏）+ 生成请求组装。它跑在 1dp、`alpha=0` 的隐藏 WebView 里，**用户看不到**，相当于后端。
-> - 一句话：**要改用户看得见的界面 → 改 `app/src/main/...`（原生）；要改 ST 兼容 / 生成逻辑 → 改 `src/`（web 引擎）。**
->
-> ### 外观系统在哪（最容易改错的地方）
->
-> | 想改 | 改这里 | ❌ 不要改 |
-> | --- | --- | --- |
-> | App 设置页本身 | `appearance/SettingsActivity.kt` + `res/layout/activity_settings.xml` | `src/views/Settings.vue` |
-> | 外观数据（字号/行距/字体/颜色/气泡/背景） | `appearance/Appearance.kt`（SharedPreferences） | `src/stores/appearance.ts` |
-> | 主题色 / 页面底色 / 装饰 / 全界面字体套用 | `appearance/Theme.kt` | `src/styles/main.css` |
-> | 聊天气泡渲染（文字/图片/版本条） | `chat/ChatAdapter.kt` | web 的聊天组件 |
->
-> `src/views/Settings.vue`、`src/stores/appearance.ts` 是**引擎内部页**，只有用浏览器跑
-> `npm run dev` 才看得到；**改它们不会改变 APK 的设置页**。这个坑已经踩过一次。
->
-> ### 底板 / 图标规范（2026-11 统一，改之前先看这段）
->
-> **底板（卡片、按钮、顶栏、输入栏、弹窗）只有一套色，来自 `ThemeTokens.panel`。**
->
-> - 颜色由 `appearance/Theme.kt` 的 `ThemePalette.tokensOf(cfg)` 算：
->   页面底色 + `panelOpacity`（设置里的「底板不透明度」）+ 明暗推导。
-> - 再由 `UiBackdrop.apply()` → `View.applyTokens()` **递归**套到每个 View 的 background 上，
->   判据是「填充色亮度 + 饱和度」，不是逐个登记 drawable 名字。
->   所以新写一个白色卡片，不用改代码也会自动跟随。
-> - **不要**在布局里新加 `android:background="#FFFFFF"` 这种实心白去"手动对齐"——
->   它会先按白色渲染一帧，再被递归覆盖，白白多一次闪烁。用 `@drawable/bg_card` 就行。
-> - 想加一套新皮肤：往 `ThemePalette.STYLES` 加一条 `(id, 名称, 底色, 主题色)`，
->   设置页会自动多一个选项；深色底的单子会自动翻白字（`tokensOf` 按底色亮度判 dark）。
->
-> **图标一律用 VectorDrawable（Android 版的 SVG），不要用 emoji。**
->
-> - 现成的在 `res/drawable/ic_*.xml`：24dp viewport、线宽 1.7、`strokeColor="#5A6B85"`。
-> - 布局里这样用（**必须带 `android:tint`**，否则 `UiBackdrop` 换主题色时染不到它）：
->   ```xml
->   <ImageView
->       android:layout_width="24dp"
->       android:layout_height="24dp"
->       android:src="@drawable/ic_palette"
->       android:tint="#5A6B85" />
->   ```
-> - emoji（🎭🎨📦…）在不同 ROM 上字体不同、大小对不齐，看着廉价，已经全部替换掉了。
->
-> **两个已知的 Android 限制（别踩）**
->
-> 1. `GradientDrawable` 没有 `getStrokeWidth()`，只有 `setStroke()`。
->    所以描边**不能**只换色——无条件 `setStroke` 会给本来没描边的 shape 硬加一圈框。
->    描边保留 XML 原值（浅灰 `#EBEFF6`）。
-> 2. RecyclerView 的 item 是滚动时现 inflate 的，一次性递归覆盖不到。
->    所以 `UiBackdrop.hookRecycler()` 会给每个 RecyclerView 挂
->    `OnChildAttachStateChangeListener`，新项进场时按**当前** token 补色。
->    自己写新的列表页时不用额外做什么，只要根布局里有 RecyclerView 就会自动挂上。
+一个**原生 Android 聊天 App**，兼容 SillyTavern 生态：导入 ST 预设即可用它的提示词顺序、正则、变量和前端卡片，不需要改预设、也不需要为某个预设写适配。
 
-> ### 渲染与上下文（2026-11-08 新增，改之前先看）
->
-> 设置首页 → **「渲染与上下文」**（`appearance/RenderSettingsActivity.kt` +
-> `res/layout/activity_render_settings.xml`）。它管两件事，都**不在**外观系统里：
->
-> | 想改 | 改这里 | 说明 |
-> | --- | --- | --- |
-> | 美化渲染开关 / 卡片脚本 | `appearance/Appearance.kt`（`htmlRender` / `allowScript`） | 从「UI 风格」页迁到这里，旧页已删掉这两项，别再加回去 |
-> | 卡片怎么画 | `chat/render/CardRenderer.kt` + `ChatAdapter.kt` | 列表里是**位图**（ImageView），不是 WebView |
-> | 点卡片看全文 | `chat/render/CardViewerActivity.kt` | 全屏单例 WebView，可选中、可跑脚本 |
-> | 摘要参数 | `summary/SummaryConfig.kt` | SharedPreferences `dhp_summary` |
-> | 摘要请求 | `summary/SummaryService.kt` | 原生 OkHttp 直连，**不走 web 生成通道** |
-> | 摘要注入上下文 | `stcore/session/SessionHistory.kt` | 被覆盖的轮次不再发原文 |
-> | 「带预设」到底带什么 | `../src/engine/summaryPreset.ts` | 预设全量带；角色卡/世界书宏清空 |
->
-> **三条铁律：**
->
-> 1. **列表里不要塞 WebView**。以前 `item_chat_message.xml` 每条一个 WebView，
->    滚出屏幕再回来就重载一次 —— 这是"一顿一顿"的直接原因。现在是
->    `CardRenderer` 离屏画一张 WebP，`CardBitmaps` 解码 LRU 复用。
-> 2. **摘要 ≠ 扮演**。摘要请求里只带「预设 + 上下文」，
->    角色卡、世界书、正则一律不带。预设要**全量**带（砍一半就失效），
->    只把角色卡类宏（`{{description}}` 等）替换为空。
-> 3. **`keepRecent` 不存在**。触发阈值 10、单次取 8，差值天然留下最近 2 条原文。
->    不要再加一个"保留最近 N 条"，会让触发点漂移。
->
-> 摘要入口在聊天页右上角（`chat_summary`）：查看 / 编辑 / 立即浓缩 / 清除。
-> 摘要有变化时图标变主题蓝，跑任务时会变淡。
-
-把上一级目录（`duihuazhushou/`）的 Vue + Vite 网页应用打包成 Android APK。
-
-**这个目录是完全独立的 Android 工程。** 没有改动 Web 工程里的任何源码文件，
-只是构建时去读它的构建产物 `../dist`。
-
-- 包名 `com.dbpg.duihuazhushou`
-- 当前版本 `versionName 1.0.4` / `versionCode 6`
-- 产物 `app\build\outputs\apk\debug\app-debug.apk`，约 5.6 MiB（5,904,206 字节）
+- 包名 `com.dbpg.duihuazhushou` · `versionName 1.1.1` / `versionCode 8`
+- `minSdk 24`（Android 7.0+）· `compileSdk 37` · **无第三方依赖**（不引 androidx / material）
+- APK ≈ 5.5 MB
 
 ---
 
-## 一、最快的用法：双击 `build-apk.cmd`
+## 1. 它现在是什么
 
-在 `dbpg/` 目录里双击 `build-apk.cmd`（或右键 → 运行），它会依次做：
+三层，职责边界很清楚：
 
-```
-1. 在上一级目录跑 npm run build      （生成 dist）
-2. 同步 Web 资源进 APK 的 assets
-3. 跑 gradlew :app:assembleDebug      （生成 APK）
-```
+| 层 | 位置 | 负责 | 不负责 |
+| --- | --- | --- | --- |
+| 原生 UI | `app/src/main/java/...` + `res/` | 所有看得见的界面：会话、聊天、设置、资产、角色卡、生图、图库 | 不解析预设、不拼提示词 |
+| 显示引擎 | `stcore/`（纯 Kotlin，可跑 JVM 单测） | 显示正则、宏、变量、思维链剥离、图片标记、富文本分块 | 不碰网络、不碰 Android |
+| 生成引擎 | `../src`（Vue 时代的 ST 兼容层，产物 `../dist` → `assets/www/`） | 提示词组装、ST 资产解析、请求构建 | **没有界面**，跑在 1dp 透明 WebView 里 |
 
-产物在：
+> **一句话：生成归 web 引擎，显示归 stcore，界面归原生。** 三层之间只通过 JSON 传数据，谁也不 import 谁。
 
-```
-dbpg\app\build\outputs\apk\debug\app-debug.apk
-```
-
-拷到手机上安装即可（第一次需要开启「允许安装未知来源应用」）。
-debug 签名的包可以直接装，手机上显示为「Android Debug」证书。
-
-> 第一次跑会下载 Gradle 9.8.0（145 MB）和 AGP 依赖，需要联网，大概几分钟。
-> 之后就是本地缓存，十几秒。
->
-> **本机已实测跑通**（见文末「十、实测记录」）。
+网页界面（Vue / router / views）已经物理删除，`src/` 只剩引擎。想找旧界面：`git log --diff-filter=D -- src/views`，不建议恢复 —— 两套 UI 并存必然漂移，这个坑踩过一次。
 
 ---
 
-## 二、首次需要装什么
+## 2. 已经做好的功能
 
-| 工具 | 为什么需要 | 下载地址 |
-|---|---|---|
-| Node.js | 构建 Web 版本 | https://nodejs.org |
-| Android Studio | 自带 JBR（JDK 25）和 Android SDK | https://developer.android.com/studio |
+**聊天**
 
-装好 Android Studio 后**先打开它、随便新建一个 Empty Activity 项目、等它初始化完再关掉**。
-这一步是为了让它把 Android SDK 安装到本地（脚本会自己去这几个位置找 SDK）：
+- 流式输出、停止、重新生成（**带预设**）、重发、编辑、复制、删除
+- 一条消息多个版本：`‹ ›` 左右翻，重新生成不会丢旧回答
+- 点 AI 气泡分出新会话（分支），长按出操作面板
+- 摘要：手动 / 自动浓缩，被覆盖的轮次用摘要替代原文再进上下文
+- 配图：手动生图、自动配图、图库、图片查看器
 
-```
-%LocalAppData%\Android\Sdk
-%LocalAppData%\Programs\Android Studio\sdk
-%ProgramFiles%\Android\Android Studio\sdk
-```
+**渲染（本项目的重点）**
 
-找不到的话，就在 Android Studio 里 `Settings → Languages & Frameworks → Android SDK`
-看一眼 SDK 路径，然后手动在 `dbpg/` 下新建一个 `local.properties`：
+- Markdown / 裸 HTML / **整页 HTML 卡片**三种形态自动分流
+- 卡片走 `iframe srcdoc` 沙箱：作者 CSS/JS 原样生效，高度自动回传，横滚锁死
+- `<details>` 折叠、面板内 `<summary>`、自定义标签（`<xy-card>` 之类）都能渲染
+- **卡片里的选项按钮可以点**：按 ST 契约接上 `window.SillyTavern` 与 `#send_textarea`，支持「直接发送 / 填入 / 追加」
 
-```
-sdk.dir=C:/Users/你的用户名/AppData/Local/Android/Sdk
-```
+**SillyTavern 生态**
 
-**路径必须用正斜杠**，不要用反斜杠。`.properties` 文件里反斜杠是转义符，
-`C:\Users\...` 会被读成 `C:Users...`（`\U`、`\A` 这些非法转义会直接把反斜杠吃掉），
-结果就是 `SDK location not found`。另外保存时别带 UTF-8 BOM。
-脚本 `build-apk.cmd` 自动探测时用 Node 写入，已经处理了这两点。
+| 资产 | 支持情况 |
+| --- | --- |
+| 预设 | 导入 `.json`；`prompts[]` 库 + `prompt_order` 顺序 + 未激活项；54 条提示词正常 |
+| 正则 | `extensions.regex_scripts` 全字段：placement、trimStrings、markdownOnly / promptOnly、substituteRegex、minDepth / maxDepth、`$0/$n/$<name>/{{match}}` |
+| 宏 | `{{char}} {{user}} {{persona}} {{getvar::}} {{setvar::}} {{random::}} {{pick::}} {{roll::}} {{time}} {{date}} {{// 注释}}` 等 |
+| 世界书 | 导入、条目、注入位置；会话可绑定 |
+| 角色卡 | PNG 卡解析、列表、详情、导入 |
+| 变量 | session / global 两张表；写宏只在「用户发送」「回复落库」两个入口执行 |
 
-**想直接在 Android Studio 里打的话**：`File → Open` 选 `dbpg/` 目录，等 Gradle 同步完，
-菜单 `Build → Build Bundle(s)/APK(s) → Build APK(s)` 即可。
+**插件位（卡片渲染）**
 
----
+- 内置 1 个插件「通用前端卡渲染器」（id `panel_data_adapter`），**只做渲染、不生成内容**
+- 随时可安装 / 卸载 / 停用；内置插件**不可删除**（库必须在）
+- 单 renderer 仲裁 + `RenderDiagnostic`（认领判据、探针、产出长度）可自查
 
-## 三、目录结构
+**外观**
 
-```
-dbpg/
-├─ build-apk.cmd                 一键打包脚本
-├─ local.properties              SDK 路径（.gitignore 已排除，脚本会自动生成）
-├─ settings.gradle.kts           工程设置（不引任何第三方库）
-├─ build.gradle.kts              根脚本，只声明 AGP 9.4.1
-├─ gradle.properties             内存/编码参数
-├─ gradlew(.bat)                 Gradle 包装脚本（会自动找 Android Studio 自带的 JBR）
-├─ gradle/wrapper/               wrapper jar + 指向腾讯镜像的 Gradle 9.8.0
-│
-├─ app/
-│  ├─ build.gradle.kts           ★ Web 资源同步 + index.html 注入
-│  └─ src/main/
-│     ├─ AndroidManifest.xml     权限（INTERNET）、主题、单 Activity
-│     ├─ java/com/dbpg/duihuazhushou/
-│     │  ├─ MainActivity.java    ★ WebView 容器 + 静态资源拦截 + 文件选择 + 下载
-│     │  └─ FileBridge.java      ★ 暴露给 JS 的文件读写（window.dhp）
-│     ├─ assets/vendor/
-│     │  └─ capacitor-compat.js  ★ 原生桥接垫片（构建时复制进 www 并注入）
-│     └─ res/                    图标（自适应 + PNG 兜底）、主题、颜色
-│
-└─ tools/
-   ├─ make-icons.cjs             生成全部图标（自适应 XML + PNG 兜底 + Web/PWA）
-   └─ fetch-wrapper.mjs          备用：wrapper jar 坏了用它重新拉（首选跑 gradle wrapper 任务）
-```
-
-带 ★ 的是三个关键文件，下面逐个说。
+- 主题 / 明暗 / 底板不透明度 / 强调色 / 字号 / 行距 / 字体型号 / 字体颜色 / 气泡宽度 / 背景图
+- 列表里卡片是**离屏位图**（`CardRenderer` + LRU），不是每条一个 WebView
 
 ---
 
-## 四、它是怎么把网页变成 App 的
-
-### 4.1 Web 资源怎么进去的
-
-`app/build.gradle.kts` 里有一个 `syncWeb` 任务挂在 `preBuild` 上，每次构建都会跑：
+## 3. 结构地图
 
 ```
-../dist/**                      → app/src/main/assets/www/
-app/src/main/assets/vendor/**   → app/src/main/assets/www/   （垫片）
+dbpg/                           Android 工程（本仓库）
+├─ build-apk.cmd                一键：npm run build → syncWeb → assembleDebug
+├─ settings.gradle.kts          include(":app", ":stcore")
+├─ README.md                    本文件
+├─ docs/                        架构 / 避坑 / 兼容性 / 验证 / 改动记录
+├─ stcore/                      纯 Kotlin 引擎（218 个单测）
+│  └─ src/main/java/com/dbpg/stcore/
+│     ├─ RegexEngine.kt         正则语义（与 ST 对齐 + 两处刻意不同）
+│     ├─ Macro.kt               宏（基础 / 带参 / 注释）
+│     ├─ Variables.kt           {{getvar}} {{setvar}} …
+│     ├─ ImageMarker.kt         显示链路总入口 transformForDisplayRich
+│     ├─ Reasoning.kt           思维链剥离
+│     ├─ richtext/              富文本解析（不含 Android 类型）
+│     ├─ session/               会话文档 / 编辑 / 导出 / 摘要
+│     └─ character/ imagegen/ jsonl/ render/
+└─ app/src/main/
+   ├─ assets/
+   │  ├─ www/                   引擎产物（syncWeb 生成，勿手改）
+   │  ├─ msg/                   消息渲染壳 render.html / render.js / render.css / marked
+   │  ├─ vendor/                capacitor 垫片
+   │  └─ plugins/               （空：插件已代码内置，不再放模板）
+   └─ java/com/dbpg/duihuazhushou/
+      ├─ NativeChatActivity.kt      聊天页（发送 / 生成 / 菜单 / 输入框）
+      ├─ chat/
+      │  ├─ ChatController.kt       渲染与生成的中枢（renderCached / decideRender）
+      │  ├─ ChatAdapter.kt          列表 + 富文本 ViewHolder + WebView 池
+      │  ├─ GenBridge.kt            原生 ↔ web 引擎的生成通道（按 requestId 找回界面）
+      │  ├─ DisplayConfig.kt        显示快照（scripts / vars / macroContext）
+      │  └─ render/                 CardRenderer（位图）/ HtmlMessageView（WebView）/ plugin/
+      ├─ session/                   会话列表 / 仓库 / 绑定 / 摘要入口
+      ├─ assets/                    资产页（预设 / 世界书 / 正则组）
+      ├─ character/                 角色卡
+      ├─ imagegen/ gallery/         生图 / 图库
+      ├─ settings/                  连接、模型、生图、插件、引擎桥
+      └─ appearance/                外观、主题、渲染设置
 ```
 
-然后 `patchWebIndex` 往 `assets/www/index.html` 的 `<head>` 里插两行：
+> 同级的 `src/`（引擎源码）与 `dist/`（引擎产物）属于另一个工程，**不在本仓库**。APK 构建时 `syncWeb` 会把 `../dist` 复制进 `app/src/main/assets/www/`；只改原生代码时不需要碰它们。
 
-```html
-<script type="importmap">{"imports":{"@capacitor/filesystem":"/capacitor-compat.js"}}</script>
-<script type="module" src="/capacitor-compat.js"></script>
-```
 
-这两行只存在于 APK 里。**Web 工程源码和 `dist` 目录都没被改过** —— 注入是写在
-`assets/www/`（这个目录在 `.gitignore` 里）这个副本上做的。
+**改什么去哪里**
 
-### 4.2 页面从哪个地址加载
-
-`MainActivity` 加载的是：
-
-```
-https://dbpg.local/index.html
-```
-
-`dbpg.local` 是个**虚构域名**，不会真的联网。所有对它的请求都在
-`shouldInterceptRequest` 里被拦下来，直接 `getAssets().open("www/" + path)` 返回内容。
-
-为什么不用 `file:///android_asset/...`，而要用一个假 https 域名：
-
-| 问题 | `file://` | `https://dbpg.local` |
-|---|---|---|
-| `/assets/xxx.js` 这种绝对路径 | origin 是文件路径，对不上 | ✅ 有正常域名根 |
-| `localStorage` / `IndexedDB` | ❌ opaque origin，直接失效 | ✅ 正常 |
-| ES module / import map | ❌ 被 CORS 拦 | ✅ 同域 |
-
-`localStorage` 和 `IndexedDB` 是关键 —— 项目里的 `localforage` 和 `storage.ts`
-全靠它俩，用 `file://` 打开的话配置和素材全部存不下来。
-
-### 4.3 手机端文件落盘是怎么打通的
-
-Web 工程里已经预留好了手机分支：
-
-- `src/lib/persist.ts`：先判断 `window.Capacitor.isNativePlatform()`，
-  是原生环境就走文件落盘，否则走 `__persist/` HTTP 接口（浏览器模式）；
-- `src/lib/persistFile.ts`：Capacitor 实现，
-  `import("@capacitor/filesystem")` 拿 `Filesystem` 插件，
-  把配置写成 `files/Data/app-data.json`，并自动备份最近 20 份。
-
-问题是这两个包并没有安装（`package.json` 里确实没有 `@capacitor/*`），
-源码里是用 `/* @vite-ignore */` 加动态 import 绕开打包器的，
-所以浏览器版本永远加载不到这个分支 —— **电脑端行为完全不受影响**。
-
-APK 这边用一个 7 KB 的垫片 `capacitor-compat.js` 补上最小可用实现：
-它只实现 `Filesystem` 插件里用到的那几个方法，背后走 `FileBridge` 的 JSBridge
-写到 App 的私有目录。这就是 4.1 里注入 import map 的意义 —— 把
-`@capacitor/filesystem` 这个裸导入映射到本地垫片。
+| 想改 | 改这里 | 别改 |
+| --- | --- | --- |
+| 看得见的界面 | `app/src/main/java/...` + `res/layout` | `src/views`（已删） |
+| 消息渲染 / 卡片 | `stcore`（语义）→ `chat/render/`（呈现） | `assets/www`（构建产物） |
+| 提示词 / 预设解析 | `../src` | `stcore`（它不拼提示词） |
+| 正则行为 | `stcore/RegexEngine.kt` | 别在插件里按预设打补丁 |
+| 卡片渲染增强 | `chat/render/plugin/PluginCatalog.kt` | 别改预设模板 |
 
 ---
 
-## 五、技术选型一览
+## 4. 消息是怎么显示出来的
 
-| 项 | 版本 | 说明 |
-|---|---|---|
-| AGP | 9.4.1 | 当前稳定版 |
-| Gradle | 9.8.0 | 默认走腾讯镜像，官方源写在 `gradle-wrapper.properties` 注释里 |
-| compileSdk / targetSdk | 37 | 必须等于本机 SDK 里实际装的平台版本 |
-| buildToolsVersion | 36.0.0 | 显式指定，免得 AGP 去下载默认版本 |
-| minSdk | 24 | Android 7.0+；7.0~7.1 用 PNG 图标，8.0+ 用自适应图标 |
-| Java | source/target 17 | 跑 Gradle 用 Android Studio 自带的 JBR 25 |
-| 第三方依赖 | **无** | 不引 androidx / material，Gradle 同步只需要下载 AGP，失败面最小 |
+```
+模型输出（原文，落库）
+   │
+   ├─ 剥思维链（Reasoning）            hideReasoning 开时
+   ├─ 显示正则（RegexEngine）          forDisplay=true：跳过 promptOnly
+   │     └─ 替换串里的宏 / 变量展开
+   ├─ 宏（expandMacrosForDisplay）     未知宏保留，不清空
+   ├─ 变量（readVariables）            写宏抹空，不改表
+   ├─ 图片标记 → 文字块 / 图片块
+   └─ 两路输出
+        ├─ plain  → 纯文本气泡（TextView + Spannable）
+        └─ rich   → decideRender
+                     ├─ 插件仲裁（PluginRegistry.resolveHtml）
+                     ├─ HtmlSanitizer.clean
+                     ├─ 有非 <br> 标签？
+                     │    ├─ 是 → HtmlMessageView（WebView + iframe srcdoc）
+                     │    └─ 否 → 原生文本 / <details> 折叠块
+```
 
-> **Gradle 版本不能随便降**：JBR 是 JDK 25，**JDK 25 要求 Gradle ≥ 9.1.0**。
-> AGP 9.x 要求 Gradle 9.x。AGP / Gradle / JDK 三者要一起动，别只改一个。
+要点：
+
+- **落库存原文**。ST 是把正则改写后的文本存进聊天记录，我们每次渲染重算 —— 所以「双 false 的普通正则」在显示和提示词两侧都要跑，这是**必要的差异**，不是 bug。
+- **只在渲染时跑正则**，不写回数据。改预设 / 改正则 / 改外观，缓存键变化，旧消息自动重算。
+- 缓存键 = `actionId + 内容哈希 + 外观哈希 + 深度`。深度只在存在 `minDepth/maxDepth` 脚本时参与，避免每条消息都失效。
+
+细节见 [`docs/架构.md`](docs/架构.md)。
 
 ---
 
-## 六、三个关键文件
+## 5. 十分钟跑起来
 
-### `MainActivity.java`
+**环境**：Node.js + Android Studio（自带 JBR 和 SDK）。首次打开 Android Studio 让它初始化一次 SDK。
 
-单 Activity WebView 容器。四件事：
+```bash
+# 1. 构建引擎产物（在 duihuazhushou/ 下）
+npm run build
 
-1. `shouldInterceptRequest` 拦截所有 `https://dbpg.local/*` 请求，从 assets 读文件返回，
-   带上正确的 `Content-Type`（`.js` → `application/javascript`，`.wasm` 等按扩展名推）；
-2. `WebChromeClient.onShowFileChooser` 接住网页的文件选择（导入/上传图片用）；
-3. `DownloadListener` 把 `<a download>` 的下载落到 App 的 `files/Download/` 目录；
-4. 顶部 `setWebContentsDebuggingEnabled(true)` —— 电脑连上手机后可以用
-   Chrome 的 `chrome://inspect` 看控制台，排问题必备。
+# 2. 打 APK（在 dbpg/ 下）
+./gradlew :app:assembleDebug
+#    或者直接双击 build-apk.cmd（会先跑 npm run build）
 
-### `FileBridge.java`
+# 3. 产物
+app/build/outputs/apk/debug/app-debug.apk
+```
 
-`@JavascriptInterface` 暴露给 JS 的桥。JS 侧调用形如 `window.dhp.api()`，
-提供读/写/列目录/删除/备份几个方法。所有路径都限制在 App 的私有目录内
-（先 resolve 再校验前缀，防止 `../` 逃逸）。
+只改原生代码、没动 `src/` 时可以跳过第 1 步（`syncWeb` 仍会复制 `../dist`，所以 `dist` 必须存在）。
 
-### `assets/vendor/capacitor-compat.js`
+**版本矩阵（不能只动一个）**：JDK 25 → Gradle ≥ 9.1；AGP 9.x → Gradle 9.x；`compileSdk` 必须等于本机装了的平台版本。当前是 AGP 9.4.1 / Gradle 9.8.0 / compileSdk 37 / buildTools 36.0.0。
 
-原生桥接垫片，详见 4.3。它同时挂两样东西：
-
-- `window.Capacitor`（含 `isNativePlatform()`，让 `persist.ts` 的环境判断成立）
-- `@capacitor/filesystem` 模块导出（让动态 import 拿到 `Filesystem`）
+`local.properties` 的 `sdk.dir` **必须用正斜杠**（`C:/Users/...`），反斜杠在 `.properties` 里是转义符，会把路径吃掉。
 
 ---
 
-## 七、常见报错
+## 6. 测试
 
-**`SDK location not found`**
-`local.properties` 不存在或路径写坏了。两种情况：
-- 没有这个文件 → 先打开一次 Android Studio 让它初始化 SDK，再跑 `build-apk.cmd`（会自动探测写入）。
-- 文件里是 `sdk.dir=C:\Users\...` 这种反斜杠 → 改成正斜杠 `C:/Users/...`。
-  反斜杠在 `.properties` 里是转义符，路径会被吃掉变成 `C:Users...`。
-
-**`Failed to find Build Tools revision` / `compileSdk 37 requires ...`**
-说明 `compileSdk` / `buildToolsVersion` 和本机 SDK 里装的版本对不上。
-先看看 `Android SDK\platforms` 和 `build-tools` 下到底有哪些版本，然后把
-`app/build.gradle.kts` 里的 `compileSdk` / `targetSdk` / `buildToolsVersion` 改成匹配的值。
-
-**Java 相关报错（`Unsupported class file major version` / `invalid target release`）**
-JDK 版本和 Gradle / AGP 不匹配。查一下本机 JBR 版本（`java -version`），
-对着「五、技术选型一览」把三个版本号对齐。
-
-**Gradle 下载卡住或 404**
-`gradle/wrapper/gradle-wrapper.properties` 里 `distributionUrl` 换成官方源：
-
-```
-distributionUrl=https\://services.gradle.org/distributions/gradle-9.8.0-bin.zip
+```bash
+./gradlew :stcore:test                  # 218 个：正则 / 宏 / 变量 / 思维链 / 会话 / 富文本
+./gradlew :app:testDebugUnitTest        # 14 个：插件契约 / 渲染判定
 ```
 
-**`JAVA_HOME is not set`**
-`gradlew.bat` 会自动找 Android Studio 的 JBR，但如果 Android Studio 装在
-它不认识的位置，就手动在命令行里先设一下再跑：
+`stcore` 不依赖 Android，能直接跑 JVM 单测 —— 这是它单独拆出来的主要理由：正则语义的坑（`$0`、trimStrings、双 true）只有靠单测才锁得住。
 
-```
-set JAVA_HOME=C:\路径\到\jbr
-gradlew.bat :app:assembleDebug
-```
+App 内还有两个自查入口：
 
-**APK 里是旧版本的页面**
-`syncWeb` 读的是 `../dist`。先在上一级目录跑一次 `npm run build` 再打包，
-或者直接用 `build-apk.cmd`（它会自动先跑）。
-
-**手机上配置改动不保存**
-用 Chrome 的 `chrome://inspect` 连设备看控制台有没有 `[dhp] 原生桥接已启用`。
-没有的话说明垫片没注入成功，检查 `assets/www/index.html` 里有没有 `importmap` 那两行。
-
-**手机上点导入没反应**
-`onShowFileChooser` 没接上。看 `MainActivity.java` 里 `AppWebChromeClient` 那段。
+- 设置 → 渲染与上下文 → **渲染自检**：输入形态 / rich 长度 / 各插件认领 / 生效插件 / 产出长度
+- 设置 → 插件 → **结构探针**：卡片后正文 N 行、选项行 M、分隔线 K
 
 ---
 
-## 八、想改什么
+## 7. 最容易踩的 8 个坑（完整版见 `docs/避坑清单.md`）
 
-| 改什么 | 改哪里 |
-|---|---|
-| 包名 | `app/build.gradle.kts` 的 `namespace` 和 `applicationId`，**加上** `app/src/main/java/` 下的包目录（必须一致） |
-| 版本号 | `app/build.gradle.kts` 的 `versionCode` / `versionName`。换名重装要 bump `versionCode`，否则覆盖安装会失败 |
-| App 名称 | `app/src/main/res/values/strings.xml` 的 `app_name` |
-| 图标 | 改 `tools/make-icons.cjs` 里的 `SHAPES` 和 `C`（配色），然后 `node tools\make-icons.cjs` |
-| 主题色 | `app/src/main/res/values/colors.xml` 的 `app_bg`（MainActivity 里的 `BG_COLOR` 也要一起改） |
-| 最低系统版本 | `app/build.gradle.kts` 的 `minSdk` |
-| 应用内显示的名字 | Web 工程：`index.html` 的 `<title>`、`vite.config.ts` 的 PWA manifest、`src/layouts/MainLayout.vue` 的侧栏标题 |
-
-### 图标设计约定
-
-`tools/make-icons.cjs` 不依赖 sharp / canvas —— 自带一个很小的光栅化器
-（图标只由圆和圆角矩形组成，逐像素判定就够）和自写 PNG 编码器。
-
-一份设计稿（512 坐标空间）同时产出：
-
-- Android 自适应图标前景 `drawable/ic_launcher_foreground.xml`（矢量，108dp）
-- Android 7.0~7.1 的 PNG 兜底（mdpi~xxxhdpi，方形 + 圆形两种）
-- Web / PWA 图标（`public/icon.svg`、`pwa-192.png`、`pwa-512.png`、`apple-touch-icon.png`）
-
-所以改一次 `SHAPES`，App 桌面、浏览器标签、PWA 图标全一起变。
-
-**自适应图标有「安全圆」约束**：108dp 的画布里只有中间 66dp 直径保证不被裁。
-换算到 512 的坐标空间就是半径 **156.7**。主体要落在这个圆内，
-否则系统裁成圆形 / 水滴形时会切到图案。天线球这类装饰可以稍微出头。
+1. **列表里不要塞 WebView**。滚出屏幕再回来就重载，必卡。现在是离屏画 WebP + LRU 复用，WebView 只给可见的富消息且池上限 2。
+2. **`htmlifyNewlines` 会把 `\n` 变 `<br>`**，于是 `---` 变成 `<hr>`。任何按行/按分隔线定位的逻辑都要先归一化。
+3. **整页 HTML 不能过 `htmlifyNewlines`**，否则 `<head>`/`<div>` 之间被插 `<br>`，卡片被撑出一串空行。
+4. **正则双标志不是互斥**。显示侧跳过 `promptOnly`，提示词侧只跳过「纯显示」脚本 —— 详见 `docs/预设兼容性.md`，别照 ST 源码改回去。
+5. **iframe 不给 `allow-same-origin`，`parent.document` 必抛**。预设选项按钮就死在这一句上。
+6. **卡片不是我们造的**。插件只做「补 head / 包文档 / 统一围栏标注」，不解析散文、不填充模板、不猜选项。
+7. **`subprocess` 式的"清理文件"别乱删**。`assets/plugins/` 现在空着是故意的，模板已移出 APK。
+8. **改渲染后必看缓存键**。内容哈希 / 外观哈希 / 深度少一个，就会出现「改了设置但旧消息不变」。
 
 ---
 
-## 九、怎么验证手机分支真的生效
+## 8. 文档
 
-在 Android Studio 里看 `dbpg/app/src/main/assets/www/index.html`，开头应该是：
-
-```html
-<head>
-<script type="importmap">{"imports":{"@capacitor/filesystem":"/capacitor-compat.js"}}</script>
-<script type="module" src="/capacitor-compat.js"></script>
-<meta charset="UTF-8" />
-...
-```
-
-注意 `importmap` 必须在任何 `<script type="module">` **之前**，否则映射不生效 ——
-`patchWebIndex` 是插在 `<head>` 标签后第一行的，Vite 产物的 module 脚本在
-`<title>` 之后，所以顺序是对的。
-
-装到手机上改一条配置，然后：
-
-```
-adb shell run-as com.dbpg.duihuazhushou ls files/Data
-```
-
-能看到 `app-data.json` 和 `backups/` 目录就说明落盘生效了。
+| 文档 | 内容 |
+| --- | --- |
+| [`docs/架构.md`](docs/架构.md) | 三层边界、渲染链路、插件契约、存储布局、线程模型 |
+| [`docs/预设兼容性.md`](docs/预设兼容性.md) | ST/Tavo 字段覆盖表、两处刻意差异、已知边界、扩展方法 |
+| [`docs/避坑清单.md`](docs/避坑清单.md) | 按主题的 30 条「现象 → 原因 → 解法」 |
+| [`docs/验证与实验台.md`](docs/验证与实验台.md) | 单测、自检、`st-lab` 脚本、真机验证清单 |
+| [`docs/改动记录.md`](docs/改动记录.md) | 33 节完整流水（含每次实测截图/探针数据） |
 
 ---
 
-## 十、实测记录（本机真的打过一遍）
+## 9. 设计原则（改代码前先读）
 
-**环境**：Android Studio 装在 `D:\androidstudio`（自带 JBR 25.0.3），
-Android SDK 在 `C:\Users\25606\AppData\Local\Android\Sdk`（platform `android-37.0`，
-build-tools `36.0.0`），Node.js v24.9.0。`JAVA_HOME` 没设，`java` 不在 PATH。
-
-**跑法**（`dbpg/` 目录下，故意不设 `JAVA_HOME`，验证自动探测）：
-
-```
-gradlew.bat :app:assembleDebug
-```
-
-**结果**：`BUILD SUCCESSFUL`，35 个任务全过。删掉整个 `app\build` 从零重打也是
-35 个任务全执行、11 秒通过，可复现。
-
-逐项验收（都实际执行过）：
-
-| 检查项 | 方法 | 结果 |
-|---|---|---|
-| Gradle 用上了 JBR | 不设 `JAVA_HOME` 直接跑 | ✅ 输出「已自动使用: `D:\androidstudio\jbr`」 |
-| wrapper 下载源正常 | wrapper 首次运行 | ✅ 从腾讯云镜像下载 gradle-9.8.0-bin.zip（144.6 MB），sha256 校验通过 |
-| Web 版本没被弄坏 | 上一级目录 `npm run build` | ✅ `vue-tsc` 类型检查通过 |
-| import map 注入正确 | 解包 APK 看 `assets/www/index.html` | ✅ import map 和垫片 script 在 Vite 主 module script 之前 |
-| 垫片进了包 | 解包 APK | ✅ `assets/www/capacitor-compat.js`（7260 B），UTF-8 完好 |
-| 手机落盘分支进了包 | 解包 APK | ✅ `assets/www/assets/persistFile-*.js` 懒加载块 |
-| Java 类进了 dex | `dexdump -f` | ✅ `MainActivity`、`FileBridge`、4 个内部类 + `R` |
-| Manifest 正确 | `aapt2 dump badging` | ✅ `minSdk 24` / `targetSdk 37`、标签「冒险模拟器」、versionCode 2 / versionName 1.0.0、`INTERNET`、5 档图标、launcher 是 `MainActivity` |
-| 签名可用 | `apksigner verify` | ✅ Android Debug 证书，退出码 0 |
-| 新 chunk 进包 / 旧 chunk 清除 | `tar -tf` APK 后逐个比对 | ✅ `syncWeb` 是 Sync 任务，会删掉过时文件 |
-
-**版本矩阵的坑**：Gradle 8.7 + JDK 25 起不来（JDK 25 要 Gradle ≥ 9.1.0，
-AGP 9.x 要 Gradle 9.x），所以 AGP 8.5.2 → 9.4.1、Gradle 8.7 → 9.8.0、
-compileSdk 34 → 37（本机只有 `android-37.0`）。
-
-**其余踩过的坑**（都已修掉）：
-
-1. Gradle 9.6 废弃了 `tasks.registering(...)`，9.8 里直接编译报错 → 改成
-   `tasks.register("name", Type::class) { ... }`。
-2. `html.replaceFirst(Regex(...)) { m -> ... }` 在 Gradle 9.8 的 Kotlin DSL 环境里
-   重载解析成 `(CharSequence, String)` 直接编译失败 → 改成 `Regex.find()` + 字符串拼接。
-3. `excludes += setOf("META-INF/*")` 不行，`excludes` 是 `SetProperty<String>` → 改 `.add()`。
-4. Java 里写 `fileChooserParams.acceptTypes` → Java 没有 bean 属性访问，要 `getAcceptTypes()`。
-5. `local.properties` 里 `sdk.dir=C:\...` 的反斜杠被 properties 解析吃掉 → 必须写正斜杠。
-6. `Set-Content -Encoding UTF8` 会加 BOM，Gradle 读 `.properties` 时 BOM 会让第一行失效 →
-   改用无 BOM 写入。
-7. `.bat` 文件里写中文必须用 GBK 保存，UTF-8 会让 cmd.exe 解析乱掉。
-8. PowerShell 改 LF 换行的 markdown 时别用 `-split "`r`n"` —— 切不出来，
-   整份内容会变成一行，再写回就把文件清空了。
+1. **开放式，不针对预设**。功能是给所有预设用的：插件认「HTML 卡片」这个形态，不认「Meowssiah」这个名字。
+2. **预设的事归预设**。卡片长什么样、有没有折叠、几个选项，由预设的正则和模板决定；我们只负责把 HTML 渲染对。
+3. **不为单个 bug 加正则补丁**。上一次试图「从散文里猜面板」写了 400 行，最后证明模型只是没遵守预设格式，全删了。
+4. **链接必须是「模型输出 → 正则 → 渲染」**。任何绕开正则、直接解析语义的捷径都会在下一个预设上翻车。
+5. **可卸载**。插件、正则、预设都能停用；停用后行为回到「原始文本」，不能崩。
