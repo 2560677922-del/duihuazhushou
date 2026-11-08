@@ -79,7 +79,13 @@ class JsRegex(val source: String, val flags: String) {
         if (flags.contains('i')) opts = opts or Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
         if (flags.contains('m')) opts = opts or Pattern.MULTILINE
         if (flags.contains('s')) opts = opts or Pattern.DOTALL
-        pattern = PatternCache.compile(source, opts)
+        pattern = runCatching { PatternCache.compile(source, opts) }.getOrElse { e ->
+            // Java 不接受变长后顾（预设里很常见），放宽成有界量词再试；
+            // 改不动 / 仍失败就把原异常抛出去，上层按「编译失败 → 跳过」处理。
+            val relaxed = RegexCompat.relaxLookbehind(source)
+            if (relaxed == source) throw e
+            PatternCache.compile(relaxed, opts)
+        }
         namedGroupNames = NAMED_GROUP_RE.findAll(source).map { it.groupValues[1] }.toList()
     }
 
@@ -223,4 +229,101 @@ fun sanitizeRegexMacro(s: String): String {
         }
     }
     return sb.toString()
+}
+
+/**
+ * Java 正则的「变长后顾」兼容层。
+ *
+ * ★ 真机根因：SillyTavern 跑在浏览器里，JS 正则允许
+ *   `(?<!<details\b[^>]*>\s*)` 这种**长度不定**的后顾断言；
+ *   而 `java.util.regex` 要求后顾有确定的最大长度，编译时直接抛
+ *   “Look-behind group does not have an obvious maximum length”。
+ *   预设里用后顾避开 `<details>` 内 `<summary>` 的写法非常常见 ——
+ *   一条规则编译失败，整张前端卡片就不会生成，用户看到的就是
+ *   「正则没生效 / 卡片没出来」。
+ *
+ * 做法：只在编译失败时兜底，把后顾内部的两种无界量词改成有界：
+ *   `*` → `{0,512}`、`+` → `{1,512}`。
+ * 字符类、转义、已有 `{n,m}` 一律不动；MAX 取 512 足够覆盖任何 HTML 标签。
+ * 语义在真实聊天文本上与 JS 等价（超长标签才会差），且引擎遇到首字符不符
+ * 会立刻失败，不会产生回溯开销。
+ */
+object RegexCompat {
+
+    private const val MAX = 512
+
+    /** 没有任何变长后顾时原样返回（调用方据此判断「改不动」）。 */
+    fun relaxLookbehind(src: String): String {
+        val sb = StringBuilder(src.length + 32)
+        var i = 0
+        var changed = false
+        while (i < src.length) {
+            val isBehind = src.startsWith("(?<=", i) || src.startsWith("(?<!", i)
+            if (!isBehind) {
+                sb.append(src[i])
+                i++
+                continue
+            }
+            val open = i + 3
+            var depth = 1
+            var j = open
+            var inClass = false
+            while (j < src.length) {
+                val c = src[j]
+                when {
+                    c == '\\' -> j++                       // 跳过转义的下一个字符
+                    inClass && c == ']' -> inClass = false
+                    !inClass && c == '[' -> inClass = true
+                    !inClass && c == '(' -> depth++
+                    !inClass && c == ')' -> {
+                        depth--
+                        if (depth == 0) break
+                    }
+                }
+                j++
+            }
+            if (j >= src.length) {                              // 括号不配对，放弃改写
+                sb.append(src.substring(i))
+                break
+            }
+            val inner = src.substring(open, j)
+            val relaxed = relaxQuantifiers(inner)
+            if (relaxed != inner) changed = true
+            sb.append(src, i, open).append(relaxed).append(')')
+            i = j + 1
+        }
+        return if (changed) sb.toString() else src
+    }
+
+    private fun relaxQuantifiers(inner: String): String {
+        val sb = StringBuilder(inner.length + 16)
+        var i = 0
+        var inClass = false
+        while (i < inner.length) {
+            val c = inner[i]
+            when {
+                c == '\\' -> {
+                    sb.append(c)
+                    if (i + 1 < inner.length) {
+                        sb.append(inner[i + 1])
+                        i += 2
+                        continue
+                    }
+                }
+                inClass -> {
+                    if (c == ']') inClass = false
+                    sb.append(c)
+                }
+                c == '[' -> {
+                    inClass = true
+                    sb.append(c)
+                }
+                c == '*' -> sb.append("{0,$MAX}")
+                c == '+' -> sb.append("{1,$MAX}")
+                else -> sb.append(c)
+            }
+            i++
+        }
+        return sb.toString()
+    }
 }

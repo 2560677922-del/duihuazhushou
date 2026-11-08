@@ -192,9 +192,11 @@ class PluginSettingsActivity : Activity() {
     }
 
     /**
-     * 自检渲染：直接用 APK 内置的预设模板 + 固定标签，走和聊天气泡完全相同的
-     * HtmlMessageView / render.html / iframe srcdoc 通道。能看到 01/02/03 三个
-     * 选项就说明气泡层没问题，问题在插件输入或认领；看不到就是气泡层坏了。
+     * 自检渲染：用一段**自带脚本的内联卡片**，走和聊天气泡完全相同的
+     * HtmlMessageView / render.html / iframe srcdoc 通道。
+     *
+     * ★ 不依赖任何预设模板 —— 插件只负责渲染卡片，长什么样是预设的事。
+     *   能看到卡片、按钮点了会变绿、高度自适应，就说明气泡层整条链路正常。
      */
     private fun togglePreview() {
         if (previewWeb != null) {
@@ -204,22 +206,38 @@ class PluginSettingsActivity : Activity() {
             previewHost.visibility = View.GONE
             return
         }
-        val tmpl = runCatching {
-            assets.open("plugins/meowssiah_panel.html").bufferedReader().use { it.readText() }
-        }.getOrNull()
-        if (tmpl == null || !tmpl.contains("__DHP_PANEL_DATA__")) {
-            diagText.text = "自检失败：读不到内置模板 assets/plugins/meowssiah_panel.html"
-            return
-        }
-        val tags =
-            "<summary>自检：这张卡片由 APK 内置的预设模板渲染，和聊天气泡走同一条 WebView / iframe 通道。</summary>\n" +
-                "<comment>能看到下面 01 / 02 / 03 三个选项，就说明气泡层没问题；看不到请把上面的诊断截图发我。</comment>\n" +
-                "<options>\n" +
-                "<option>选项一：插件没认领，看诊断里的「插件认领」</option>\n" +
-                "<option>选项二：输入形态不对，看诊断里的「输入形态」</option>\n" +
-                "<option>选项三：气泡层坏了，卸载插件回退</option>\n" +
-                "</options>"
-        val doc = tmpl.replace("__DHP_PANEL_DATA__", tags)
+        val doc = """
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  body{margin:0;padding:8px;font-family:sans-serif;background:transparent}
+  .card{border-radius:18px;padding:16px;background:linear-gradient(145deg,#fff6f9,#ffe7ee);
+        border:1px solid rgba(255,255,255,.8);box-shadow:0 6px 18px rgba(211,137,156,.22)}
+  h1{margin:0 0 4px;font-size:19px;color:#b25a76}
+  p{margin:0 0 10px;font-size:12px;color:#a07383;line-height:1.6}
+  button{display:block;width:100%;margin:0 0 8px;padding:11px 12px;border-radius:12px;
+         border:1px solid rgba(190,122,147,.22);background:rgba(255,255,255,.75);
+         color:#8a5567;font-size:13px;text-align:left}
+  button:last-child{margin-bottom:0}
+  .ok{color:#2f7d5b;font-weight:700;border-color:rgba(85,160,125,.5)}
+</style></head><body>
+<div class="card">
+  <h1>自检卡片</h1>
+  <p id="hint">能看到这张卡片和下面三个按钮，就说明气泡层（WebView / iframe / 脚本 / 高度）全都正常；看不到就是气泡层坏了。</p>
+  <button type="button">01 点我一下：能变绿说明卡片里的脚本在跑</button>
+  <button type="button">02 这一条用来确认样式没被裁切</button>
+  <button type="button">03 这一条用来确认高度回传正常</button>
+</div>
+<script>
+  document.querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      b.classList.add('ok');
+      b.textContent = '✓ 脚本正常运行';
+      document.getElementById('hint').textContent = '脚本、样式、高度都正常 —— 气泡层没问题。';
+    });
+  });
+</script>
+</body></html>
+""".trimIndent()
         val html = "```html\n" + doc + (if (doc.endsWith("\n")) "" else "\n") + "```"
         val web = HtmlMessageView(this)
         previewWeb = web
@@ -264,7 +282,7 @@ class PluginSettingsActivity : Activity() {
             gravity = Gravity.END
             setPadding(0, dp(8), 0, 0)
         }
-        acts.addView(actionButton("用内置模板自检渲染") { togglePreview() })
+        acts.addView(actionButton("渲染一张自检卡片") { togglePreview() })
         acts.addView(actionButton("复制完整 rich") { copyRich() })
         acts.addView(actionButton("刷新诊断") { refreshDiagnostic() })
         card.addView(acts, matchWidth())

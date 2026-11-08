@@ -248,10 +248,15 @@ fun runRegex(
 
         val markdownOnly = s.markdownOnly
         val promptOnly = s.promptOnly
+        // ★ 与 SillyTavern runRegexScript 完全一致：
+        //   isMarkdown（显示）→ 跳过 promptOnly 的规则；构建 prompt → 跳过 markdownOnly 的规则。
+        //   旧写法 `promptOnly && !markdownOnly` 会漏掉「两个标志都为 true」的规则 ——
+        //   预设 [12]「行动选项2」正是这种写法，于是显示时把 <options> 整段删掉，
+        //   [13] 前端面板虽然命中也只剩 summary/comment，卡片里永远没有选项。
         if (forDisplay) {
-            if (promptOnly && !markdownOnly) continue
+            if (promptOnly) continue
         } else if (!dry) {
-            if (markdownOnly && !promptOnly) continue
+            if (markdownOnly) continue
         }
 
         val rawFind = s.findRegex
