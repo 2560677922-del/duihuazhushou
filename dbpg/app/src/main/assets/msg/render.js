@@ -60,6 +60,8 @@
     var DOC_MARK = /<!DOCTYPE\s+html|<html\b|<head\b/i;
     /* 整条消息本身是不是一份文档：必须从开头就是，不能用 contains 误判正文里提到的 <html> */
     var DOC_START = /^\s*(?:<!DOCTYPE\s+html[^>]*>\s*)?<html\b/i;
+    /* 无语言标注的围栏还需要闭合标记才当文档：一行 `<html>示例` 是代码，不是文档 */
+    var DOC_CLOSE = /<\/html\s*>|<\/head\s*>|<\/body\s*>/i;
 
     function isFullDoc(s) {
         return DOC_MARK.test(s || '');
@@ -69,6 +71,11 @@
      * ``` 围栏（ST / Tavo 美化预设的通用约定：```html 块里放整页卡片）。
      * 只把「围栏内确实是整页文档」的块抽出来；其余围栏原样留给 marked，
      * 当作真正的代码块显示 —— 这是浏览器的标准语义，不能一刀切。
+     *
+     * ★ 判定随语言标注收紧：
+     *   ```html —— 作者明确说是 HTML，含文档标记即可抽；
+     *   无标注  —— 可能只是普通代码块里"提到"了 <html>（正文讲解标签用法
+     *             是常见写法），必须从开头就是文档才抽，否则代码块被劫持。
      */
     var FENCE = /^[ \t]*```[ \t]*([a-zA-Z0-9_-]*)[ \t]*\r?\n([\s\S]*?)^[ \t]*```[ \t]*$/gm;
 
@@ -78,7 +85,10 @@
         while ((m = FENCE.exec(raw)) !== null) {
             var lang = (m[1] || '').toLowerCase();
             var body = m[2];
-            if (isFullDoc(body) && (lang === '' || lang === 'html' || lang === 'htm')) {
+            var isDoc = lang === 'html' || lang === 'htm'
+                ? isFullDoc(body)
+                : DOC_START.test(body) && DOC_CLOSE.test(body);
+            if (isDoc) {
                 if (m.index > last) segs.push({ type: 'md', text: raw.slice(last, m.index) });
                 segs.push({ type: 'doc', text: body });
                 last = m.index + m[0].length;
