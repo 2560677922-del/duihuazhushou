@@ -12,6 +12,7 @@ import { useDnaStore } from '../stores/characterDna';
 import { looksLikePng, readCardFromPng, readRawJsonFromPng, readFileAsBytes } from '../lib/pngCard';
 import AssetSubEntry from '../components/AssetSubEntry.vue';
 import GalleryPanel from '../components/GalleryPanel.vue';
+import AppIcon from '../components/AppIcon.vue';
 import { detectKind } from '../engine/stImport';
 import { createRegexGroup } from '../engine/regexGroups';
 import { ST_REGEX_PLACEMENTS } from '../engine/worldbookOptions';
@@ -53,12 +54,12 @@ const KIND_LABEL: Record<string, string> = {
   unknown: '无法识别',
 };
 const TAB_ICON: Record<Tab, string> = {
-  worldbook: '📖',
-  preset: '⚙️',
-  regex: '🔧',
-  character: '👤',
-  dna: '🧬',
-  gallery: '🖼️',
+  worldbook: 'book',
+  preset: 'settings',
+  regex: 'sliders',
+  character: 'user',
+  dna: 'dna',
+  gallery: 'image',
 };
 
 // ---------------- 展开状态 ----------------
@@ -488,7 +489,7 @@ async function onCharFieldChange(c: any, f: any) {
       现在：固定在顶部、玻璃质感、按钮改成圆形图标，不再有文字溢出问题。
     -->
     <header class="app-bar">
-      <h2>📦 资产</h2>
+      <h2><AppIcon name="assets" :size="20" class="head-ico" />资产</h2>
       <div class="bar-actions">
         <!--
           用文字按钮而不是纯 emoji 图标：
@@ -516,7 +517,7 @@ async function onCharFieldChange(c: any, f: any) {
     <nav class="cat-tabs">
       <button v-for="t in (['worldbook', 'preset', 'regex', 'character', 'dna', 'gallery'] as Tab[])" :key="t"
         :class="{ active: tab === t }" @click="tab = t; openItems = new Set(); allOpen = false">
-        <span class="ico">{{ TAB_ICON[t] }}</span>
+        <span class="ico"><AppIcon :name="TAB_ICON[t]" :size="16" /></span>
         <span class="lab">{{ KIND_LABEL[t] }}</span>
         <span class="count">{{ tabCounts[t] }}</span>
       </button>
@@ -607,7 +608,7 @@ async function onCharFieldChange(c: any, f: any) {
             :aria-label="isOpen(item._uid) ? '收起' : '展开'">
             <span class="caret-arrow">{{ isOpen(item._uid) ? '▾' : '▸' }}</span>
           </button>
-          <span class="ico">{{ TAB_ICON[tab] }}</span>
+          <span class="ico"><AppIcon :name="TAB_ICON[tab]" :size="15" /></span>
 
           <div class="card-title">
             <input v-if="renamingUid === item._uid" class="rename" type="text" v-model="renameValue"
@@ -843,6 +844,12 @@ async function onCharFieldChange(c: any, f: any) {
   font-size: 19px;
   font-weight: 700;
   letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.head-ico {
+  color: var(--accent);
 }
 .bar-actions {
   display: flex;
@@ -930,7 +937,10 @@ async function onCharFieldChange(c: any, f: any) {
   opacity: 0.9;
 }
 .ico {
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
 }
 .lab {
   font-size: 12.5px;

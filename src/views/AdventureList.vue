@@ -14,6 +14,7 @@ import { useAssetsStore } from '../stores/assets';
 import { useApiConfigStore } from '../stores/apiConfig';
 import { useImageStore } from '../stores/image';
 import { useStorageSettingsStore } from '../stores/storageSettings';
+import AppIcon from '../components/AppIcon.vue';
 import { stripImageMarkers } from '../engine/imageMarker';
 import {
   sampleCharacterRaw,
@@ -243,8 +244,11 @@ function cancelRename() {
     <!-- 顶部：标题 + 新建 -->
     <header class="list-header">
       <div class="lh-left">
-        <h1>冒险</h1>
-        <span class="lh-count">{{ sessions.length }} 个会话</span>
+        <span class="lh-ico"><AppIcon name="adventure" :size="22" /></span>
+        <div class="lh-text">
+          <h1>冒险</h1>
+          <span class="lh-count">{{ sessions.length }} 个会话</span>
+        </div>
       </div>
       <button class="primary new-btn" @click="createSession" :disabled="creating">
         {{ creating ? '创建中…' : '＋ 新冒险' }}
@@ -255,7 +259,7 @@ function cancelRename() {
 
     <!-- 空状态：第一次打开的人在这里拿到明确的第一步，而不是一片空白 -->
     <div v-else-if="!sessions.length" class="empty">
-      <div class="empty-icon">🎭</div>
+      <div class="empty-icon"><AppIcon name="adventure" :size="40" /></div>
       <h3>开始你的第一个冒险</h3>
       <p>写下你的第一步行动，AI 会接着写下去。<br />还没配好？可以先载入一套示例资产试玩。</p>
       <div class="empty-actions">
@@ -337,8 +341,24 @@ function cancelRename() {
 }
 .lh-left {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.lh-ico {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 22%, var(--panel-2));
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.lh-text {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
 }
 .list-header h1 {
@@ -346,6 +366,7 @@ function cancelRename() {
   font-size: 20px;
   font-weight: 700;
   letter-spacing: 0.3px;
+  line-height: 1.2;
 }
 .lh-count {
   font-size: 11.5px;
@@ -503,8 +524,8 @@ function cancelRename() {
   color: var(--text-dim);
 }
 .empty-icon {
-  font-size: 52px;
   margin-bottom: 12px;
+  color: var(--accent);
   opacity: 0.85;
 }
 .empty h3 {

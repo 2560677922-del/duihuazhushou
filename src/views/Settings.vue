@@ -27,6 +27,7 @@ import {
   suffixFromEndpoint,
 } from '../engine/novelai';
 import ImageParamsPanel from '../components/ImageParamsPanel.vue';
+import AppIcon from '../components/AppIcon.vue';
 import { resolveCached } from '../lib/lazyImage';
 
 /* ===== 按键音效 ===== */
@@ -170,7 +171,7 @@ watch(
 
 /** 卡片索引的数据 */
 const cards = [
-  { key: 'api', icon: '🤖', title: '对话模型接口', desc: '大语言模型：地址、密钥、模型、温度、上下文窗口' },
+  { key: 'api', icon: 'bot', title: '对话模型接口', desc: '大语言模型：地址、密钥、模型、温度、上下文窗口' },
   /*
    * 生图接口 和 出图风格 是**两个独立子项**。
    *
@@ -178,28 +179,28 @@ const cards = [
    * 调风格又怕手滑把地址改了 —— 而这两件事使用频率都不高，
    * 放一起只会互相干扰。拆开各自干净。
    */
-  { key: 'image', icon: '🔌', title: '生图接口', desc: '地址、密钥、模型（怎么连上去）' },
-  { key: 'style', icon: '🎨', title: '出图风格', desc: '画师串 / 反向提示词 / 采样器 / 参数' },
+  { key: 'image', icon: 'link', title: '生图接口', desc: '地址、密钥、模型（怎么连上去）' },
+  { key: 'style', icon: 'palette', title: '出图风格', desc: '画师串 / 反向提示词 / 采样器 / 参数' },
   /*
    * 「显示与上下文」单独一项。
    * 它管的是"界面上看到什么、交给模型/导出的是什么"，跟生图无关 ——
    * 早先混在生图配置里，找"隐藏思维链"的人根本不会去翻生图接口。
    */
-  { key: 'display', icon: '👁️', title: '显示与上下文', desc: '思维链 / 正则作用范围（原文还是处理后的文本）' },
-  { key: 'library', icon: '🖼️', title: '图片库', desc: '查看占用、清理无用缓存' },
-  { key: 'tags', icon: '🏷️', title: '生图标签库', desc: '给大模型的标准 Danbooru 标签参考' },
-  { key: 'variables', icon: '🔤', title: '变量', desc: '全局 / 会话变量，供预设、世界书与正则调用' },
-  { key: 'appearance', icon: '🌸', title: '界面外观', desc: '背景 / 主题配色 / 正文宽度' },
-  { key: 'gh', icon: '☁️', title: '图片存放位置', desc: '本地存储或 GitHub 仓库（自动上传）' },
-  { key: 'persist', icon: '💾', title: '数据持久化', desc: '把配置写到本地文件（APK 用）' },
-  { key: 'data', icon: '📦', title: '数据导入导出', desc: '备份 / 恢复全部配置' },
-  { key: 'about', icon: '✨', title: '关于', desc: '版本、更新检查' },
+  { key: 'display', icon: 'eye', title: '显示与上下文', desc: '思维链 / 正则作用范围（原文还是处理后的文本）' },
+  { key: 'library', icon: 'image', title: '图片库', desc: '查看占用、清理无用缓存' },
+  { key: 'tags', icon: 'tag', title: '生图标签库', desc: '给大模型的标准 Danbooru 标签参考' },
+  { key: 'variables', icon: 'braces', title: '变量', desc: '全局 / 会话变量，供预设、世界书与正则调用' },
+  { key: 'appearance', icon: 'sparkles', title: '界面外观', desc: '背景 / 主题配色 / 正文宽度' },
+  { key: 'gh', icon: 'cloud', title: '图片存放位置', desc: '本地存储或 GitHub 仓库（自动上传）' },
+  { key: 'persist', icon: 'save', title: '数据持久化', desc: '把配置写到本地文件（APK 用）' },
+  { key: 'data', icon: 'download', title: '数据导入导出', desc: '备份 / 恢复全部配置' },
+  { key: 'about', icon: 'info', title: '关于', desc: '版本、更新检查' },
 ];
 
-/** 详情页标题 */
+/** 详情页标题（纯文字，图标单独渲染） */
 function titleOf(key: string): string {
   const c = cards.find((x) => x.key === key);
-  return c ? c.icon + ' ' + c.title : '设置';
+  return c ? c.title : '设置';
 }
 
 // 图片接口模型拉取
@@ -1042,8 +1043,14 @@ function toggleApiKey() {
 <template>
   <div class="settings-page" v-if="loaded">
     <div class="settings-head">
-      <button v-if="activeSection" class="back-btn" @click="closeSection" title="返回设置">‹</button>
-      <h2>{{ activeSection ? titleOf(activeSection) : '⚙️ 设置' }}</h2>
+      <button v-if="activeSection" class="back-btn" @click="closeSection" title="返回设置">
+        <AppIcon name="back" :size="20" />
+      </button>
+      <AppIcon v-else name="settings" class="head-ico" :size="22" />
+      <h2>
+        <template v-if="activeSection">{{ titleOf(activeSection) }}</template>
+        <template v-else>设置</template>
+      </h2>
     </div>
 
     <!-- 卡片索引：一屏看全部功能分区 -->
@@ -1545,13 +1552,13 @@ function toggleApiKey() {
           @click="imageStore.setCurrentStyle(st._uid)">
           <div class="sc-thumb"
             :style="styleThumbOf(st) ? { backgroundImage: `url(${styleThumbOf(st)})` } : {}">
-            <span v-if="!styleThumbOf(st)" class="sc-thumb-empty">🎨</span>
+            <span v-if="!styleThumbOf(st)" class="sc-thumb-empty"><AppIcon name="palette" :size="22" /></span>
             <!-- 换风格参考图：点这个小按钮，不触发"选中风格" -->
             <button class="sc-pick"
               title="放一张风格参考图 —— 只是让你直观看这套画风的效果，不会影响出图方式"
-              @click.stop="pickStyleThumb(st._uid)">📷</button>
+              @click.stop="pickStyleThumb(st._uid)"><AppIcon name="image" :size="14" /></button>
             <span v-if="st.thumb" class="sc-clear" title="移除风格参考图"
-              @click.stop="imageStore.updateStyle(st._uid, { thumb: '' })">✕</span>
+              @click.stop="imageStore.updateStyle(st._uid, { thumb: '' })"><AppIcon name="close" :size="12" /></span>
           </div>
           <div class="sc-name">{{ st.name || '(未命名)' }}</div>
         </div>
@@ -2254,6 +2261,25 @@ function toggleApiKey() {
   margin: 0;
   font-size: 20px;
 }
+/* 返回键：圆形图标按钮，和聊天页顶栏保持同一语言 */
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+.back-btn:active {
+  transform: scale(0.94);
+}
+/* 设置首页标题前的小图标 */
+.head-ico {
+  color: var(--accent);
+}
 .section {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -2468,24 +2494,35 @@ function toggleApiKey() {
 }
 .mini-btn {
   font-size: 10px;
-  padding: 3px 10px;
+  padding: 3px 12px;
   border-radius: 999px;
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text-dim);
   cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s, filter 0.15s;
 }
-.mini-btn:hover {
+.mini-btn:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--accent);
 }
+.mini-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
 .mini-btn.danger {
   color: var(--danger);
+  border-color: rgba(248, 113, 113, 0.4);
 }
+/* 实心主色：和全站 button.primary 同一套语言 */
 .mini-btn.primary {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  font-weight: 600;
+  background: var(--accent-bright);
+  color: #0b1220;
+  border-color: transparent;
+  font-weight: 700;
+}
+.mini-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  border-color: transparent;
 }
 .mini-btn:disabled {
   opacity: 0.45;

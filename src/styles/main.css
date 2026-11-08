@@ -188,19 +188,44 @@ button:disabled {
   cursor: not-allowed;
   box-shadow: none;
 }
+/*
+ * 焦点环：键盘 Tab 到按钮时给一圈主色描边，触屏不显示。
+ * 之前完全没有，键盘用户不知道焦点在哪。
+ */
+button:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+}
+/*
+ * 实心主色按钮。
+ *
+ * 这是全项目"主操作"的统一外观（发送 / 保存 / 添加 / 确认…）。
+ * 用 --accent-bright（永远是用户选的原色，不随浅色主题压暗）填充，
+ * 配深字，保证任何主色下对比度都够。渐变版虽然花哨，
+ * 但用户要的是"实心主色"，统一成纯色更干净、也更好和主题对齐。
+ */
 button.primary {
-  background: var(--accent-grad);
+  background: var(--accent-bright);
   color: #0b1220;
   border-color: transparent;
   font-weight: 700;
-  box-shadow: 0 4px 14px rgba(110, 168, 254, 0.35), var(--shadow-1);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent-bright) 38%, transparent), var(--shadow-1);
 }
 button.primary:hover:not(:disabled) {
   filter: brightness(1.08);
+  border-color: transparent;
 }
 button.danger {
   border-color: rgba(248, 113, 113, 0.4);
   color: var(--danger);
+}
+/* 危险主按钮：实心红，和实心主色按钮一个语言 */
+button.danger.primary,
+button.primary.danger {
+  background: var(--danger);
+  color: #2a0a0a;
+  border-color: transparent;
+  box-shadow: 0 4px 14px rgba(248, 113, 113, 0.35), var(--shadow-1);
 }
 
 input[type='text'],

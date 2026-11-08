@@ -13,6 +13,7 @@ import { useImageStore } from '../stores/image';
 import { buildTagReference } from '../engine/tagLibrary';
 import { generateImage } from '../engine/imageGen';
 import { NOVELAI_SAMPLERS, SAMPLER_HINTS } from '../engine/novelai';
+import AppIcon from '../components/AppIcon.vue';
 
 const lib = useTagLibraryStore();
 const settings = useStorageSettingsStore();
@@ -592,7 +593,7 @@ function clearPicked() {
 <template>
   <div class="tag-page">
     <div class="page-head">
-      <h2>🏷️ 标签库</h2>
+      <h2><AppIcon name="tag" :size="20" class="head-ico" />标签库</h2>
       <div class="head-meta">
         <template v-if="lib.loading && !lib.count">加载中…</template>
         <template v-else-if="lib.error" class="err">{{ lib.error }}</template>
@@ -612,7 +613,7 @@ function clearPicked() {
       压在标签列表下面要滚很久才看到，等于藏起来了。
     -->
     <details class="gen-collapse" :open="true">
-      <summary class="gen-summary">🎨 直接生图<span class="dim">勾标签直接出图，不走大模型</span></summary>
+      <summary class="gen-summary"><AppIcon name="wand" :size="16" class="sum-ico" />直接生图<span class="dim">勾标签直接出图，不走大模型</span></summary>
       <div class="gen-inner">
       <div class="gen-row">
         <label class="gen-label">生图配置</label>
@@ -964,6 +965,15 @@ function clearPicked() {
 .page-head h2 {
   margin: 0;
   font-size: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.head-ico {
+  color: var(--accent);
+}
+.sum-ico {
+  color: var(--accent);
 }
 .head-meta {
   font-size: 12px;

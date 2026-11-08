@@ -11,12 +11,13 @@
 //   这是主流做法（iOS 设置、Android 设置、Notion 设置都这样）——
 //   分区多的时候，网格比折叠列表好找得多。
 import { computed } from 'vue';
+import AppIcon from './AppIcon.vue';
 
 export interface SettingsCard {
   /** section key。**不是路由参数** —— 设置页内部用 activeSection 切换，
       URL 始终是 /settings，外部没有、也不需要按 key 跳转。 */
   key: string;
-  /** 大图标（emoji，按用户要求用有点二次元感的） */
+  /** 大图标（AppIcon 名称，描边 SVG，随主色走） */
   icon: string;
   title: string;
   desc: string;
@@ -38,7 +39,7 @@ const list = computed(() => props.cards);
       class="set-card"
       @click="$emit('open', c.key)"
     >
-      <span class="set-ico">{{ c.icon }}</span>
+      <span class="set-ico"><AppIcon :name="c.icon" :size="24" /></span>
       <span class="set-text">
         <span class="set-title">
           {{ c.title }}
@@ -86,17 +87,17 @@ const list = computed(() => props.cards);
 
 /* 图标：给个圆底，比光秃秃一个 emoji 更像"入口"。
  * 底色用主色混一点 —— 太淡会显得发灰（试过 13%，偏灰），
- * 22% 刚好有颜色又不抢标题。 */
+ * 22% 刚好有颜色又不抢标题。SVG 用主色描边，主题一换图标就跟着换。 */
 .set-ico {
   flex-shrink: 0;
   width: 46px;
   height: 46px;
   display: grid;
   place-items: center;
-  font-size: 23px;
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent) 22%, var(--panel-2));
   border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
 }
 
 .set-text {
@@ -153,7 +154,6 @@ const list = computed(() => props.cards);
   .set-ico {
     width: 42px;
     height: 42px;
-    font-size: 21px;
   }
   .set-title {
     font-size: 13.5px;

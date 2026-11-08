@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import AppIcon from '../components/AppIcon.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -29,8 +30,8 @@ function goTab(path: string) {
  *  - 设置那一格的命名见下面 navItems 里的注释。
  */
 const navItems = [
-  { path: '/adventure', name: 'adventure', label: '冒险', icon: '🎭' },
-  { path: '/assets', name: 'assets', label: '资产', icon: '📦' },
+  { path: '/adventure', name: 'adventure', label: '冒险', icon: 'adventure' },
+  { path: '/assets', name: 'assets', label: '资产', icon: 'assets' },
   /*
    * 标签叫「设置」而不是「API」。
    *
@@ -40,8 +41,8 @@ const navItems = [
    * 只叫 API 的话，用户想找"换个主题""备份数据"根本不会点它。
    * 标签应该描述**目的地**，而不是描述最常用的那个用途。
    */
-  { path: '/settings', name: 'settings', label: '设置', icon: '⚙️' },
-  { path: '/tags', name: 'tags', label: '生图', icon: '🏷️' },
+  { path: '/settings', name: 'settings', label: '设置', icon: 'settings' },
+  { path: '/tags', name: 'tags', label: '生图', icon: 'wand' },
 ];
 
 /**
@@ -75,7 +76,7 @@ const isChatView = computed(() => {
   <div class="app-layout" :class="{ 'chat-view': isChatView }">
     <aside class="sidebar">
       <div class="sidebar-header">
-        <div class="logo">🤖</div>
+        <div class="logo"><AppIcon name="bot" :size="30" /></div>
         <h1>冒险模拟器</h1>
         <p class="subtitle">AI 写作 + 冒险平台</p>
       </div>
@@ -101,7 +102,7 @@ const isChatView = computed(() => {
           :class="{ active: activeName === item.name }"
           @click.prevent="goTab(item.path)"
         >
-          <span class="nav-icon">{{ item.icon }}</span>
+          <span class="nav-icon"><AppIcon :name="item.icon" /></span>
           <span class="nav-label">{{ item.label }}</span>
         </a>
       </nav>
@@ -177,9 +178,11 @@ const isChatView = computed(() => {
   filter: none;
 }
 .nav-icon {
-  font-size: 16px;
   width: 20px;
-  text-align: center;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .sidebar-footer {
   padding: 12px 16px;
@@ -294,21 +297,18 @@ const isChatView = computed(() => {
   /*
    * 激活态。
    *
-   * 细节：文字用 `--accent`（浅色主题下是压暗过的，能读），
-   * 但**底色不能再用 accent** —— 药丸底和文字同色系会互相压低对比度
-   * （实测 4.15，达不到 4.5）。改成中性灰底，层次也更清楚：
-   * 底是"选中块"，文字才是"高亮内容"。
+   * 选中标签用「主色文字 + 主色淡底」，而不是中性灰底 ——
+   * 这样哪个 tab 是当前的，一眼就能跟品牌主色对上（用户要的"主色化"）。
+   * 淡底用 color-mix 取主色的 16%，既够明显又不至于把整条标签栏染成色块。
    */
   .nav-item.active {
-    background: rgba(120, 120, 130, 0.14);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
     /*
-     * 文字色要比普通 accent 再深一档。
-     *
-     * 标签栏字号只有 9.5px（很小），WCAG 对这种小字要求 4.5。
-     * 实测：直接用 --accent 是 3.99，差一点。
-     * 这里再往黑里掺一点 —— 小字必须看得清，宁可深一些。
+     * 文字色用主色；但在浅色主题下 --accent 已经被压暗到能读（62% 主色 +
+     * 暗底），直接用它即可。小字（9.5px）对比度阈值高，
+     * 这里再往深里掺一档保险，宁可深一些也要看清。
      */
-    color: color-mix(in srgb, var(--accent) 78%, #000);
+    color: color-mix(in srgb, var(--accent) 80%, #000);
     font-weight: 700;
   }
   .nav-label {
@@ -322,9 +322,8 @@ const isChatView = computed(() => {
     text-overflow: ellipsis;
   }
   .nav-icon {
-    font-size: 20px;
-    width: auto;
-    line-height: 1.1;
+    width: 22px;
+    height: 22px;
   }
 
   .sidebar-footer {

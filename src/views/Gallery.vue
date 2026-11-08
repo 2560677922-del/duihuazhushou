@@ -6,12 +6,13 @@
 // 这个页面保留是为了**老书签和旧链接不 404**，
 // 内容直接复用同一个面板组件（只有一份实现）。
 import GalleryPanel from '../components/GalleryPanel.vue';
+import AppIcon from '../components/AppIcon.vue';
 </script>
 
 <template>
   <div class="gallery-page">
     <div class="page-head">
-      <h2>🖼️ 图片库</h2>
+      <h2><AppIcon name="image" :size="20" class="head-ico" />图片库</h2>
       <p class="tip">
         这个入口已移到「资产 → 图片库」。本页保留是为了旧链接可用。
       </p>
@@ -30,6 +31,12 @@ import GalleryPanel from '../components/GalleryPanel.vue';
 .page-head h2 {
   margin: 0 0 4px;
   font-size: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.head-ico {
+  color: var(--accent);
 }
 .tip {
   margin: 0;
