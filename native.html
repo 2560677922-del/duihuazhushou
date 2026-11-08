@@ -6,14 +6,15 @@
     <meta name="theme-color" content="#0d1018" />
     <title>引擎</title>
     <!--
-      这是 APK 里的页面：**只加载引擎，不加载任何界面**。
+      唯一的页面：**只加载引擎，不加载任何界面**。
 
-      为什么不复用 index.html：
-        网页版入口要 mount Vue App、挂 router、加载全部 views/components，
-        而 APK 的原生界面完全不需要这些 —— 那些代码只会拖慢低端机冷启动
-        （解析 JS、建 DOM、跑布局）。这里只保留 store + engine + bridge。
+      仓库里已经没有网页版界面了（Vue / router / views 已删除），
+      所有页面都在原生层。这里保留一个空白页，是因为引擎本身
+      （SillyTavern 的角色卡、世界书、预设、正则兼容）仍然是 TS，
+      需要一个 JS 宿主 —— WebView 就是那个宿主。
 
-      网页版仍在 index.html，两者共用 src/ 下的引擎层，互不影响。
+      这个页面不画任何 UI，只在控制台和 #engine-status 里报启动状态。
+      调试引擎：npm run dev，浏览器打开 /native.html。
     -->
     <style>
       html,

@@ -1,13 +1,13 @@
-// 「APK 只跑引擎」的守卫测试。
+// 「仓库里只有引擎，没有界面」的守卫测试。
 //
-// 裁界面最怕的不是一次裁错，而是**以后悄悄加回来**：比如某天在 store 里
-// import 了一个 .vue，或者 native.html 被塞进第二个入口 —— 构建照样成功，
-// 只是低端机又慢慢变卡，没人会联想到是这里。
+// 界面层已经物理删除（commit d7badda 之后的清理），但最怕**以后又长回来**：
+// 某天想「临时加个页面」，把 views/ 和 router 拖回来，构建照样成功，
+// 只是又回到「两套 UI 各改一遍」的老路。这个脚本从源码和产物两侧卡住：
 //
-// 这个脚本从源码依赖和产物两侧卡住：
-//   1. 引擎入口不许碰 .vue / router / 样式；
-//   2. 引擎依赖的层（bridge/stores/engine/lib）不许反向 import 界面层；
-//   3. 产物里只能有一个入口脚本，且不含背景图等纯界面资源。
+//   1. 界面目录/入口文件不允许再出现（views / components / layouts / router / App.vue / main.ts / index.html）；
+//   2. 引擎入口不许碰 .vue / router / 样式；
+//   3. 底层（bridge/stores/engine/lib）不许反向 import 界面层；
+//   4. 产物只有一个入口脚本，不含背景图等纯界面资源。
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -21,6 +21,21 @@ const check = (label, cond, extra = '') => {
 };
 
 console.log('################ 引擎-only 守卫 ################\n');
+
+// ---- 0. 界面层不允许复活 ----
+const GHOSTS = [
+  'src/views',
+  'src/components',
+  'src/layouts',
+  'src/router',
+  'src/styles',
+  'src/composables',
+  'src/App.vue',
+  'src/main.ts',
+  'index.html',
+];
+const revived = GHOSTS.filter((p) => fs.existsSync(path.join(ROOT, p)));
+check('界面层不存在', revived.length === 0, revived.join(', '));
 
 // ---- 1. 引擎入口的 import 面 ----
 const entry = read('src/native/main.ts');
@@ -36,7 +51,7 @@ check('入口不 import 样式', !imports.some((i) => i.endsWith('.css')));
 check('入口不 import App.vue', !imports.some((i) => i.includes('App.vue')));
 
 // ---- 2. 底层不许反向依赖界面层 ----
-const LOWER = ['src/bridge', 'src/stores', 'src/engine', 'src/lib', 'src/composables'];
+const LOWER = ['src/bridge', 'src/stores', 'src/engine', 'src/lib', 'src/native'];
 const offenders = [];
 function walk(dir) {
   const abs = path.join(ROOT, dir);
@@ -57,9 +72,9 @@ for (const d of LOWER) walk(d);
 check('底层不反向 import 界面层', offenders.length === 0, offenders.slice(0, 3).join(' | '));
 
 // ---- 3. 产物侧（构建过才检查） ----
-const dist = path.join(ROOT, 'dist-native');
+const dist = path.join(ROOT, 'dist');
 if (!fs.existsSync(dist)) {
-  console.log('  ·  跳过产物检查（还没跑 npm run build:native）');
+  console.log('  ·  跳过产物检查（还没跑 npm run build）');
 } else {
   const html = fs.readFileSync(path.join(dist, 'native.html'), 'utf8');
   const scripts = [...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1]);

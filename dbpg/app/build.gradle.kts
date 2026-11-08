@@ -95,12 +95,9 @@ dependencies {
 // 注意：这里只读 ../dist，不改动 Web 工程里任何文件。
 // ---------------------------------------------------------------------------
 
-// APK 只用引擎产物（dist-native，无界面）；网页版仍是 ../dist。
-// 回退到 ../dist 只为兼容"还没跑 build:native"的老流程，patchWebIndex 会明确报错。
-val distNativeDir: File = rootProject.file("../dist-native")
-val distDir: File =
-    if (File(distNativeDir, "native.html").exists()) distNativeDir
-    else rootProject.file("../dist")
+// 只有一套产物：../dist（引擎包，入口 native.html，无界面）。
+// 网页界面已移除，`npm run build` 只构建引擎。
+val distDir: File = rootProject.file("../dist")
 val wwwDir: File = file("src/main/assets/www")
 val vendorDir: File = file("src/main/assets/vendor")
 
@@ -122,7 +119,7 @@ val patchWebIndex = tasks.register("patchWebIndex") {
         val index = File(wwwDir, "native.html")
         if (!index.exists()) {
             error("找不到 " + distDir + "/native.html\n" +
-                  "        请先在上一级目录执行：npm run build:native\n" +
+                  "        请先在上一级目录执行：npm run build\n" +
                   "        （或者直接双击 dbpg/build-apk.cmd 一键完成）")
         }
         val shim = File(vendorDir, "capacitor-compat.js")
