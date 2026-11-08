@@ -203,28 +203,64 @@ object SessionEditor {
 
     // ------------------------------------------------------------ 分支 / 副本
 
+    /** 标题尾部的编号：「（2）」「(2)」都认，用来避免分支出「A（1）（1）」。 */
+    private val BRANCH_NO = Regex("""^(.*?)\s*[（(](\d+)[)）]$""")
+
+    /** 剥掉标题尾部的分支编号；没有就原样返回（trim 后）。 */
+    private fun stripBranchNo(title: String): String {
+        val t = title.trim()
+        val hit = BRANCH_NO.find(t) ?: return t
+        return hit.groupValues[1].trim().ifBlank { t }
+    }
+
+    /**
+     * 算出下一个分支编号后缀。
+     *
+     * 规则：先把标题尾部的编号剥掉得到 base，再在 [existingTitles] 里找
+     * `base（n）` 的最大 n，+1。所以从「雨夜（1）」再分支得到「雨夜（2）」，
+     * 而不是「雨夜（1）（1）」；删掉中间的编号也不会撞号（取 max+1）。
+     *
+     * 为什么不直接数会话个数：分支可以删、可以并行分两条，
+     * 数个数会撞号；扫标题才是幂等的。
+     *
+     * @param existingTitles 磁盘上已有会话的标题（含源会话本身，会被规则自动排除）。
+     */
+    fun branchSuffix(baseTitle: String, existingTitles: Collection<String>): String {
+        val base = stripBranchNo(baseTitle).ifBlank { "未命名冒险" }
+        var max = 0
+        val same = Regex("""^""" + Regex.escape(base) + """\s*[（(](\d+)[)）]$""")
+        for (t in existingTitles) {
+            val n = same.find(t.trim())?.groupValues?.get(1)?.toIntOrNull() ?: continue
+            if (n > max) max = n
+        }
+        return "（${max + 1}）"
+    }
+
     /**
      * 从某一步分支：复制到这一步（含）为止，生成一个新会话。
      *
      * 原会话不动 —— 用户通常是想"从这个节点往下再走一条不同的路"。
      * @param newActionId 给第 i 条生成新 id；默认沿用原 id 会与源会话冲突。
+     * @param titleSuffix 空串表示标题原样（调用方已经算好完整标题时用）。
      */
     fun branch(
         doc: SessionDoc,
         actionId: String,
         newSessionId: String,
         newActionId: (Int) -> String,
-        titleSuffix: String = " · 分支",
+        titleSuffix: String = "（1）",
         now: Long = System.currentTimeMillis(),
     ): SessionDoc? {
         val idx = doc.actions.indexOfFirst { it.id == actionId }
         if (idx < 0) return null
+        // raw 必须原样带走：它是"未知字段"的兜底（speakerId、自定义元数据等），
+        // 置空等于分支一次就把 ST 扩展字段洗掉。id 在 toJson 里会被覆盖，不会串号。
         val copied = doc.actions.take(idx + 1).mapIndexed { i, a ->
-            a.copy(id = newActionId(i), raw = null)
+            a.copy(id = newActionId(i))
         }
         return SessionDoc(
             id = newSessionId,
-            title = doc.title + titleSuffix,
+            title = stripBranchNo(doc.title).ifBlank { "未命名冒险" } + titleSuffix,
             sceneDescription = doc.sceneDescription,
             actions = copied,
             createdAt = now,
@@ -237,13 +273,13 @@ object SessionEditor {
         doc: SessionDoc,
         newSessionId: String,
         newActionId: (Int) -> String,
-        titleSuffix: String = " · 副本",
+        titleSuffix: String = "（副本）",
         now: Long = System.currentTimeMillis(),
     ): SessionDoc = SessionDoc(
         id = newSessionId,
         title = doc.title + titleSuffix,
         sceneDescription = doc.sceneDescription,
-        actions = doc.actions.mapIndexed { i, a -> a.copy(id = newActionId(i), raw = null) },
+        actions = doc.actions.mapIndexed { i, a -> a.copy(id = newActionId(i)) },
         createdAt = now,
         updatedAt = now,
     )

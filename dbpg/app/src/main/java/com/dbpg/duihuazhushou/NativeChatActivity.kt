@@ -300,7 +300,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     }
 
     override fun onBranchCreated(sessionId: String, title: String) {
-        Toast.makeText(this, "已分成新会话：$title", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "已分出新会话：$title（点任意 AI 气泡即可再分）", Toast.LENGTH_SHORT).show()
         controller.open(sessionId)
     }
 
@@ -361,6 +361,11 @@ class NativeChatActivity : Activity(), ChatController.Sink {
                     .putExtra(com.dbpg.duihuazhushou.chat.render.CardViewerActivity.EXTRA_TITLE, titleView.text),
             )
         }
+
+        /** 点 AI 气泡：从这条分支（编号与跳转由 controller / onBranchCreated 处理）。 */
+        override fun onBranchFrom(item: ChatItem) {
+            controller.branchFrom(item.actionId)
+        }
     }
 
     private fun showActionMenu(item: ChatItem, anchor: View) {
@@ -371,7 +376,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         } else {
             popup.menu.add(0, M_REGEN, 0, "重新生成")
             popup.menu.add(0, M_EDIT, 1, "编辑这条回复")
-            popup.menu.add(0, M_BRANCH, 2, "从这里分支出新会话")
+            popup.menu.add(0, M_BRANCH, 2, "从这条分出新会话（含本条）")
             popup.menu.add(0, M_DELETE, 3, "删除这条回复")
         }
         popup.setOnMenuItemClickListener { mi ->

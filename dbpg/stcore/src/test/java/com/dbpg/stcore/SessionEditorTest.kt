@@ -221,11 +221,44 @@ class SessionEditorTest {
         val b = SessionEditor.branch(d, "a2", "s2", { "n$it" })
         assertNotNull(b)
         assertEquals("s2", b!!.id)
-        assertEquals("测试会话 · 分支", b.title)
+        assertEquals("测试会话（1）", b.title)
         assertEquals(2, b.actions.size)
         assertEquals(listOf("n0", "n1"), b.actions.map { it.id })
         // 原会话不动
         assertEquals(3, d.actions.size)
+    }
+
+    @Test
+    fun `分支编号按已有标题递增而不是叠加后缀`() {
+        // 从「雨夜」分出一条 → （1）
+        assertEquals("（1）", SessionEditor.branchSuffix("雨夜", listOf("雨夜", "别的会话")))
+        // 再从「雨夜（1）」分 → （2），不能变成「雨夜（1）（1）」
+        assertEquals("（2）", SessionEditor.branchSuffix("雨夜（1）", listOf("雨夜", "雨夜（1）")))
+        // 删掉中间那条也不撞号：已有（1）（3）→ （4）
+        assertEquals("（4）", SessionEditor.branchSuffix("雨夜", listOf("雨夜（1）", "雨夜（3）")))
+        // 半角括号同样认
+        assertEquals("（3）", SessionEditor.branchSuffix("雨夜 (2)", listOf("雨夜(2)")))
+        // 前缀相同的别的标题不能被算进来（「雨夜篇」不是「雨夜」的分支）
+        assertEquals("（1）", SessionEditor.branchSuffix("雨夜", listOf("雨夜篇（5）")))
+    }
+
+    @Test
+    fun `分支标题带上编号后不会重复叠后缀`() {
+        val d = doc(act("a1")).copy(title = "雨夜（1）")
+        val b = SessionEditor.branch(d, "a1", "s2", { "n$it" }, titleSuffix = "（2）")!!
+        assertEquals("雨夜（2）", b.title)
+    }
+
+    @Test
+    fun `分支保留未知字段（raw 兜底不能被洗掉）`() {
+        val raw = """{"id":"a1","user":"u","ai":"a","speakerId":"char_7","x":1}"""
+        val d = doc(SessionAction.parse(org.json.JSONObject(raw)))
+        val b = SessionEditor.branch(d, "a1", "s2", { "n$it" })!!
+        val out = b.actions[0].toJson()
+        assertEquals("char_7", out.optString("speakerId"))
+        assertEquals(1, out.optInt("x"))
+        // id 必须换成新的，否则两条会话的消息 id 撞车
+        assertEquals("n0", out.optString("id"))
     }
 
     @Test

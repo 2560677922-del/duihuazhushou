@@ -54,6 +54,14 @@ class ChatAdapter(
         fun onCardNeeded(item: ChatItem, widthPx: Int)
         /** 点卡片：打开全屏查看器（可选中文字、可跑脚本） */
         fun onCardOpen(item: ChatItem)
+
+        /**
+         * 点 AI 气泡：从这一条分支出新会话（复制到这条含）。
+         *
+         * 入口做成"点气泡本体"而不是埋在 ⋯ 菜单里，是因为这是高频操作：
+         * 想走另一条线时，点一下那句话就该开新线，而不是先长按再选菜单。
+         */
+        fun onBranchFrom(item: ChatItem)
     }
 
     /** 气泡最大宽度：按屏宽百分比算，改设置不用重建 Adapter。 */
@@ -264,6 +272,18 @@ class ChatAdapter(
             holder.more.setTextColor(COLOR_DIM)
             holder.more.setOnClickListener { listener.onActionMenu(item, it) }
         }
+
+        /*
+         * 点 AI 气泡 = 从这条分支。
+         *
+         * 每次 bind 都要显式重设：ViewHolder 复用时旧的 listener 会捕获上一条
+         * item，切到用户消息后忘了清，就会出现"点自己的发言也分支"。
+         * 用户 / 系统 / 流式中 / 只读条目一律不绑。
+         */
+        val canBranch = !isUser && !isSystem && item.actionId.isNotEmpty() && !item.streaming
+        val branchClick = if (canBranch) View.OnClickListener { listener.onBranchFrom(item) } else null
+        holder.text.setOnClickListener(branchClick)
+        holder.bubble.setOnClickListener(branchClick)
     }
 
     /**

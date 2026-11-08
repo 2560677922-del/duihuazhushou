@@ -7,6 +7,7 @@ import com.dbpg.duihuazhushou.appearance.AppearanceConfig
 import com.dbpg.duihuazhushou.chat.render.CardRenderer
 import com.dbpg.duihuazhushou.chat.render.RenderCache
 import com.dbpg.duihuazhushou.imagegen.AutoImageService
+import com.dbpg.duihuazhushou.session.SessionBindingStore
 import com.dbpg.duihuazhushou.session.SessionRepo
 import com.dbpg.duihuazhushou.settings.ConnectionStore
 import com.dbpg.duihuazhushou.summary.SummaryConfig
@@ -924,14 +925,35 @@ class ChatController(
         render(false)
     }
 
-    /** 从这一轮分支：复制到这一轮（含）成新会话，原会话不动。 */
+    /**
+     * 从这一轮分支：复制到这一轮（含）成新会话，原会话不动。
+     *
+     * 标题按「原标题（1）→（2）」自动编号，不用固定后缀 —— 否则连分两次
+     * 会得到「A · 分支 · 分支」，列表里没法分辨。
+     *
+     * 编号要扫已有标题，而读索引是磁盘 IO，所以整个流程放在 SessionRepo
+     * 的 IO 线程里做，回来再刷界面（`onBranchCreated` 在主线程）。
+     *
+     * 资产绑定（预设/世界书/正则/DNA）**必须一起复制**：它们是按 sessionId
+     * 存的独立小文件，不复制就自动回落到"跟随全局"，表现为"分支一出去
+     * 预设就换了"——很难联想到是分支的锅。
+     */
     fun branchFrom(actionId: String) {
         val d = doc ?: return
-        val newId = SessionRepo.newId("s")
-        val branched = SessionEditor.branch(d, actionId, newId, { i -> SessionRepo.newId("a$i") })
-            ?: return
-        SessionRepo.save(branched)
-        sink.onBranchCreated(branched.id, branched.title)
+        SessionRepo.list { entries ->
+            // 这一刻可能已经切走会话了：以点击时的 doc 为准，但别把人拽回来
+            if (doc?.id != d.id) return@list
+            val suffix = SessionEditor.branchSuffix(d.title, entries.map { it.title })
+            val newId = SessionRepo.newId("s")
+            val branched = SessionEditor.branch(
+                d, actionId, newId, { i -> SessionRepo.newId("a$i") }, titleSuffix = suffix,
+            ) ?: return@list
+            SessionRepo.save(branched)
+            // 绑定文件很小，同步读写没问题；不复制就等于分支换了套资产
+            val binding = SessionBindingStore.load(appContext, d.id)
+            if (!binding.isDefault) SessionBindingStore.save(appContext, branched.id, binding)
+            sink.onBranchCreated(branched.id, branched.title)
+        }
     }
 
     // ------------------------------------------------------------ 自动配图
