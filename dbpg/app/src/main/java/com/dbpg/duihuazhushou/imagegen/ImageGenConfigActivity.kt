@@ -39,6 +39,13 @@ class ImageGenConfigActivity : Activity() {
 
     private var userEditedConn = false
 
+    /**
+     * setIfDiffers 程序化回填标记：setText 也会触发 TextWatcher，不压制的话
+     * 首次加载就把 userEditedConn 污染成 true，输入框从此冻结在第一个接口上
+     * ——「拉取模型永远拉第一个」的同款根因（与 ApiConfigActivity 一并修）。
+     */
+    private var fillingConn = false
+
     private val apiListener = NativeBridge.ApiResultListener { json -> onApiResult(json) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,7 +69,8 @@ class ImageGenConfigActivity : Activity() {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
-                userEditedConn = true
+                // 程序化回填不算「用户编辑过」
+                if (!fillingConn) userEditedConn = true
             }
         }
         baseEdit.addTextChangedListener(watcher)
@@ -78,6 +86,12 @@ class ImageGenConfigActivity : Activity() {
     override fun onPause() {
         super.onPause()
         NativeBridge.setApiResultListener(null)
+    }
+
+    /** 操作成功后的刷新：current 可能已变（切换 / 新建 / 删掉当前项回退），输入框要跟上。 */
+    private fun reloadAfterOp() {
+        userEditedConn = false
+        load()
     }
 
     private fun load() {
@@ -100,7 +114,11 @@ class ImageGenConfigActivity : Activity() {
     }
 
     private fun setIfDiffers(e: EditText, text: String) {
-        if (e.text?.toString() != text) e.setText(text)
+        if (e.text?.toString() != text) {
+            fillingConn = true
+            e.setText(text)
+            fillingConn = false
+        }
     }
 
     // ------------------------------------------------------------ 运营商列表
@@ -493,7 +511,7 @@ class ImageGenConfigActivity : Activity() {
                 "imgAddProvider" -> {
                     if (ok) {
                         toast("已创建，接着拉取模型即可")
-                        load()
+                        reloadAfterOp()
                     } else {
                         status.text = "创建失败：${obj.optString("error")}"
                     }
@@ -501,7 +519,7 @@ class ImageGenConfigActivity : Activity() {
                 "imgUseApi" -> {
                     if (ok) {
                         toast("已切换")
-                        load()
+                        reloadAfterOp()
                     } else {
                         status.text = "切换失败：${obj.optString("error")}"
                     }
@@ -509,7 +527,7 @@ class ImageGenConfigActivity : Activity() {
                 "imgRemoveApi" -> {
                     if (ok) {
                         toast("已删除")
-                        load()
+                        reloadAfterOp()
                     } else {
                         status.text = "删除失败：${obj.optString("error")}"
                     }
@@ -517,7 +535,7 @@ class ImageGenConfigActivity : Activity() {
                 "imgRemoveApis", "imgRemoveProvider" -> {
                     if (ok) {
                         toast("已删除 ${obj.optInt("removed", 0)} 项")
-                        load()
+                        reloadAfterOp()
                     } else {
                         status.text = "删除失败：${obj.optString("error")}"
                     }

@@ -56,6 +56,14 @@ class ApiConfigActivity : Activity() {
     /** 输入框是否由用户动过：刷新时别把人家正在打的字冲掉。 */
     private var userEditedConn = false
 
+    /**
+     * setIfDiffers 正在程序化回填：回填用的 setText 也会触发 TextWatcher，
+     * 不压制的话首次加载就会把 userEditedConn 误标成 true，之后切到哪个
+     * 运营商输入框都冻结在第一个的地址上（2026-11-09 用户实报
+     * 「拉取模型永远拉第一个」的根因）。
+     */
+    private var fillingConn = false
+
     private val apiListener = NativeBridge.ApiResultListener { json -> onApiResult(json) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -84,7 +92,8 @@ class ApiConfigActivity : Activity() {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
-                userEditedConn = true
+                // 程序化回填不算「用户编辑过」，别把 userEditedConn 污染成 true
+                if (!fillingConn) userEditedConn = true
             }
         }
         baseEdit.addTextChangedListener(watcher)
@@ -117,6 +126,15 @@ class ApiConfigActivity : Activity() {
         }
     }
 
+    /**
+     * 操作成功后的刷新：current 可能已经变了（切换 / 新建 / 删掉当前项回退），
+     * 输入框要跟上，否则下一轮「拉取模型」会拿旧地址打到旧运营商。
+     */
+    private fun reloadAfterOp() {
+        userEditedConn = false
+        loadConfig()
+    }
+
     /** 成功拿到配置时清掉「加载中」提示，但别抹掉「已创建运营商」这类操作反馈。 */
     private fun applyConfig(obj: JSONObject) {
         if (status.text?.toString().orEmpty().startsWith("引擎")) status.text = ""
@@ -144,7 +162,11 @@ class ApiConfigActivity : Activity() {
     }
 
     private fun setIfDiffers(e: EditText, text: String) {
-        if (e.text?.toString() != text) e.setText(text)
+        if (e.text?.toString() != text) {
+            fillingConn = true
+            e.setText(text)
+            fillingConn = false
+        }
     }
 
     // ------------------------------------------------------------ 运营商与模型（动态行）
@@ -548,7 +570,7 @@ class ApiConfigActivity : Activity() {
                         val skipped = obj.optInt("skipped", 0)
                         status.text = "已添加 $added 个" + if (skipped > 0) "（跳过重复 $skipped 个）" else ""
                         Toast.makeText(this, status.text, Toast.LENGTH_SHORT).show()
-                        loadConfig()
+                        reloadAfterOp()
                     } else {
                         status.text = "添加失败：${obj.optString("error")}"
                     }
@@ -556,7 +578,7 @@ class ApiConfigActivity : Activity() {
                 "useModel" -> {
                     if (ok) {
                         Toast.makeText(this, "已切换", Toast.LENGTH_SHORT).show()
-                        loadConfig()
+                        reloadAfterOp()
                     } else {
                         status.text = "切换失败：${obj.optString("error")}"
                     }
@@ -564,7 +586,7 @@ class ApiConfigActivity : Activity() {
                 "removeModel" -> {
                     if (ok) {
                         Toast.makeText(this, "已删除", Toast.LENGTH_SHORT).show()
-                        loadConfig()
+                        reloadAfterOp()
                     } else {
                         status.text = "删除失败：${obj.optString("error")}"
                     }
@@ -575,7 +597,7 @@ class ApiConfigActivity : Activity() {
                 "llmRemoveModels", "llmRemoveProvider" -> {
                     if (ok) {
                         toast("已删除 ${obj.optInt("removed", 0)} 项")
-                        loadConfig()
+                        reloadAfterOp()
                     } else {
                         status.text = "删除失败：${obj.optString("error")}"
                     }
@@ -583,7 +605,7 @@ class ApiConfigActivity : Activity() {
                 "llmAddProvider" -> {
                     if (ok) {
                         status.text = "已创建运营商，接着拉取模型即可"
-                        loadConfig()
+                        reloadAfterOp()
                     } else {
                         status.text = "创建失败：${obj.optString("error")}"
                     }
