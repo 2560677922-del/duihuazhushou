@@ -224,3 +224,53 @@ App 内还有两个自查入口：
 3. **不为单个 bug 加正则补丁**。上一次试图「从散文里猜面板」写了 400 行，最后证明模型只是没遵守预设格式，全删了。
 4. **链接必须是「模型输出 → 正则 → 渲染」**。任何绕开正则、直接解析语义的捷径都会在下一个预设上翻车。
 5. **可卸载**。插件、正则、预设都能停用；停用后行为回到「原始文本」，不能崩。
+
+---
+
+## 10. 存储地图（谁的数据在哪、删了会怎样）
+
+> 2026-11-09 逐层验证过。以后忘了「数据到底存哪」「安卓端删除会不会真删」，先看这一节。
+
+### 两层结构：原生是权威，网页只是缓存
+
+```
+原生（filesDir，卸载即清）
+├─ data/sessions/*.json        会话（SessionStore，唯一权威）
+├─ characters/*.json           角色卡文件副本（角色列表页读这份；mig_*.json 是迁移产物）
+├─ 图片库目录（AssetStore）     聊天配图 / 生图（唯一权威）
+├─ Data/app-data.json          ★ 网页引擎的落盘镜像 = 预设/世界书/正则/角色(网页侧)/
+│                                LLM·生图配置等全部配置键的权威副本
+├─ Data/backups/               每次写盘前的快照（有数量上限，自动清超额）
+└─ SharedPreferences           连接配置 ConnectionStore、卡片设置、DNA 库（dhp_host 等）
+
+网页侧（/data/data/<pkg>/app_webview，缓存）
+├─ IndexedDB「duihuazhushou/kv」   localStorage 溢出的降级区 + 历史数据
+├─ IndexedDB「duihuazhushou/blobs」 迁移前旧图（ia-*、generatedImages），原生不读
+└─ Local Storage                   键名前缀 duihuazhushou_，小配置缓存
+```
+
+要点：引擎启动时 `hydrate` **以 app-data.json 为准**覆盖浏览器存储。所以网页侧永远可以放心清——文件才是权威。app-data.json 经 `FileBridge.writeFile` 落盘（`window.Capacitor` 垫片 → Filesystem.writeFile → dhp 桥）。
+
+### 安卓端删除的语义（已逐链路验证）
+
+| 操作 | 实际发生什么 | 重启会复活吗 |
+| --- | --- | --- |
+| 资产页删预设/世界书/正则组/角色卡 | `assetRemove` → 网页 store 过滤数组 → `save()` 全量回写 → **浏览器存储 + app-data.json 双层同步删** | 不会 |
+| 删子条目（预设项/世界书条目/正则脚本） | 同上（`presetRemovePrompt` 等） | 不会 |
+| 删会话 / 图片 / DNA | 纯原生文件操作 | 不会 |
+| 删图片 | 删文件 + 清缩略图缓存并打删除标记（防 dataUrl 复活） | 不会 |
+
+前提：资产类删除要等引擎 WebView 加载完（命令走 `__dhpApi.command`）；引擎没就绪时命令静默不发，页面会有提示。
+
+### 已知的坑
+
+1. **角色卡有两份、两个删除入口，互不同步**：资产页删的是网页 store（聊天引擎用这份）；角色列表/详情页删的是 `files/characters` 文件副本。删角色时用同一个入口，别混。
+2. **备份里有旧数据**：删除后的资产在近期 `Data/backups` 快照里还有副本。占空间、界面读不到、有上限自动清；介意就手动清那个目录。
+3. **网页 blobs 库是死重**：迁移前的旧图（几百 MB 的 base64）还躺在 IndexedDB 里，原生永远不读。没有选择性清理工具（做过方案被搁置）；**卸载重装**是清掉它的唯一手段——只要 app-data.json 时代的数据都走文件了，卸载无损失。
+4. **别整删 app_webview 目录**「以为在清缓存」：虽然文件是权威，但浏览器存储里有引擎正在用的会话状态，整删等于把运行中的引擎抽了地板。要么不动，要么卸载重装。
+
+### 想找某类数据在哪
+
+- 配置类（运营商/模型/风格/DNA）→ `ConnectionStore`（SharedPreferences）
+- 预设/世界书/正则内容 → `Data/app-data.json`（大文件，按键名找，如 `presets` / `worldBooks` / `regexGroups`）
+- 会话 → `data/sessions`；图片 → AssetStore 目录；网页旧图 → 只在 `app_webview` 的 IndexedDB 里
