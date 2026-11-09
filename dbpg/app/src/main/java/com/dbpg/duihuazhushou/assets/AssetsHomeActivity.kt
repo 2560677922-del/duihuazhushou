@@ -1639,10 +1639,18 @@ class AssetsHomeActivity : Activity() {
             when {
                 kind == "importAsset" -> {
                     if (ok) {
-                        toast("已导入 ${obj.optInt("imported", 0)} 项")
+                        // 部分失败也要说清楚：全成功才只报数量
+                        val failed = obj.optInt("failed", 0)
+                        if (failed > 0) {
+                            toast("已导入 ${obj.optInt("imported", 0)} 项，${failed} 项失败：${obj.optString("firstError")}")
+                        } else {
+                            toast("已导入 ${obj.optInt("imported", 0)} 项")
+                        }
                         load()
                     } else {
-                        toast("导入失败：${obj.optString("error")}")
+                        val detail = obj.optString("detail")
+                        toast("导入失败：${obj.optString("error")}" + if (detail.isNotBlank()) "\n$detail" else "")
+                        load()
                     }
                 }
                 kind == "exportAsset" -> {

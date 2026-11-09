@@ -33,6 +33,7 @@ import type { ToolRequestOptions } from '../engine/apiClient';
 import { loadSpresetRuntime, stripPrivateDirectives } from '../engine/spresetRuntime';
 import { imageMarkerInstruction } from '../engine/imageMarker';
 import { flattenForEngine } from '../engine/regexGroups';
+import { entriesListOf } from '../engine/stImport';
 import {
   activatePromptInOrder,
   getActivePromptOrder,
@@ -1183,7 +1184,32 @@ async function apiCommand(raw: string): Promise<void> {
           }
         }
         const items = await a.importAnyJson(raw);
-        replyApiResult({ kind: cmd, ok: true, imported: items.length });
+        /*
+         * ★ 回报必须诚实。importAnyJson 对每个识别到的项都会给一条结果
+         *   （解析失败的那条 ok:false），不能拿 items.length 当"导入成功数"——
+         *   否则整份文件都解析失败时也会弹"已导入 1 项"，用户以为成功
+         *   实际什么都没入库（2026-11-09 用户实报"导入成功但看不到世界书"）。
+         */
+        const okItems = items.filter((i) => i.ok);
+        const failed = items.filter((i) => !i.ok);
+        if (okItems.length === 0) {
+          replyApiResult({
+            kind: cmd,
+            ok: false,
+            error: failed[0]?.error || '没有识别到可导入的资产',
+            detail: failed.map((f) => `${f.name || '未命名'}：${f.error || '未知原因'}`).join('\n'),
+            imported: 0,
+            failed: failed.length,
+          });
+          return;
+        }
+        replyApiResult({
+          kind: cmd,
+          ok: true,
+          imported: okItems.length,
+          failed: failed.length,
+          firstError: failed[0]?.error || '',
+        });
         return;
       }
 
@@ -1211,8 +1237,7 @@ async function apiCommand(raw: string): Promise<void> {
       case 'wbSaveEntry': {
         const a = useAssetsStore();
         const book: any = (a.worldBooks || []).find((w: any) => w._uid === req.bookId);
-        const list = book?.data?.entries || book?.entries;
-        if (!list) throw new Error('找不到世界书');
+        const list = ensureEntryList(book);
         const e: any = list.find((x: any) => Number(x.uid) === Number(req.uid));
         if (!e) throw new Error('找不到条目');
         const p = req.entry || {};
@@ -1250,8 +1275,7 @@ async function apiCommand(raw: string): Promise<void> {
       case 'wbAddEntry': {
         const a = useAssetsStore();
         const book: any = (a.worldBooks || []).find((w: any) => w._uid === req.bookId);
-        const list = book?.data?.entries || book?.entries;
-        if (!list) throw new Error('找不到世界书');
+        const list = ensureEntryList(book);
         const maxUid = list.reduce((m: number, x: any) => Math.max(m, Number(x.uid) || 0), -1);
         list.push({
           uid: maxUid + 1,
@@ -1276,8 +1300,7 @@ async function apiCommand(raw: string): Promise<void> {
       case 'wbRemoveEntry': {
         const a = useAssetsStore();
         const book: any = (a.worldBooks || []).find((w: any) => w._uid === req.bookId);
-        const list = book?.data?.entries || book?.entries;
-        if (!list) throw new Error('找不到世界书');
+        const list = ensureEntryList(book);
         const i = list.findIndex((x: any) => Number(x.uid) === Number(req.uid));
         if (i >= 0) list.splice(i, 1);
         await a.save();
@@ -1613,6 +1636,22 @@ function syncPromptEnabled(ps: any, identifier: string, enabled: boolean): void 
  * 显示层取 `name || data.name`，web 资产页改名时也是「存在哪个就同步哪个」，
  * 这里保持同一套写法，避免原生改完、网页打开还是旧名字。
  */
+/**
+ * 世界书条目列表的就地归一：数组 / 对象索引 / data 包装统一成数组，
+ * 并把结果**写回书对象**（后续 push/splice 才能生效、save 才能存对）。
+ * 旧数据（对象索引残留）第一次被编辑时就顺手修成数组形态。
+ *
+ * 必须放在模块层：放进 switch 体会被转译降级成"流经才赋值"，
+ * 跳转进 case 时函数还没初始化，运行时报 TDZ（2026-11-09 实测踩坑）。
+ */
+function ensureEntryList(book: any): any[] {
+  if (!book) throw new Error('找不到世界书');
+  const list = entriesListOf(book);
+  book.entries = list;
+  if (book.data && book.data.entries !== undefined) delete book.data.entries;
+  return list;
+}
+
 function setAssetName(obj: any, name: string): void {
   obj.name = name;
   if (obj.preset_name !== undefined) obj.preset_name = name;
@@ -1628,9 +1667,10 @@ function assetsDetail(): string {
   const a = useAssetsStore();
   const books = (a.worldBooks || []).map((w: any) => ({
     id: w._uid || '',
-    name: w.name || w.data?.name || '未命名',
+    name: w.name || w.data?.name || '未命名世界书',
     current: a.currentWorldBookIds.includes(w._uid),
-    entries: (w.data?.entries || w.entries || []).map((e: any) => ({
+    // entriesListOf：数组 / 对象索引 / data 包装全都能读，绝不在读端直接 .map
+    entries: entriesListOf(w).map((e: any) => ({
       uid: e.uid,
       comment: e.comment || '',
       keys: e.keys || [],

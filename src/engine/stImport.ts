@@ -110,20 +110,33 @@ export function detectKind(raw: any): DetectResult {
   }
 
   // 世界书：entries 是数组或对象；或顶层直接有 key+content 列表
-  const hasEntries = raw.entries !== undefined && raw.entries !== null;
-  if (hasEntries) {
-    const entries = asArray(raw.entries);
+  // 有些工具导出会把世界书包一层 data（{ data: { name, entries } }）——
+  // 上面判角色卡的 cardish 没命中时，这里要看 data.entries，否则整本识别不出来。
+  const wbSource =
+    (raw.entries !== undefined && raw.entries !== null && raw) ||
+    (raw.data && raw.data.entries !== undefined && raw.data.entries !== null && raw.data);
+  if (wbSource) {
+    const entries = asArray(wbSource.entries);
     const looksLikeWB =
-      !Array.isArray(raw.entries) || // entries 是对象（ST 按 uid 索引）
-      entries.some((e: any) => e && (e.content !== undefined || e.key !== undefined));
+      !Array.isArray(wbSource.entries) || // entries 是对象（ST 按 uid 索引）
+      entries.some(
+        (e: any) =>
+          e &&
+          (e.content !== undefined ||
+            e.key !== undefined ||
+            e.keys !== undefined || // NovelAI Lorebook 用 keys（复数）
+            e.text !== undefined), // NovelAI Lorebook 正文叫 text
+      );
     if (looksLikeWB) {
       return {
         kind: 'worldbook',
-        reason: Array.isArray(raw.entries)
+        reason: Array.isArray(wbSource.entries)
           ? '世界书（entries 数组）'
           : '世界书（entries 为对象索引）',
         name: pickName(raw, '未命名世界书'),
-        count: Array.isArray(raw.entries) ? raw.entries.length : Object.keys(raw.entries).length,
+        count: Array.isArray(wbSource.entries)
+          ? wbSource.entries.length
+          : Object.keys(wbSource.entries).length,
       };
     }
   }
@@ -274,19 +287,45 @@ function findNestedAssetArray(raw: any): { kind: AssetKind; items: any[] } | nul
  */
 export function normalizeWorldBook(raw: any): { value: any; notes: string[] } {
   const notes: string[] = [];
-  const out: any = { ...raw };
+  // 有些导出把世界书包在 data 里（{ data: { name, entries } }）——拍平到顶层。
+  // data 里其它字段（name 等）也一起带上，但 entries 以 data 里的为准。
+  const fromData = !!(raw.data && raw.data.entries !== undefined && raw.data.entries !== null);
+  const src = fromData ? { ...raw.data, ...raw, entries: raw.data.entries } : raw;
+  const out: any = { ...src };
+  // 拍平后必须删掉 data 包装：readers（assetsDetail / wbSaveEntry）先读 data.entries
+  // 再读 entries，留着原始的 data.entries（对象索引）会让它们崩掉 / 读到旧数据。
+  if (fromData) delete out.data;
 
-  if (raw.entries && !Array.isArray(raw.entries)) {
-    const list = Object.entries(raw.entries).map(([uid, e]: [string, any]) => ({
+  if (src.entries && !Array.isArray(src.entries)) {
+    const list = Object.entries(src.entries).map(([uid, e]: [string, any]) => ({
       uid,
       ...(e as any),
     }));
     out.entries = list;
     notes.push(`entries 从对象索引转为数组（${list.length} 条）`);
-  } else if (Array.isArray(raw.entries)) {
-    out.entries = raw.entries.map((e: any, i: number) => ({ uid: e?.uid ?? String(i), ...e }));
+  } else if (Array.isArray(src.entries)) {
+    out.entries = src.entries.map((e: any, i: number) => ({ uid: e?.uid ?? String(i), ...e }));
   } else {
     out.entries = [];
+  }
+
+  // NovelAI Lorebook 形态：正文叫 text、标题叫 displayName。映射到 ST 字段，
+  // 否则整本书条目全是空的（识别成功但没有内容，看起来就像"导入了但没东西"）。
+  out.entries = out.entries.map((e: any) => {
+    if ((e.content === undefined || e.content === '') && typeof e.text === 'string' && e.text) {
+      return { ...e, content: e.text, comment: e.comment || e.displayName || '' };
+    }
+    return e;
+  });
+
+  // 名字兜底：ST 的世界书导出常常没有 name 字段，用第一条条目的备注顶上，
+  // 不然资产页里全是"未命名"，几本书分不清谁是谁。
+  if (!out.name) {
+    const first = out.entries.find((e: any) => e.comment && String(e.comment).trim());
+    if (first) {
+      out.name = String(first.comment).trim();
+      notes.push(`书名取自第一条条目的备注（原文件没有 name 字段）`);
+    }
   }
 
   // 条目字段补齐：parsecard 需要 key 数组 + keys 字符串
@@ -508,9 +547,26 @@ export function normalizePreset(raw: any): { value: any; notes: string[] } {
   return { value: out, notes };
 }
 
+/**
+ * 世界书条目列表的**防御性读取**。
+ *
+ * 库里的书来自不同年代、不同工具：entries 可能是数组（新导入，已归一）、
+ * 可能是对象索引（ST 原生 / 旧数据残留）、也可能藏在 data 下。
+ * 读端一律走这里，谁都不许自己 `.map` —— 对象索引直接 .map 就是
+ * "getAssets 整个崩、资产页什么都显示不出来"的根因（2026-11-09）。
+ */
+export function entriesListOf(book: any): any[] {
+  if (!book || typeof book !== 'object') return [];
+  const candidates = [book.entries, book.data?.entries];
+  for (const raw of candidates) {
+    if (Array.isArray(raw)) return raw.filter(Boolean);
+    if (raw && typeof raw === 'object') return Object.values(raw).filter(Boolean);
+  }
+  return [];
+}
+
 /** 按类型分发归一化 */
-export function normalizeByKind(kind: AssetKind, raw: any): { value: any; notes: string[] } {
-  switch (kind) {
+export function normalizeByKind(kind: AssetKind, raw: any): { value: any; notes: string[] } {  switch (kind) {
     case 'worldbook':
       return normalizeWorldBook(raw);
     case 'regex':
