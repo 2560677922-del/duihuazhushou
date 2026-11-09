@@ -71,6 +71,11 @@
   勾选标签直接出图、自动配图、图片库与查看器
 - **外观**：主题、明暗、底板透明度、强调色、字号、行距、字体、气泡宽度、背景图
 
+## 路线图
+
+- **跑团 / 多人对话**（本质是群聊）：有计划，尚未实现，没有时间表。
+- 其余方向按实际使用中的问题推进，不预设版本号——架构稳定优先于功能数量。
+
 ## 快速开始
 
 环境：Node.js + Android Studio（自带 JBR 与 SDK）。
@@ -136,3 +141,21 @@ App 内另有两处自查：设置 → 渲染与上下文 → **渲染自检**�
 - SillyTavern 生态为**兼容实现**，与本项目无隶属关系；预设、角色卡、世界书的版权归原作者
 - 依赖与素材来源逐一登记在 [`来源与授权.md`](来源与授权.md)，新增外部素材请一并登记
 - 本项目为个人自用工具，不对接任何官方服务，API 密钥只存本机
+
+---
+
+## 致谢
+
+这个项目站在很多人的肩膀上。他们在生态标准、实现思路和踩坑记录上的公开分享，让我们少走了大量弯路。
+
+**排名不分先后。**
+
+**生态与数据**
+
+SillyTavern · 酒馆助手 · 小白X · Tavo · RikkaHub · Danbooru · NovelAI · wallhaven · chami_tavern-scene-plugin · booru-tags-gallery · FrenzyExists/wallpapers
+
+**基础设施**
+
+Vue · Vite · Pinia · Capacitor · markdown-it · marked · localforage · parsecard · nekoai-js
+
+以及所有愿意把预设、正则、前端卡和调教经验公开出来的创作者。
