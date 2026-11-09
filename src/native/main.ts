@@ -20,6 +20,7 @@ import { installGenerateService } from '../bridge/generateService';
 import { installDataExport } from '../bridge/dataExport';
 import { installNativeBridge } from '../bridge/nativeBridge';
 import { openCharacterChat } from '../bridge/characterEntry';
+import { installNativeAssets } from '../bridge/nativeAssets';
 
 /*
  * 没有 Vue app，pinia 不会有人替我们 use()。
@@ -74,7 +75,20 @@ async function boot(): Promise<void> {
   });
 
   /*
-   * 3) 装桥。顺序：先 __dhpNative（openCharacterChat 依赖它），
+   * 3) 世界书 / 正则组改为原生权威存储。
+   *
+   * 必须在 assets.load() 之后：load 从 app-data.json 读的是旧副本，
+   * 这里用原生快照覆盖（首次升级则反过来把旧数据交给原生）。
+   * 早于 installGenerateService：第一次生成前 store 已经是最终数据。
+   */
+  try {
+    installNativeAssets();
+  } catch (e) {
+    console.warn('[引擎] 原生资产接管失败，沿用网页存储：', e);
+  }
+
+  /*
+   * 4) 装桥。顺序：先 __dhpNative（openCharacterChat 依赖它），
    *    再生成通道（__dhpGen），最后迁移通道。
    */
   installNativeBridge({ injectButton: false });
@@ -82,7 +96,7 @@ async function boot(): Promise<void> {
   installDataExport();
 
   /*
-   * 4) 原生角色库「用它开聊」的入口。
+   * 5) 原生角色库「用它开聊」的入口。
    *
    * 只挂这一个业务动作 —— 发消息、生成、落库全部走原生 ChatController，
    * 引擎不再需要 sendUserMessage 这类反向依赖界面的接口。
@@ -92,7 +106,7 @@ async function boot(): Promise<void> {
   };
 
   /*
-   * 5) 关页/切后台前把待写内容落盘。
+   * 6) 关页/切后台前把待写内容落盘。
    *    只保留 flush，不做轮询 —— 原生界面不看外部改动提示。
    */
   window.addEventListener('beforeunload', () => {

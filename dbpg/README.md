@@ -238,8 +238,9 @@ App 内还有两个自查入口：
 ├─ data/sessions/*.json        会话（SessionStore，唯一权威）
 ├─ characters/*.json           角色卡文件副本（角色列表页读这份；mig_*.json 是迁移产物）
 ├─ 图片库目录（AssetStore）     聊天配图 / 生图（唯一权威）
-├─ Data/app-data.json          ★ 网页引擎的落盘镜像 = 预设/世界书/正则/角色(网页侧)/
-│                                LLM·生图配置等全部配置键的权威副本
+├─ data/assets/assets.json     ★ 世界书 + 正则组（含启用项）的权威存储（2026-11-09 起）
+├─ Data/app-data.json          ★ 网页引擎的落盘镜像 = 预设 / 角色(网页侧) / 其余配置键
+│                                （世界书、正则已迁出，见 §10.1）
 ├─ Data/backups/               每次写盘前的快照（有数量上限，自动清超额）
 └─ SharedPreferences           连接配置 ConnectionStore、卡片设置、DNA 库（dhp_host 等）
 
@@ -251,11 +252,29 @@ App 内还有两个自查入口：
 
 要点：引擎启动时 `hydrate` **以 app-data.json 为准**覆盖浏览器存储。所以网页侧永远可以放心清——文件才是权威。app-data.json 经 `FileBridge.writeFile` 落盘（`window.Capacitor` 垫片 → Filesystem.writeFile → dhp 桥）。
 
+### 10.1 世界书 / 正则组：原生权威（2026-11-09）
+
+这两类从 app-data.json 里搬出来了，原因是它们最常被原生功能复用（未来的群聊要共享世界书/正则），隔着桥读数据既慢又脆。
+
+```
+原生 assets.json（权威）
+   ↓ getNativeAssets()  引擎启动时同步拉取
+引擎 assets store（工作副本，提示词组装直接读它）
+   ↓ assets.save() 每次变更回传 onAssetsChanged(json)
+原生 assets.json（原子写：tmp + rename）
+```
+
+- **归一化仍在网页侧**（`engine/stImport.ts`：entries 对象→数组、key 对象、ST 字段补齐），原生只存不解释 → 组装逻辑零改动、零语义漂移
+- 首次升级自动移交：原生为空 → 引擎把现有数据交出去，然后把 app-data.json 里的旧副本置空
+- 删除/导入/改名/开关都走原来的资产页命令，只是 `save()` 之后多一步回传原生；预设与角色卡不受影响
+- 想直接读：`filesDir/data/assets/assets.json`，字段 `worldBooks / currentWorldBookIds / regexGroups / currentRegexGroupIds`
+- 验证脚本：`st-lab/verify_native_assets.js`（11 项：接管、删除回传、首次移交）
+
 ### 安卓端删除的语义（已逐链路验证）
 
 | 操作 | 实际发生什么 | 重启会复活吗 |
 | --- | --- | --- |
-| 资产页删预设/世界书/正则组/角色卡 | `assetRemove` → 网页 store 过滤数组 → `save()` 全量回写 → **浏览器存储 + app-data.json 双层同步删** | 不会 |
+| 资产页删预设/世界书/正则组/角色卡 | `assetRemove` → 网页 store 过滤数组 → `save()`：预设走 app-data.json，世界书/正则回传 `assets.json` | 不会 |
 | 删子条目（预设项/世界书条目/正则脚本） | 同上（`presetRemovePrompt` 等） | 不会 |
 | 删会话 / 图片 / DNA | 纯原生文件操作 | 不会 |
 | 删图片 | 删文件 + 清缩略图缓存并打删除标记（防 dataUrl 复活） | 不会 |
@@ -272,5 +291,6 @@ App 内还有两个自查入口：
 ### 想找某类数据在哪
 
 - 配置类（运营商/模型/风格/DNA）→ `ConnectionStore`（SharedPreferences）
-- 预设/世界书/正则内容 → `Data/app-data.json`（大文件，按键名找，如 `presets` / `worldBooks` / `regexGroups`）
+- 预设内容 → `Data/app-data.json`（按键名 `presets` 找）
+- 世界书 / 正则组 → `data/assets/assets.json`
 - 会话 → `data/sessions`；图片 → AssetStore 目录；网页旧图 → 只在 `app_webview` 的 IndexedDB 里

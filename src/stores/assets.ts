@@ -4,6 +4,7 @@ import { CharacterCard, OpenAIPreset } from 'parsecard';
 import { detectKind, splitByKind, parseItem } from '../engine/stImport';
 import type { AssetKind, ImportedItem } from '../engine/stImport';
 import { createRegexGroup, toScriptItem, flattenForEngine } from '../engine/regexGroups';
+import { nativeManaged, notifyNativeAssets } from '../bridge/nativeAssets';
 
 // 资产 Pinia store：管理角色卡 / 预设 / 世界书 / 正则，以及当前选中的资产。
 // 导入时用 parsecard 解析为统一格式后存 IndexedDB，使用时返回 parsecard
@@ -111,6 +112,22 @@ export const useAssetsStore = defineStore('assets', {
       );
     },
     async save() {
+      /*
+       * 世界书 / 正则组由原生托管（见 bridge/nativeAssets.ts）。
+       * 接管后这两类只留在内存工作副本里，落盘交给原生 —— 不再写
+       * worldBooks / regexGroups 及其启用项，避免 app-data.json 又长出一份。
+       * 预设与角色卡保持原样。
+       */
+      if (nativeManaged()) {
+        await Promise.all([
+          store.setItem('characters', this.characters),
+          store.setItem('presets', this.presets),
+          store.setItem('currentCharacterId', this.currentCharacterId),
+          store.setItem('currentPresetId', this.currentPresetId),
+        ]);
+        notifyNativeAssets();
+        return;
+      }
       await Promise.all([
         store.setItem('characters', this.characters),
         store.setItem('worldBooks', this.worldBooks),

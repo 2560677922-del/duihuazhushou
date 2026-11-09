@@ -121,6 +121,25 @@ public final class NativeBridge {
     }
 
     // ------------------------------------------------------------------
+    // 世界书 / 正则组：原生权威存储（2026-11-09）
+    //
+    // 引擎启动时调 getNativeAssets() 拿快照（同步，JS 线程直接用）；
+    // 之后每次 assets.save() 通过 onAssetsChanged(json) 回传，
+    // 由 NativeAssetsStore 原子落盘到 filesDir/data/assets/assets.json。
+    // 归一化仍由网页侧完成，这里只存不解释 —— 提示词组装不受影响。
+    // ------------------------------------------------------------------
+
+    @JavascriptInterface
+    public String getNativeAssets() {
+        return com.dbpg.duihuazhushou.data.NativeAssetsStore.get(context);
+    }
+
+    @JavascriptInterface
+    public void onAssetsChanged(String json) {
+        com.dbpg.duihuazhushou.data.NativeAssetsStore.save(context, json);
+    }
+
+    // ------------------------------------------------------------------
     // 生成通道回调（web ST 引擎 → 原生聊天界面）
     //
     // 原生把"当前版本的对话"交给 web 组装并发请求，web 边收边把**全文**
