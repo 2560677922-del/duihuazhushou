@@ -529,7 +529,7 @@ class ApiConfigActivity : Activity() {
         }
         val params = JSONObject()
             .put("temperature", temp)
-            .put("maxTokens", maxEdit.text?.toString()?.toLongOrNull() ?: 2000L)
+            .put("maxTokens", maxEdit.text?.toString()?.toLongOrNull() ?: 8192L)
             .put("contextWindow", ctxEdit.text?.toString()?.toLongOrNull() ?: 1000000L)
             .put("userLookbackTokens", lookEdit.text?.toString()?.toLongOrNull() ?: 200000L)
         status.text = "保存参数中…"
@@ -613,7 +613,7 @@ class ApiConfigActivity : Activity() {
                 "saveConn" -> if (!ok) status.text = "保存失败：${obj.optString("error")}"
                 "saveParams" -> {
                     if (ok) {
-                        status.text = "参数已保存"
+                        status.text = "参数已保存（上限/上下文已同步全部模型）"
                         Toast.makeText(this, "参数已保存", Toast.LENGTH_SHORT).show()
                         loadConfig()
                     } else {

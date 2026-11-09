@@ -106,7 +106,8 @@ export async function streamChatCompletion(
   if (toolOptions?.toolChoice !== undefined) body.tool_choice = toolOptions.toolChoice;
   if (config.temperature !== undefined) body.temperature = config.temperature;
   if (config.topP !== undefined) body.top_p = config.topP;
-  if (config.maxTokens !== undefined) body.max_tokens = config.maxTokens;
+  // 0 / 负数 = 不限制：不传 max_tokens，交给服务端按模型上限处理
+  if (config.maxTokens !== undefined && config.maxTokens > 0) body.max_tokens = config.maxTokens;
   if (config.frequencyPenalty !== undefined) body.frequency_penalty = config.frequencyPenalty;
   if (config.presencePenalty !== undefined) body.presence_penalty = config.presencePenalty;
 
@@ -279,7 +280,8 @@ export async function chatCompletion(
   };
   if (config.temperature !== undefined) body.temperature = config.temperature;
   if (config.topP !== undefined) body.top_p = config.topP;
-  if (config.maxTokens !== undefined) body.max_tokens = config.maxTokens;
+  // 0 / 负数 = 不限制：不传 max_tokens，交给服务端按模型上限处理
+  if (config.maxTokens !== undefined && config.maxTokens > 0) body.max_tokens = config.maxTokens;
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;

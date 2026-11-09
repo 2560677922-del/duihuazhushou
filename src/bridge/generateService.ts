@@ -728,7 +728,7 @@ function apiConfigSummary(): string {
     uid: cur?._uid || '',
     params: {
       temperature: cur?.temperature ?? 0.8,
-      maxTokens: cur?.maxTokens ?? 2000,
+      maxTokens: cur?.maxTokens ?? 8192,
       contextWindow: cur?.contextWindow ?? 1000000,
       userLookbackTokens: cur?.userLookbackTokens ?? 200000,
     },
@@ -817,16 +817,24 @@ async function apiCommand(raw: string): Promise<void> {
         await api.removeModelFromProvider(uid);
         break;
       }
-      /** 保存当前模型的生成参数。 */
+      /**
+       * 保存生成参数。
+       *
+       * 温度：只写当前模型（用户偶尔对某张卡微调）。
+       * 单次上限 / 上下文窗口 / 历史预算：**写入全部模型** ——
+       * 用户明确要求「都是百万上下文的模型了，别让我一个一个改」。
+       * 填 0 = 不限制（请求里不发 max_tokens / 不做历史裁剪）。
+       */
       case 'saveParams': {
         const cur = api.currentConfig;
         if (!cur) throw new Error('当前没有选中的模型');
         const p = req.params || {};
         if (p.temperature !== undefined) cur.temperature = Number(p.temperature);
-        if (p.maxTokens !== undefined) cur.maxTokens = Number(p.maxTokens);
-        if (p.contextWindow !== undefined) cur.contextWindow = Number(p.contextWindow);
-        if (p.userLookbackTokens !== undefined) {
-          cur.userLookbackTokens = Number(p.userLookbackTokens);
+        const shared = ['maxTokens', 'contextWindow', 'userLookbackTokens'] as const;
+        for (const c of api.configs) {
+          for (const k of shared) {
+            if (p[k] !== undefined) (c as any)[k] = Number(p[k]);
+          }
         }
         await api.save();
         break;

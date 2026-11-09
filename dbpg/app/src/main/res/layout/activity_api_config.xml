@@ -6,10 +6,11 @@
     · 填地址 + 密钥 → 拉取模型 → 勾选多个一次加入这家；
     · 已保存的运营商可快捷切换：点开一家 → 点它的模型即「使用」，
       长按模型可删除；
-    · 生成参数（温度/单次上限/上下文/历史预算）跟随当前模型编辑。
+    · 温度按模型保存（偶尔对某张卡微调）；
+    · 单次上限 / 上下文窗口 / 历史预算 **对所有模型统一**，保存一次全生效，
+      填 0 = 不限制（不发 max_tokens / 不做历史裁剪）。
 
-  数据落在 web 的 apiConfig store（生成走引擎，配置必须同源），
-  本页通过引擎 WebView 上的 window.__dhpApi 读写。
+  数据落在原生 ConnectionStore（生成时单向镜像给引擎）。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -235,7 +236,7 @@
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="单次上限（token）"
+                        android:text="单次上限（token，0=不限制）"
                         android:textColor="#5A6B85"
                         android:textSize="12sp" />
 
@@ -269,7 +270,7 @@
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="上下文窗口"
+                        android:text="上下文窗口（0=不裁剪）"
                         android:textColor="#5A6B85"
                         android:textSize="12sp" />
 
@@ -313,6 +314,14 @@
                         android:textSize="13sp" />
                 </LinearLayout>
             </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="单次上限 / 上下文窗口 / 历史预算：保存时对所有模型统一生效，填 0 = 不限制；温度只影响当前模型。"
+                android:textColor="#8A94A6"
+                android:textSize="11sp" />
 
             <TextView
                 android:id="@+id/api_param_save"

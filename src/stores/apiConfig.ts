@@ -60,7 +60,11 @@ export interface ApiConfigState {
  *   裁剪逻辑只会少裁，不会把没发的 token 也算钱。觉得大了自己往下调即可。
  *
  * 历史预算同样放宽到 20 万：写作场景对话很长，2000 太小会频繁丢历史。
- * 单次生成长度 2000：小说正文一次输出的合理量。
+ *
+ * 单次上限默认 8192：2026 年主流模型单次输出普遍 8k 起步，2000 会让
+ * 长段落被硬截断。填 0 = 不限制（请求里不发 max_tokens，交给服务端）。
+ * 另外这三项（单次上限 / 上下文窗口 / 历史预算）在保存时**对全部模型统一生效**，
+ * 只有温度按模型单独保存 —— 用户明确要求「别让我一个一个改」。
  *
  * ★ baseUrl / model 留空，**不预填任何厂商的地址或模型名**。
  *   用户明确要求："运营商不要硬编码地址，我自己会加"。
@@ -76,10 +80,24 @@ const DEFAULT_CONFIG: StoredApiConfig = {
   apiKey: '',
   model: '',
   temperature: 0.8,
-  maxTokens: 2000,
+  maxTokens: 8192,
   contextWindow: 1000000,
   userLookbackTokens: 200000,
 };
+
+/**
+ * 新建模型时继承某个数值参数。
+ *
+ * 规则（"向上兼容"的落地口径）：
+ *   · 0 是显式语义「不限制」→ 原样继承，不能抬回默认值
+ *   · 其他值 → 不低于新默认（老版本留下的小默认 2000 不拖累新模型；
+ *     用户主动调大的值，比如 2M 上下文，继续保持）
+ *   · 字段缺失（老数据）→ 用默认
+ */
+function inheritNum(seedVal: number | undefined, def: number | undefined): number {
+  if (seedVal === 0) return 0;
+  return Math.max(seedVal || 0, def || 0);
+}
 
 /**
  * 一条配置属于"哪一家"（运营商分组的键）。
@@ -357,9 +375,14 @@ export const useApiConfigStore = defineStore('apiConfig', {
           baseUrl: seed.baseUrl,
           apiKey: seed.apiKey,
           temperature: seed.temperature,
-          maxTokens: seed.maxTokens,
+          // 向上兼容：继承同家的值，但不低于新默认（老的小值不拖累新模型）
+          maxTokens: inheritNum(seed.maxTokens, DEFAULT_CONFIG.maxTokens),
+          contextWindow: inheritNum(seed.contextWindow, DEFAULT_CONFIG.contextWindow),
+          userLookbackTokens: inheritNum(
+            seed.userLookbackTokens,
+            DEFAULT_CONFIG.userLookbackTokens,
+          ),
           providerId: key,
-          // contextWindow / userLookbackTokens 故意不继承 —— 跟"模型本身"绑定
           _uid: genId('api'),
           _name: model,
           model,
@@ -424,14 +447,22 @@ export const useApiConfigStore = defineStore('apiConfig', {
               baseUrl: sameProvider.baseUrl,
               apiKey: sameProvider.apiKey,
               temperature: sameProvider.temperature,
-              maxTokens: sameProvider.maxTokens,
+              // 向上兼容：同家的值优先，但不低于新默认（只升不降）
+              maxTokens: inheritNum(sameProvider.maxTokens, DEFAULT_CONFIG.maxTokens),
+              contextWindow: inheritNum(
+                sameProvider.contextWindow,
+                DEFAULT_CONFIG.contextWindow,
+              ),
+              userLookbackTokens: inheritNum(
+                sameProvider.userLookbackTokens,
+                DEFAULT_CONFIG.userLookbackTokens,
+              ),
               /*
                * ★ 带上同一个 providerId —— 这才是**真正想共享**的情况。
                * 用户主动点"在这家下面加模型"，等于明确表达"这两条要一起改"。
                * 同域名但不同分组的中转，不会走到这里（它们各自独立）。
                */
               providerId: key,
-              // contextWindow / userLookbackTokens 故意不继承 —— 用 DEFAULT_CONFIG 的新默认值
             }
           : { baseUrl: anchor.baseUrl || '' }),
         _uid: genId('api'),

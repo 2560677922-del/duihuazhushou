@@ -167,7 +167,7 @@ object ConnectionStore {
             .put("apiKey", cur.optString("apiKey"))
             .put("model", cur.optString("model"))
             .put("temperature", cur.optDouble("temperature", 0.8))
-            .put("maxTokens", cur.optInt("maxTokens", 2000))
+            .put("maxTokens", cur.optInt("maxTokens", 8192))
             .put("contextWindow", cur.optInt("contextWindow", 1000000))
             .put("userLookbackTokens", cur.optInt("userLookbackTokens", 200000))
     }
@@ -259,7 +259,7 @@ object ConnectionStore {
             .put(
                 "params", JSONObject()
                     .put("temperature", cur?.optDouble("temperature", 0.8) ?: 0.8)
-                    .put("maxTokens", cur?.optInt("maxTokens", 2000) ?: 2000)
+                    .put("maxTokens", cur?.optInt("maxTokens", 8192) ?: 8192)
                     .put("contextWindow", cur?.optInt("contextWindow", 1000000) ?: 1000000)
                     .put("userLookbackTokens", cur?.optInt("userLookbackTokens", 200000) ?: 200000),
             )
@@ -558,13 +558,23 @@ object ConnectionStore {
                 llm.put("currentConfigId", configs.optJSONObject(0)?.optString("_uid") ?: "")
                 reply.put("removed", removed)
             }
+            /**
+             * 保存生成参数。
+             *
+             * 温度：只写当前模型（用户偶尔对某张卡微调）。
+             * 单次上限 / 上下文窗口 / 历史预算：**写入全部模型** ——
+             * 用户明确要求「都是百万上下文的模型了，别让我一个一个改」。
+             * 填 0 = 不限制（请求里不发 max_tokens / 不做历史裁剪）。
+             */
             "saveParams" -> {
                 val p = a.optJSONObject("params") ?: JSONObject()
                 val c = curLlm ?: return reply
                 if (p.has("temperature")) c.put("temperature", p.optDouble("temperature"))
-                if (p.has("maxTokens")) c.put("maxTokens", p.optInt("maxTokens"))
-                if (p.has("contextWindow")) c.put("contextWindow", p.optInt("contextWindow"))
-                if (p.has("userLookbackTokens")) c.put("userLookbackTokens", p.optInt("userLookbackTokens"))
+                val shared = listOf("maxTokens", "contextWindow", "userLookbackTokens")
+                for (i in 0 until configs.length()) {
+                    val x = configs.optJSONObject(i) ?: continue
+                    for (k in shared) if (p.has(k)) x.put(k, p.optInt(k))
+                }
             }
             "llmAddProvider" -> {
                 val name = a.optString("name").ifBlank { hostOf(a.optString("baseUrl")).ifBlank { "新运营商" } }
@@ -918,7 +928,7 @@ object ConnectionStore {
         val c = JSONObject()
             .put("_uid", newId("api")).put("_name", name)
             .put("baseUrl", "").put("apiKey", "").put("model", "")
-            .put("temperature", 0.8).put("maxTokens", 2000)
+            .put("temperature", 0.8).put("maxTokens", 8192)
             .put("contextWindow", 1000000).put("userLookbackTokens", 200000)
         arr(llm, "configs").put(c)
         llm.put("currentConfigId", c.optString("_uid"))
