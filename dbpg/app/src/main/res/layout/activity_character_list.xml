@@ -36,6 +36,15 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/char_new"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="10dp"
+            android:text="新建"
+            android:textColor="#2F66D8"
+            android:textSize="14sp" />
+
+        <TextView
             android:id="@+id/char_import"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

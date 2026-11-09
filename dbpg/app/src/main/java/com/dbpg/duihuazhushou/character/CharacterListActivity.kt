@@ -26,6 +26,7 @@ class CharacterListActivity : Activity() {
 
     private companion object {
         const val REQ_IMPORT = 2001
+        const val REQ_EDIT = 2002
         const val BG = 0xFFF4F6FA.toInt()
     }
 
@@ -41,6 +42,7 @@ class CharacterListActivity : Activity() {
 
         findViewById<TextView>(R.id.char_back).setOnClickListener { finish() }
         findViewById<TextView>(R.id.char_import).setOnClickListener { pickFile() }
+        findViewById<TextView>(R.id.char_new).setOnClickListener { newCharacter() }
 
         emptyView = findViewById(R.id.char_empty)
         adapter = CharacterAdapter(::showDetail)
@@ -76,6 +78,14 @@ class CharacterListActivity : Activity() {
 
     // ------------------------------------------------------------ 导入
 
+    /** 打开空白编辑器新建一张卡；保存后回到这里刷新列表。 */
+    private fun newCharacter() {
+        startActivityForResult(
+            Intent(this, CharacterEditActivity::class.java),
+            REQ_EDIT,
+        )
+    }
+
     private fun pickFile() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -89,6 +99,11 @@ class CharacterListActivity : Activity() {
     @Deprecated("系统文件选择器只有这一条回调路径")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        // 编辑器保存完会带着 RESULT_OK 回来，列表页重新扫一遍即可
+        if (requestCode == REQ_EDIT) {
+            if (resultCode == RESULT_OK) reload()
+            return
+        }
         if (requestCode != REQ_IMPORT || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
 

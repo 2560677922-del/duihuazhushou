@@ -79,6 +79,9 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")
+    // Android 单元测里 android.jar 的 org.json 是空壳；测试 classpath 放真实实现，
+    // 让 CharacterJsonTest（角色卡 V2 JSON / PNG 卡嵌块）能真实跑起来。运行期仍用系统自带的。
+    testImplementation("org.json:json:20240303")
 }
 
 // ---------------------------------------------------------------------------

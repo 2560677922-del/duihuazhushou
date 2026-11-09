@@ -65,6 +65,44 @@ class CharacterRepository(private val context: Context) {
 
     fun delete(file: File): Boolean = runCatching { file.delete() }.getOrDefault(false)
 
+    /**
+     * 保存一张卡（新建或覆盖），写成标准 ST 格式。
+     *
+     * 格式规则（和列表页解析器一一对应）：
+     *   - 有头像 → 写成 PNG 卡（V2 JSON 嵌进 tEXt 块，头像原样保留）
+     *   - 无头像 → 写成 `.json` 的 V2 JSON 卡
+     *
+     * 覆盖逻辑：
+     *   - [existing] 非空且扩展名和要写的格式一致 → 原地覆盖（改名不丢旧条目之外的情况）；
+     *   - 格式变了（比如有头像的 json 卡改成了 png 卡）→ 用唯一名新建，再把旧文件删掉，
+     *     避免"同一张卡留两份"。
+     *
+     * 返回落盘后的条目；失败抛出可读的中文原因。
+     */
+    fun save(card: CharacterCard, avatar: ByteArray?, existing: File?): CharacterFile {
+        val hasAvatar = avatar != null && avatar.isNotEmpty()
+        val ext = if (hasAvatar) "png" else "json"
+        val bytes = if (hasAvatar) {
+            // PNG 写出失败（头像坏掉）就降级成纯 JSON 卡，文字字段不丢
+            CharacterJson.toPngCard(card, avatar!!) ?: CharacterJson.toV2(card).toByteArray(Charsets.UTF_8)
+        } else {
+            CharacterJson.toV2(card).toByteArray(Charsets.UTF_8)
+        }
+
+        val target = if (existing != null && existing.extension.equals(ext, true)) {
+            existing
+        } else {
+            uniqueFile(sanitize(card.name.ifBlank { "character" }), ext)
+        }
+        target.writeBytes(bytes)
+
+        // 格式变化导致换了文件名：旧文件（不同扩展名）删掉，防止残留重复
+        if (existing != null && existing != target && existing.exists()) {
+            runCatching { existing.delete() }
+        }
+        return CharacterFile(target, card)
+    }
+
     /** 读原始字节，用于把卡片原样交给网页侧导入。 */
     fun readRaw(file: File): ByteArray? = runCatching { file.readBytes() }.getOrNull()
 

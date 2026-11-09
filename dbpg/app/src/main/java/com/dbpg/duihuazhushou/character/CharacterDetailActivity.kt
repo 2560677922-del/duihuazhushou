@@ -60,6 +60,7 @@ class CharacterDetailActivity : Activity() {
 
         findViewById<TextView>(R.id.detail_back).setOnClickListener { finish() }
         findViewById<TextView>(R.id.detail_chat).setOnClickListener { startChat() }
+        findViewById<TextView>(R.id.detail_edit).setOnClickListener { startEdit() }
         findViewById<TextView>(R.id.detail_delete).setOnClickListener { confirmDelete() }
 
         greetingView = findViewById(R.id.detail_greeting)
@@ -160,6 +161,15 @@ class CharacterDetailActivity : Activity() {
         }
         val json = JSONObject.quote(CharacterJson.toV2(card))
         web.evaluateJavascript("window.__dhpApp && window.__dhpApp.useCharacter($json);", null)
+        finish()
+    }
+
+    /** 带路径打开编辑器；编辑完回到详情页需要重新读文件，所以这里 finish 后由列表/历史兜底。 */
+    private fun startEdit() {
+        startActivity(
+            Intent(this, CharacterEditActivity::class.java)
+                .putExtra(CharacterEditActivity.EXTRA_PATH, file.absolutePath),
+        )
         finish()
     }
 
