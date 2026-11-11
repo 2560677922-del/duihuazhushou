@@ -51,6 +51,24 @@
             android:textSize="17sp"
             android:textStyle="bold" />
 
+        <ImageView
+            android:id="@+id/gc_search"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="10dp"
+            android:contentDescription="搜索当前频道"
+            android:src="@drawable/ic_search"
+            android:tint="#3A4353" />
+
+        <ImageView
+            android:id="@+id/gc_summary"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="10dp"
+            android:contentDescription="压缩当前频道的历史"
+            android:src="@drawable/ic_summary"
+            android:tint="#3A4353" />
+
         <TextView
             android:id="@+id/gc_more"
             android:layout_width="wrap_content"

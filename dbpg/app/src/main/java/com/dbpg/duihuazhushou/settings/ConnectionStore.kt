@@ -168,10 +168,18 @@ object ConnectionStore {
         return copy
     }
 
-    /** 供生成链路直取当前 LLM 请求参数（不经过 Pinia store）。 */
-    fun llmRuntime(): JSONObject = synchronized(lock) {
+    /**
+     * 供生成链路直取 LLM 请求参数（不经过 Pinia store）。
+     *
+     * @param configUid 指定运营商（群成员可以单独绑一个）；空 = 当前选中的那个。
+     *        传了但已被删除时回落到当前，不报错 —— 删接口不该让聊天直接挂掉，
+     *        界面那边会在打开设置时显示成「跟随全局」并顺手清掉这个悬空引用。
+     */
+    fun llmRuntime(configUid: String = ""): JSONObject = synchronized(lock) {
         initFromApp()
-        val cur = currentLlm() ?: return JSONObject()
+        val cur = configUid.takeIf { it.isNotBlank() }
+            ?.let { uid -> doc.optJSONObject("llm")?.let { findByUid(arr(it, "configs"), uid) } }
+            ?: currentLlm() ?: return JSONObject()
         return JSONObject()
             .put("baseUrl", cur.optString("baseUrl"))
             .put("apiKey", cur.optString("apiKey"))
@@ -180,6 +188,25 @@ object ConnectionStore {
             .put("maxTokens", cur.optInt("maxTokens", DEFAULT_MAX_TOKENS))
             .put("contextWindow", cur.optInt("contextWindow", DEFAULT_CONTEXT_WINDOW))
             .put("userLookbackTokens", cur.optInt("userLookbackTokens", DEFAULT_LOOKBACK_TOKENS))
+    }
+
+    /**
+     * 运营商清单（uid → 显示名），给「群/成员单独选 API」用。
+     *
+     * 只出 id 和名字，不带密钥；选完由 [llmRuntime] 按 uid 现取。
+     */
+    fun llmOptions(): List<Pair<String, String>> = synchronized(lock) {
+        initFromApp()
+        val configs = arr(doc.optJSONObject("llm"), "configs")
+        val out = ArrayList<Pair<String, String>>(configs.length())
+        for (i in 0 until configs.length()) {
+            val c = configs.optJSONObject(i) ?: continue
+            val uid = c.optString("_uid")
+            if (uid.isBlank()) continue
+            val name = c.optString("_name").ifBlank { c.optString("model") }.ifBlank { uid }
+            out.add(uid to name)
+        }
+        out
     }
 
     /**

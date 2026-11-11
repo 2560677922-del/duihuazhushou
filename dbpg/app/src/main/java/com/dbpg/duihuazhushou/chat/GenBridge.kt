@@ -74,6 +74,8 @@ object GenBridge {
         noCharacter: Boolean = false,
         /** 用户角色（资产页「我的角色」）：名字与人设，写进 {{user}} / {{persona}} */
         userPersona: JSONObject? = null,
+        /** 本次用的 LLM 运营商 uid；空 = 全局当前选中 */
+        configId: String = "",
         sink: Sink,
     ): String? {
         val wv: WebView = MainActivity.getWebView() ?: return null
@@ -98,7 +100,7 @@ object GenBridge {
             // null = "还没读到配置，让 web 按它自己的设置判断"
             .put("imageInstruction", imageInstruction ?: JSONObject.NULL)
             .put("imageInstructionMax", imageMax)
-            .put("config", ConnectionStore.llmRuntime())
+            .put("config", ConnectionStore.llmRuntime(configId))
         // 顶层再带一份：web 侧 buildMessages 优先采用它，避免 assetBinding
         // 缺 presetId 时回退到「引擎当前预设」猜错（重新生成拒答的常见原因）
         if (presetId.isNotBlank()) req.put("presetId", presetId)

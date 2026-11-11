@@ -3,6 +3,9 @@ package com.dbpg.duihuazhushou.character
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.util.LruCache
 import com.dbpg.stcore.character.CharacterCardParser
 import java.io.File
@@ -22,6 +25,8 @@ object CharacterAvatar {
     private const val MAX_PX = 96
 
     private val cache = LruCache<String, Bitmap>(24)
+    /** 首字母圆：只有几十个像素，可以多存一些 */
+    private val letters = LruCache<String, Bitmap>(64)
     /** 名字 → 文件路径；找不到也缓存空串，避免每次都扫目录 */
     private val files = HashMap<String, String>()
 
@@ -35,9 +40,35 @@ object CharacterAvatar {
         return bmp
     }
 
+    /**
+     * 没有头像时的首字母圆（JSON 卡、还没给图的角色）。
+     *
+     * 比一张统一的灰占位图好认：名字一样颜色就一样，屏幕上能靠颜色认人。
+     * 颜色由调用方给（跟随主题），所以换肤后会重新画。
+     */
+    fun letter(name: String, sizePx: Int, bg: Int, fg: Int): Bitmap {
+        val key = "$name|$sizePx|$bg|$fg"
+        letters.get(key)?.let { return it }
+        val size = sizePx.coerceAtLeast(8)
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.color = bg
+        c.drawCircle(size / 2f, size / 2f, size / 2f, p)
+        p.color = fg
+        p.textSize = size * 0.44f
+        p.textAlign = Paint.Align.CENTER
+        p.typeface = Typeface.DEFAULT_BOLD
+        val fm = p.fontMetrics
+        c.drawText(name.trim().take(1), size / 2f, size / 2f - (fm.ascent + fm.descent) / 2f, p)
+        letters.put(key, bmp)
+        return bmp
+    }
+
     /** 换过头像 / 重新导入后调用，下次取图重新扫。 */
     fun invalidate() {
         cache.evictAll()
+        letters.evictAll()
         files.clear()
     }
 

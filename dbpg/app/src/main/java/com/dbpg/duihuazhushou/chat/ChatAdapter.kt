@@ -20,6 +20,7 @@ import com.dbpg.duihuazhushou.appearance.AppearanceConfig
 import com.dbpg.duihuazhushou.character.CharacterAvatar
 import com.dbpg.duihuazhushou.appearance.BubbleStyle
 import com.dbpg.duihuazhushou.appearance.ThemePalette
+import com.dbpg.duihuazhushou.appearance.ThemeTokens
 import com.dbpg.duihuazhushou.chat.render.CardBitmaps
 import com.dbpg.duihuazhushou.chat.render.HtmlMessageView
 import com.dbpg.duihuazhushou.richtext.RichTextRenderer
@@ -91,9 +92,18 @@ class ChatAdapter(
     /** 从设置页回来时调用：立刻套用新的字号/行距/宽度。 */
     fun updateConfig(cfg: AppearanceConfig) {
         config = cfg
+        tokens = ThemePalette.tokensOf(cfg)
         webHeights.clear()
         notifyDataSetChanged()
     }
+
+    /**
+     * 主题色板缓存。
+     *
+     * 头像兜底（首字母圆）每次 bind 都要底色/字色，而 [ThemePalette.tokensOf]
+     * 内部要算好几轮混色 —— 滑列表时每条都算一次不划算。
+     */
+    private var tokens: ThemeTokens = ThemePalette.tokensOf(config)
 
     /**
      * 每条富文本消息上次量到的高度（px）。
@@ -379,8 +389,13 @@ class ChatAdapter(
                 }
             }
             val bmp = CharacterAvatar.bitmap(ctx, item.avatarKey)
-            if (bmp != null) holder.avatar.setImageBitmap(bmp)
-            else holder.avatar.setImageResource(R.drawable.ic_avatar_placeholder)
+                ?: CharacterAvatar.letter(
+                    item.avatarKey,
+                    dpOf(34f),
+                    tokens.panelSoft,
+                    tokens.accent,
+                )
+            holder.avatar.setImageBitmap(bmp)
         }
         // 气泡款式（圆润/柔和/方角/极简）：圆角、描边、配色、投影都跟着款式走。
         // 每次 bind 重建 Drawable —— 共享实例会被 RecyclerView 复用染色（经典坑）。

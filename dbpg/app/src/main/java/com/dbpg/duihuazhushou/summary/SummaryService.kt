@@ -65,6 +65,7 @@ object SummaryService {
      * @param range 本次要压缩的轮次（含两端）
      * @param prior 已经生效的摘要块（会被合并进新摘要，保持"前情"连续）
      * @param presetId 会话绑定的预设 id；空 = 跟随全局默认
+     * @param apiConfigId 会话/群单独指定的运营商；空 = 全局当前选中
      * @param onDone 主线程回调；失败为 null（调用方静默跳过，绝不阻塞聊天）
      */
     fun run(
@@ -74,6 +75,7 @@ object SummaryService {
         cfg: SummaryConfig,
         prior: List<SummaryBlock>,
         presetId: String?,
+        apiConfigId: String = "",
         onDone: (SummaryBlock?) -> Unit,
     ) {
         val actions = doc.actions
@@ -81,7 +83,7 @@ object SummaryService {
             onDone(null)
             return
         }
-        val llm = ConnectionStore.llmRuntime()
+        val llm = ConnectionStore.llmRuntime(apiConfigId)
         val baseUrl = llm.optString("baseUrl").trim()
         val apiKey = llm.optString("apiKey").trim()
         val model = llm.optString("model").trim()

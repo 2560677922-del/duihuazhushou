@@ -243,8 +243,38 @@ class ChatController(
         persona = com.dbpg.duihuazhushou.character.PersonaStore.active(appContext)
         group = d.group?.let { GroupStore.get(appContext, it.groupId) }
         GenBridge.bindSession(d.id, b.characterId.orEmpty())
-        if (b.characterId == null && d.actions.isEmpty()) adoptCurrentCharacter(d, b)
+        if (b.characterId == null && d.actions.isEmpty()) {
+            adoptCurrentCharacter(d, b)
+        } else if (b.characterId != null && b.characterName == null) {
+            fillCharacterName(d, b)
+        }
     }
+
+    /**
+     * 老会话只有角色 uid、没有显示名：从资产清单补一次。
+     *
+     * 只补名字、不动 characterId —— 旧会话的角色是当年就定下的，
+     * 这里绝不会把"现在选中的卡"套上去（那是另一类串卡）。
+     */
+    private fun fillCharacterName(d: SessionDoc, b: SessionBindingStore.Binding) {
+        GenBridge.fetchAssetCatalog { json ->
+            val root = runCatching { JSONObject(json ?: "{}") }.getOrNull() ?: return@fetchAssetCatalog
+            val cid = b.characterId ?: return@fetchAssetCatalog
+            val name = characterNameOf(root, cid)
+            if (name.isBlank()) return@fetchAssetCatalog
+            if (doc?.id != d.id) return@fetchAssetCatalog
+
+            SessionBindingStore.save(appContext, d.id, b.copy(characterName = name))
+            characterName = name
+            render(true)
+        }
+    }
+
+    private fun characterNameOf(root: JSONObject, characterId: String): String =
+        root.optJSONArray("characters")?.let { arr ->
+            (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+                .firstOrNull { it.optString("id") == characterId }?.optString("name")
+        }.orEmpty()
 
     /**
      * 空会话没有绑定角色时，把引擎当前角色固化到绑定里。
@@ -265,10 +295,7 @@ class ChatController(
             if (doc?.id != d.id) return@fetchAssetCatalog
             if (SessionBindingStore.load(appContext, d.id).characterId != null) return@fetchAssetCatalog
 
-            val name = root.optJSONArray("characters")?.let { arr ->
-                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
-                    .firstOrNull { it.optString("id") == cid }?.optString("name")
-            }.orEmpty()
+            val name = characterNameOf(root, cid)
 
             SessionBindingStore.save(
                 appContext,
@@ -281,6 +308,12 @@ class ChatController(
             render(true)
         }
     }
+
+    /** 这个会话该用哪个运营商：会话单独选的 > 群默认 > 空（全局当前）。 */
+    private fun apiConfigFor(d: SessionDoc): String =
+        SessionBindingStore.load(appContext, d.id).apiConfigId?.takeIf { it.isNotBlank() }
+            ?: d.group?.let { GroupStore.get(appContext, it.groupId) }?.apiConfigId?.takeIf { it.isNotBlank() }
+            ?: ""
 
     /** 从设置页/其他界面回来时重新读盘（可能被别的地方改过）。 */
     fun reload() {
@@ -982,6 +1015,9 @@ class ChatController(
             characterId = roleId,
             noCharacter = noCharacter,
             userPersona = personaJson,
+            // 成员单独选了运营商就用它，否则跟群、再跟全局
+            configId = binding.apiConfigId?.takeIf { it.isNotBlank() }
+                ?: group?.apiConfigId.orEmpty(),
             sink = this,
         )
         if (reqId == null) {
@@ -1422,6 +1458,7 @@ class ChatController(
             cfg = cfg,
             prior = prior,
             presetId = summaryPresetId,
+            apiConfigId = apiConfigFor(d),
         ) { block ->
             summarizing = false
             sink.onSummaryState(false)

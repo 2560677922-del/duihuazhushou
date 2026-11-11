@@ -103,7 +103,8 @@ object HomeBinder {
                         messageCount = it.members.size,
                         updatedAt = it.updatedAt,
                         current = false,
-                        detail = "${it.members.size} 位成员 · ${it.publicWorldBookIds.size} 本公共书",
+                        // 卡片上直接看到"谁在这个群"，比只写人数好认
+                        detail = memberLine(it) + " · " + it.publicWorldBookIds.size + " 本公共书",
                     )
                 }
                 adapter.submit(items)
@@ -264,6 +265,13 @@ object HomeBinder {
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    /** 群卡片副标题：前三个成员名，多出来的折成「等 N 人」。 */
+    private fun memberLine(g: GroupStore.Group): String {
+        if (g.members.isEmpty()) return "还没有成员"
+        val head = g.members.take(3).joinToString("、") { it.name }
+        return if (g.members.size > 3) "$head 等${g.members.size}人" else head
     }
 
     private fun showGroupMenu(activity: Activity, item: SessionSummary, onDone: () -> Unit) {

@@ -49,10 +49,17 @@ object SessionBindingStore {
         val regexGroupIds: List<String>? = null,
         /** 引用的角色 DNA id */
         val dnaIds: List<String>? = null,
+        /**
+         * 这个对话单独用的 LLM 运营商（`llm.configs[]._uid`）。
+         *
+         * null = 跟随（群成员先跟群、再跟全局）。用户要的是「默认跟随，
+         * 想单独改的时候留个口子」，所以只有显式选过才会写进来。
+         */
+        val apiConfigId: String? = null,
     ) {
         val isDefault: Boolean
             get() = characterId == null && characterName == null && worldBookIds == null && presetId == null &&
-                regexGroupIds == null && dnaIds == null
+                regexGroupIds == null && dnaIds == null && apiConfigId == null
     }
 
     private val lock = Any()
@@ -68,6 +75,7 @@ object SessionBindingStore {
             presetId = if (o.has("presetId")) o.optString("presetId") else null,
             regexGroupIds = o.optJSONArray("regexGroupIds")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } },
             dnaIds = o.optJSONArray("dnaIds")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } },
+            apiConfigId = if (o.has("apiConfigId")) o.optString("apiConfigId").ifEmpty { null } else null,
         )
     }
 
@@ -81,6 +89,7 @@ object SessionBindingStore {
         b.presetId?.let { o.put("presetId", it) }
         b.regexGroupIds?.let { o.put("regexGroupIds", JSONArray(it)) }
         b.dnaIds?.let { o.put("dnaIds", JSONArray(it)) }
+        b.apiConfigId?.let { o.put("apiConfigId", it) }
         root.put(sessionId, o)
         runCatching { file(ctx).writeText(root.toString()) }
     }

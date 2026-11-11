@@ -48,6 +48,13 @@ object GroupStore {
         val presetId: String? = null,
         /** 群正则组；null = 跟随全局。成员绑定里没有显式指定时用这套 */
         val regexGroupIds: List<String>? = null,
+        /**
+         * 群默认 API；null = 跟随全局。
+         *
+         * 成员没单独选 API 时用它 —— 用户的原话是「公共那边选完，成员就默认公共的，
+         * 只是可以单独在成员界面改」。
+         */
+        val apiConfigId: String? = null,
         /** 成员顺序 = 公共区发言顺序（可拖动调整） */
         val members: List<Member> = emptyList(),
         val createdAt: Long = 0L,
@@ -243,6 +250,7 @@ object GroupStore {
         .apply {
             g.presetId?.let { put("presetId", it) }
             g.regexGroupIds?.let { put("regexGroupIds", JSONArray(it)) }
+            g.apiConfigId?.let { put("apiConfigId", it) }
         }
         .put("createdAt", g.createdAt)
         .put("updatedAt", g.updatedAt)
@@ -273,6 +281,7 @@ object GroupStore {
             regexGroupIds = o.optJSONArray("regexGroupIds")?.let { arr ->
                 List(arr.length()) { arr.optString(it) }
             },
+            apiConfigId = if (o.has("apiConfigId")) o.optString("apiConfigId").ifEmpty { null } else null,
             members = members,
             createdAt = o.optLong("createdAt", 0L),
             updatedAt = o.optLong("updatedAt", 0L),
