@@ -34,6 +34,11 @@ class QuickImage(
     private val onToast: (String) -> Unit = {},
 ) {
 
+    companion object {
+        /** 一次出图（含标签优化）超过这个时间就认为卡住了 */
+        private const val WATCHDOG_MS = 150_000L
+    }
+
     private val main = Handler(Looper.getMainLooper())
 
     private var busy = false
@@ -64,6 +69,10 @@ class QuickImage(
 
     fun isBusy(): Boolean = busy
 
+    private val watchdog = Runnable {
+        if (busy) finish("出图超时，稍后再试")
+    }
+
     /**
      * @param anchorActionId 图挂到哪条消息；空 = 该会话最新一条 AI 回复
      * @param beforeCount    锚点之前再带几条当上下文；null = 用配置里的 quickContextWindow
@@ -86,6 +95,9 @@ class QuickImage(
         target = c
         actionId = anchor
         setBusy(true)
+        // 兜底看门狗：标签模型不返回时不要把入口永久按灰。
+        // 只解放 UI，不取消请求 —— 图回来了照样挂上去。
+        main.postDelayed(watchdog, WATCHDOG_MS)
         onToast("读取生图配置…")
 
         EngineBridge.fetch(activity, "getImageConfig") { cfg ->
@@ -260,6 +272,7 @@ class QuickImage(
 
     private fun setBusy(v: Boolean) {
         busy = v
+        if (!v) main.removeCallbacks(watchdog)
         onBusy(v)
     }
 
