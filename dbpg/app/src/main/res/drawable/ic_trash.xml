@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 垃圾桶：删除运营商 / 删除模型 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M4.5,7 h15 M9,7 V4.5 h6 V7 M6.5,7 l0.9,12.5 h9.2 L17.5,7 M10,10.5 v6 M14,10.5 v6"
+        android:strokeColor="#FF5A6B85"
+        android:strokeWidth="1.7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

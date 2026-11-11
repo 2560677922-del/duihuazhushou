@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 胶囊次级按钮：近白底，换肤时映射到 panelSoft -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#F7F8FC" />
+    <corners android:radius="999dp" />
+</shape>

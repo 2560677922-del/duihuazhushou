@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 三点菜单 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M12,5.4 a1.45,1.45 0 1,0 0.01,0 M12,12 a1.45,1.45 0 1,0 0.01,0 M12,18.6 a1.45,1.45 0 1,0 0.01,0"
+        android:fillColor="#FF5A6B85" />
+</vector>

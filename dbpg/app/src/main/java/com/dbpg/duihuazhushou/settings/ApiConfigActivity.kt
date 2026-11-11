@@ -4,65 +4,107 @@ import com.dbpg.duihuazhushou.Insets
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.text.Editable
 import android.text.InputType
+import android.text.TextUtils
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.view.Window
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
-import com.dbpg.duihuazhushou.MainActivity
 import com.dbpg.duihuazhushou.NativeBridge
 import com.dbpg.duihuazhushou.R
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * 原生 API 接口配置页。
+ * LLM 运营商配置页（2026-11-11 重构）。
  *
- * 交互对齐网页版：
- *   · 填地址 + 密钥 → 拉取模型 → **勾选多个一次加入这家**；
- *   · 已保存的运营商是可点的卡片：点开 → 点模型即「使用」（快捷切换），
- *     长按模型删除；
- *   · 生成参数跟随当前模型编辑。
+ * ## 界面
+ * 「提供商列表 → 详情」两级，详情再分 配置 / 模型 / 高级设置 三个 Tab。
+ * 地址与密钥不再挂在全局顶部，而是收进每一家的「配置」Tab，密钥默认掩码。
+ * 参考成熟客户端的信息架构，但保留我们自己的批量删除模型、全选添加等能力。
  *
- * 数据层在 web 引擎（apiConfig store），本页通过引擎 WebView 上的
- * window.__dhpApi 读写：
+ * ## 数据
+ * 全部走原生 ConnectionStore（权威源），页面只发命令、按回包刷新：
  *
- *   getConfig()          同步返回 JSON 串（当前配置 + 运营商/模型全量）
- *   fetchModels(json)    异步拉模型列表 → onApiResult(kind=models)
- *   command(json)        异步命令：saveConn / addModels / useModel /
- *                        removeModel / saveParams → onApiResult(kind=命令名)
+ *   getConfig()                    同步返回当前配置 + 运营商/模型全量
+ *   llmSaveProviderConn           按 key 保存这一家的名称/地址/密钥（组内同步）
+ *   llmAddModelsToProvider        按 key 往这一家批量加模型
+ *   llmSetProviderEnabled         按 key 启用/停用（会真的挪走 currentConfigId）
+ *   llmAddProvider / llmRenameProvider / llmRemoveProvider / llmRemoveModels
+ *   useModel / removeModel / saveParams
+ *   fetchModels(json)             原生 OkHttp 拉列表 → onApiResult(kind=models)
+ *
+ * 早期版本的命令都隐式作用于「当前运营商」（currentConfigId）。页面一旦允许
+ * 直接编辑非当前运营商，保存/加模型就会串台 —— 这也是「拉取模型永远拉第一家」
+ * 的同源问题。现在所有编辑命令都带 key，UI 与数据层的语义终于对齐。
+ *
+ * ## 换肤
+ * 静态骨架由 UiBackdrop 全局染色；运行时生成的卡片走 [ProviderUi]（只读
+ * ThemeTokens）。两者共用同一套色板，换主题时整页一起变。
  */
 class ApiConfigActivity : Activity() {
 
-    private lateinit var baseEdit: EditText
-    private lateinit var keyEdit: EditText
-    private lateinit var status: TextView
-    private lateinit var providersBox: LinearLayout
-    private lateinit var tempEdit: EditText
-    private lateinit var maxEdit: EditText
-    private lateinit var ctxEdit: EditText
-    private lateinit var lookEdit: EditText
+    // ── 静态骨架 ──
+    private lateinit var listRoot: View
+    private lateinit var detailRoot: View
+    private lateinit var listBox: LinearLayout
+    private lateinit var listStatus: TextView
+    private lateinit var detailStatus: TextView
+    private lateinit var searchEdit: EditText
+    private lateinit var detailAvatar: TextView
+    private lateinit var detailTitle: TextView
+    private lateinit var tabViews: List<TextView>
+    private lateinit var panes: List<View>
+    private lateinit var cfgEnabled: Switch
+    private lateinit var cfgState: TextView
+    private lateinit var cfgName: EditText
+    private lateinit var cfgKey: EditText
+    private lateinit var cfgBase: EditText
+    private lateinit var cfgKeyEye: ImageView
+    private lateinit var cfgRefetch: ImageView
+    private lateinit var cfgPath: TextView
+    private lateinit var cfgInfo: TextView
+    private lateinit var modelBox: LinearLayout
+    private lateinit var modelBatch: TextView
+    private lateinit var modelCount: TextView
+    private lateinit var paramTemp: EditText
+    private lateinit var paramMax: EditText
+    private lateinit var paramCtx: EditText
+    private lateinit var paramLook: EditText
+    private lateinit var floatLeft: TextView
+    private lateinit var floatRight: TextView
 
-    /** 最近一次拉到的模型列表（供多选对话框用）。 */
+    // ── 状态 ──
+    /** 最近一次 getConfig 的运营商快照。 */
+    private var providers: JSONArray = JSONArray()
+    /** 当前详情页对应的运营商 key；null = 列表态。 */
+    private var currentKey: String? = null
+    private var tab = 0
+    private var search = ""
+    private var keyVisible = false
     private var lastModels: List<String> = emptyList()
 
-    /** 用户正在哪个运营商的展开态（key → 是否展开）。刷新后保持。 */
-    private val expanded = mutableSetOf<String>()
-
-    /** 输入框是否由用户动过：刷新时别把人家正在打的字冲掉。 */
+    /** 用户是否动过详情表单：刷新时别把正在打的字冲掉。 */
     private var userEditedConn = false
-
-    /**
-     * setIfDiffers 正在程序化回填：回填用的 setText 也会触发 TextWatcher，
-     * 不压制的话首次加载就会把 userEditedConn 误标成 true，之后切到哪个
-     * 运营商输入框都冻结在第一个的地址上（2026-11-09 用户实报
-     * 「拉取模型永远拉第一个」的根因）。
-     */
+    private var userEditedParams = false
+    /** 程序化回填期间抑制 watcher / Switch 监听，避免误标脏或误发命令。 */
     private var fillingConn = false
+    /** 拉模型前会先静默保存一次连接，那次不要弹 toast、也不要打断流程。 */
+    private var pendingFetch = false
 
     private val apiListener = NativeBridge.ApiResultListener { json -> onApiResult(json) }
 
@@ -70,34 +112,111 @@ class ApiConfigActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_api_config)
         Insets.applyTop(this)
+        bindViews()
+        wireEvents()
+        paintTabs()
+    }
 
-        baseEdit = findViewById(R.id.api_base)
-        keyEdit = findViewById(R.id.api_key)
-        status = findViewById(R.id.api_status)
-        providersBox = findViewById(R.id.api_providers_box)
-        tempEdit = findViewById(R.id.api_param_temp)
-        maxEdit = findViewById(R.id.api_param_max)
-        ctxEdit = findViewById(R.id.api_param_ctx)
-        lookEdit = findViewById(R.id.api_param_look)
+    private fun bindViews() {
+        listRoot = findViewById(R.id.pv_list)
+        detailRoot = findViewById(R.id.pv_detail)
+        listBox = findViewById(R.id.pv_list_box)
+        listStatus = findViewById(R.id.pv_list_status)
+        detailStatus = findViewById(R.id.pv_detail_status)
+        searchEdit = findViewById(R.id.pv_search)
+        detailAvatar = findViewById(R.id.pv_detail_avatar)
+        detailTitle = findViewById(R.id.pv_detail_title)
+        tabViews = listOf(
+            findViewById(R.id.pv_tab_config),
+            findViewById(R.id.pv_tab_models),
+            findViewById(R.id.pv_tab_advanced),
+        )
+        panes = listOf(
+            findViewById(R.id.pv_pane_config),
+            findViewById(R.id.pv_pane_models),
+            findViewById(R.id.pv_pane_advanced),
+        )
+        cfgEnabled = findViewById(R.id.pv_cfg_enabled)
+        cfgState = findViewById(R.id.pv_cfg_state)
+        cfgName = findViewById(R.id.pv_cfg_name)
+        cfgKey = findViewById(R.id.pv_cfg_key)
+        cfgBase = findViewById(R.id.pv_cfg_base)
+        cfgKeyEye = findViewById(R.id.pv_cfg_key_eye)
+        cfgRefetch = findViewById(R.id.pv_cfg_refetch)
+        cfgPath = findViewById(R.id.pv_cfg_path)
+        cfgInfo = findViewById(R.id.pv_cfg_info)
+        modelBox = findViewById(R.id.pv_model_box)
+        modelBatch = findViewById(R.id.pv_model_batch)
+        modelCount = findViewById(R.id.pv_model_count)
+        paramTemp = findViewById(R.id.pv_param_temp)
+        paramMax = findViewById(R.id.pv_param_max)
+        paramCtx = findViewById(R.id.pv_param_ctx)
+        paramLook = findViewById(R.id.pv_param_look)
+        floatLeft = findViewById(R.id.pv_float_left)
+        floatRight = findViewById(R.id.pv_float_right)
+    }
 
-        findViewById<TextView>(R.id.api_back).setOnClickListener { finish() }
-        findViewById<TextView>(R.id.api_reload).setOnClickListener {
-            userEditedConn = false
-            loadConfig()
+    private fun wireEvents() {
+        findViewById<View>(R.id.pv_back_list).setOnClickListener { finish() }
+        findViewById<View>(R.id.pv_reload).setOnClickListener { loadConfig() }
+        findViewById<View>(R.id.pv_add).setOnClickListener { promptNewProvider() }
+        findViewById<View>(R.id.pv_back_detail).setOnClickListener { showList() }
+        findViewById<View>(R.id.pv_detail_more).setOnClickListener {
+            val p = currentProvider() ?: return@setOnClickListener
+            showProviderMenu(p)
         }
-        findViewById<TextView>(R.id.api_fetch).setOnClickListener { fetchModels() }
-        findViewById<TextView>(R.id.api_param_save).setOnClickListener { saveParams() }
 
-        val watcher = object : android.text.TextWatcher {
+        searchEdit.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                // 程序化回填不算「用户编辑过」，别把 userEditedConn 污染成 true
+            override fun afterTextChanged(s: Editable?) {
+                search = s?.toString()?.trim().orEmpty()
+                renderList()
+            }
+        })
+
+        // 详情表单：用户动过就别在刷新时覆盖
+        val connWatcher = object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) {
                 if (!fillingConn) userEditedConn = true
             }
         }
-        baseEdit.addTextChangedListener(watcher)
-        keyEdit.addTextChangedListener(watcher)
+        cfgName.addTextChangedListener(connWatcher)
+        cfgKey.addTextChangedListener(connWatcher)
+        cfgBase.addTextChangedListener(connWatcher)
+
+        val paramWatcher = object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                if (!fillingConn) userEditedParams = true
+            }
+        }
+        paramTemp.addTextChangedListener(paramWatcher)
+        paramMax.addTextChangedListener(paramWatcher)
+        paramCtx.addTextChangedListener(paramWatcher)
+        paramLook.addTextChangedListener(paramWatcher)
+
+        tabViews.forEachIndexed { i, v -> v.setOnClickListener { switchTab(i) } }
+
+        cfgEnabled.setOnCheckedChangeListener { _, checked ->
+            if (fillingConn) return@setOnCheckedChangeListener
+            val key = currentKey ?: return@setOnCheckedChangeListener
+            command("llmSetProviderEnabled", JSONObject().put("key", key).put("enabled", checked))
+        }
+        cfgKeyEye.setOnClickListener {
+            keyVisible = !keyVisible
+            applyKeyVisibility()
+        }
+        cfgRefetch.setOnClickListener { fetchModels() }
+        modelBatch.setOnClickListener {
+            val p = currentProvider() ?: return@setOnClickListener
+            batchDeleteModels(p.optJSONArray("models") ?: JSONArray())
+        }
+        floatLeft.setOnClickListener { onFloatLeft() }
+        floatRight.setOnClickListener { onFloatRight() }
     }
 
     override fun onResume() {
@@ -111,48 +230,57 @@ class ApiConfigActivity : Activity() {
         NativeBridge.setApiResultListener(null)
     }
 
-    // ------------------------------------------------------------ 读配置
+    @Suppress("DEPRECATION")
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (currentKey != null) showList() else super.onBackPressed()
+    }
 
-    private fun engineReady(): Boolean = MainActivity.getWebView() != null
+    // ───────────────────────────── 读配置 ─────────────────────────────
 
     private fun loadConfig() {
-        // 走共用入口：引擎冷启动没就绪时它会自动重试，不用用户手动点「刷新」。
         EngineBridge.fetch(this, "getConfig") { obj ->
             if (obj == null) {
-                status.text = "引擎还没就绪（网页还在加载），稍等几秒点「刷新」"
+                setStatus("引擎还没就绪，稍等几秒点「刷新」")
                 return@fetch
             }
             applyConfig(obj)
         }
     }
 
-    /**
-     * 操作成功后的刷新：current 可能已经变了（切换 / 新建 / 删掉当前项回退），
-     * 输入框要跟上，否则下一轮「拉取模型」会拿旧地址打到旧运营商。
-     */
+    /** 操作成功后的刷新：current 可能变了，表单要跟上。 */
     private fun reloadAfterOp() {
         userEditedConn = false
+        userEditedParams = false
         loadConfig()
     }
 
-    /** 成功拿到配置时清掉「加载中」提示，但别抹掉「已创建运营商」这类操作反馈。 */
     private fun applyConfig(obj: JSONObject) {
-        if (status.text?.toString().orEmpty().startsWith("引擎")) status.text = ""
+        if (listStatus.text?.toString().orEmpty().startsWith("引擎") ||
+            detailStatus.text?.toString().orEmpty().startsWith("引擎")
+        ) setStatus("")
         try {
-            if (!userEditedConn) {
-                setIfDiffers(baseEdit, obj.optString("baseUrl"))
-                setIfDiffers(keyEdit, obj.optString("apiKey"))
+            providers = obj.optJSONArray("providers") ?: JSONArray()
+            if (!userEditedParams) {
+                val params = obj.optJSONObject("params") ?: JSONObject()
+                fillingConn = true
+                setIfDiffers(paramTemp, num(params, "temperature"))
+                setIfDiffers(paramMax, num(params, "maxTokens"))
+                setIfDiffers(paramCtx, num(params, "contextWindow"))
+                setIfDiffers(paramLook, num(params, "userLookbackTokens"))
+                fillingConn = false
             }
-
-            val params = obj.optJSONObject("params") ?: JSONObject()
-            setIfDiffers(tempEdit, num(params, "temperature"))
-            setIfDiffers(maxEdit, num(params, "maxTokens"))
-            setIfDiffers(ctxEdit, num(params, "contextWindow"))
-            setIfDiffers(lookEdit, num(params, "userLookbackTokens"))
-
-            renderProviders(obj.optJSONArray("providers") ?: JSONArray())
+            val key = currentKey
+            if (key != null && findProvider(key) == null) {
+                // 这家被删了（可能从别的入口），退回列表
+                showList()
+            } else {
+                paintTabs()
+                if (key != null) fillDetail(findProvider(key)!!)
+            }
+            renderList()
         } catch (t: Throwable) {
-            status.text = "配置读取失败：${t.message}"
+            setStatus("配置读取失败：${t.message}")
         }
     }
 
@@ -162,170 +290,386 @@ class ApiConfigActivity : Activity() {
     }
 
     private fun setIfDiffers(e: EditText, text: String) {
-        if (e.text?.toString() != text) {
+        if (e.text?.toString() != text) e.setText(text)
+    }
+
+    private fun setStatus(msg: String) {
+        listStatus.text = if (currentKey == null) msg else ""
+        detailStatus.text = if (currentKey != null) msg else ""
+    }
+
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+
+    // ───────────────────────────── 两态切换 ─────────────────────────────
+
+    private fun showList() {
+        currentKey = null
+        userEditedConn = false
+        listRoot.visibility = View.VISIBLE
+        detailRoot.visibility = View.GONE
+        renderList()
+    }
+
+    private fun openDetail(key: String) {
+        currentKey = key
+        userEditedConn = false
+        keyVisible = false
+        listRoot.visibility = View.GONE
+        detailRoot.visibility = View.VISIBLE
+        applyKeyVisibility()
+        switchTab(0)
+        fillDetail(findProvider(key) ?: return)
+        loadConfig()
+    }
+
+    private fun switchTab(index: Int) {
+        tab = index
+        paintTabs()
+        panes.forEachIndexed { i, v -> v.visibility = if (i == index) View.VISIBLE else View.GONE }
+        when (index) {
+            0 -> {
+                floatLeft.text = "删除运营商"
+                floatRight.text = "保存"
+            }
+            1 -> {
+                floatLeft.text = "批量删除"
+                floatRight.text = "＋ 添加新模型"
+            }
+            else -> {
+                floatLeft.text = "刷新"
+                floatRight.text = "保存参数"
+            }
+        }
+    }
+
+    /** Tab 是静态 XML 控件，这里用当前色板重画并打 keep-color，避免二次染色。 */
+    private fun paintTabs() {
+        val ui = ProviderUi(this)
+        val labels = listOf("配置", "模型", "高级设置")
+        tabViews.forEachIndexed { i, v ->
+            val selected = i == tab
+            v.text = labels[i]
+            v.setTextColor(if (selected) ui.tk.onAccent else ui.tk.textDim)
+            v.setTypeface(v.typeface, if (selected) Typeface.BOLD else Typeface.NORMAL)
+            v.background = ui.shape(if (selected) ui.tk.accent else ui.tk.panelSoft, 999f)
+            v.tag = "dhp:keep-color"
+        }
+    }
+
+    /** 悬浮条左右按钮按当前 Tab 分发。 */
+    private fun onFloatLeft() = when (tab) {
+        0 -> {
+            val p = currentProvider() ?: return
+            confirmDeleteProvider(p)
+        }
+        1 -> {
+            val p = currentProvider() ?: return
+            batchDeleteModels(p.optJSONArray("models") ?: JSONArray())
+        }
+        else -> loadConfig()
+    }
+
+    private fun onFloatRight() = when (tab) {
+        0 -> saveProviderConn()
+        1 -> fetchModels()
+        else -> saveParams()
+    }
+
+    // ───────────────────────────── 详情表单 ─────────────────────────────
+
+    private fun findProvider(key: String): JSONObject? {
+        for (i in 0 until providers.length()) {
+            val p = providers.optJSONObject(i) ?: continue
+            if (p.optString("key") == key) return p
+        }
+        return null
+    }
+
+    private fun currentProvider(): JSONObject? = currentKey?.let { findProvider(it) }
+
+    private fun fillDetail(p: JSONObject) {
+        val ui = ProviderUi(this)
+        val name = displayName(p)
+        detailTitle.text = name
+        detailAvatar.text = initialOf(name, p.optString("baseUrl"))
+        detailAvatar.setTextColor(ui.tk.accent)
+        detailAvatar.background = ui.shape(ui.tk.accentSoft, 15f)
+        detailAvatar.tag = "dhp:keep-color"
+
+        val enabled = p.optBoolean("enabled", true)
+        fillingConn = true
+        cfgEnabled.isChecked = enabled
+        fillingConn = false
+        cfgEnabled.thumbTintList = ColorStateList.valueOf(ui.tk.onAccent)
+        cfgEnabled.trackTintList = ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(ui.tk.accent, ui.tk.hairline),
+        )
+        cfgState.text = if (enabled) "启用后可用于生成" else "已停用：当前模型会挪到其它启用的运营商"
+
+        if (!userEditedConn) {
             fillingConn = true
-            e.setText(text)
+            setIfDiffers(cfgName, p.optString("note"))
+            setIfDiffers(cfgKey, p.optString("apiKey"))
+            setIfDiffers(cfgBase, p.optString("baseUrl"))
             fillingConn = false
         }
+        val base = p.optString("baseUrl").trim().trimEnd('/')
+        cfgPath.text = if (base.isBlank()) "/chat/completions" else "$base/chat/completions"
+
+        val models = p.optJSONArray("models") ?: JSONArray()
+        var current = ""
+        for (i in 0 until models.length()) {
+            val m = models.optJSONObject(i) ?: continue
+            if (m.optBoolean("current")) current = m.optString("model").ifBlank { m.optString("name") }
+        }
+        cfgInfo.text = buildString {
+            append("共 ${models.length()} 个模型\n")
+            append("当前模型：").append(current.ifBlank { "未选择" }).append('\n')
+            append("连接：").append(if (p.optBoolean("hasKey")) "已配置密钥" else "未填密钥")
+        }
+        renderModels(models)
     }
 
-    // ------------------------------------------------------------ 运营商与模型（动态行）
+    private fun applyKeyVisibility() {
+        val ui = ProviderUi(this)
+        val pos = cfgKey.selectionStart
+        cfgKey.inputType = if (keyVisible) {
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        } else {
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        cfgKey.setSelection(pos.coerceAtMost(cfgKey.text?.length ?: 0))
+        cfgKeyEye.setColorFilter(if (keyVisible) ui.tk.accent else ui.tk.icon)
+    }
 
-    private fun renderProviders(arr: JSONArray) {
-        providersBox.removeAllViews()
+    private fun displayName(p: JSONObject): String =
+        p.optString("note").ifBlank { hostOf(p.optString("baseUrl")).ifBlank { "未命名运营商" } }
 
-        // 新建运营商：用户反馈「只能切换以前添加过的」，原生必须能自己加
-        providersBox.addView(TextView(this).apply {
-            text = "＋ 新建运营商"
-            setTextColor(0xFF2F66D8.toInt())
-            textSize = 13f
-            gravity = Gravity.CENTER
-            background = getDrawable(R.drawable.bg_btn_soft)
-            setPadding(0, dp(10), 0, dp(10))
-            setOnClickListener { promptNewProvider() }
-        })
-        if (arr.length() == 0) {
-            providersBox.addView(simpleCard("还没有运营商", "填好地址和密钥，拉取模型后自动建立"))
+    private fun initialOf(name: String, url: String): String {
+        val s = name.trim().ifBlank { hostOf(url) }
+        return if (s.isEmpty()) "?" else s.substring(0, 1).uppercase()
+    }
+
+    private fun hostOf(url: String): String = runCatching {
+        val s = url.trim()
+        if (s.isEmpty()) return ""
+        java.net.URI(s).host ?: ""
+    }.getOrDefault("")
+
+    // ───────────────────────────── 列表渲染 ─────────────────────────────
+
+    private fun renderList() {
+        val ui = ProviderUi(this)
+        listBox.removeAllViews()
+        val q = search
+        val matched = ArrayList<JSONObject>()
+        for (i in 0 until providers.length()) {
+            val p = providers.optJSONObject(i) ?: continue
+            if (q.isEmpty() || matches(p, q)) matched.add(p)
+        }
+        if (matched.isEmpty()) {
+            val card = ui.card(18f, 20).apply {
+                layoutParams = ui.itemMargin()
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
+            card.addView(ui.text(if (providers.length() == 0) "还没有运营商" else "没有匹配的运营商", 15f, ui.tk.textDim))
+            card.addView(ui.text("点右上角 ＋ 新建，或改一下搜索词", 12f, ui.tk.textFaint))
+            val btn = ui.primary("＋ 新建运营商", R.drawable.ic_plus).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = ui.dp(14) }
+                setOnClickListener { promptNewProvider() }
+            }
+            card.addView(btn)
+            listBox.addView(card)
             return
         }
+        for (p in matched) listBox.addView(providerCard(ui, p))
+    }
 
-        for (i in 0 until arr.length()) {
-            val p = arr.getJSONObject(i)
-            val key = p.optString("key")
-            val note = p.optString("note")
-            val baseUrl = p.optString("baseUrl")
-            val hasKey = p.optBoolean("hasKey")
-            val models = p.optJSONArray("models") ?: JSONArray()
-            val isCurrent = (0 until models.length()).any { models.getJSONObject(i2(it)).optBoolean("current") }
+    private fun matches(p: JSONObject, q: String): Boolean {
+        if (displayName(p).contains(q, true)) return true
+        if (p.optString("baseUrl").contains(q, true)) return true
+        val models = p.optJSONArray("models") ?: return false
+        for (i in 0 until models.length()) {
+            val m = models.optJSONObject(i) ?: continue
+            if (m.optString("model").contains(q, true) || m.optString("name").contains(q, true)) return true
+        }
+        return false
+    }
 
-            // ── 运营商卡片头：可点展开/收起 ──
-            val head = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                background = getDrawable(R.drawable.bg_card)
-                setPadding(dp(14), dp(12), dp(14), dp(12))
-                if (i > 0) (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(8)
-                setOnClickListener { if (expanded.contains(key)) expanded.remove(key) else expanded.add(key); loadConfig() }
-                // 长按运营商：重命名 / 批量删模型 / 删除整个运营商
-                setOnLongClickListener { showProviderMenu(key, note, models); true }
-            }
-            val title = TextView(this).apply {
-                text = buildString {
-                    append(note.ifBlank { baseUrl.ifBlank { "(未填地址)" } })
-                    if (isCurrent) append("  ●")
-                }
-                setTextColor(if (isCurrent) 0xFF2F66D8.toInt() else 0xFF1A2230.toInt())
-                textSize = 14f
-                if (isCurrent) setTypeface(typeface, Typeface.BOLD)
-            }
-            head.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            head.addView(TextView(this).apply {
-                text = "${models.length()} 个模型" + if (!hasKey) " · 未填密钥" else ""
-                setTextColor(0xFF66707F.toInt())
-                textSize = 11f
-            })
-            head.addView(TextView(this).apply {
-                text = if (expanded.contains(key)) "▾" else "▸"
-                setTextColor(0xFF8A94A6.toInt())
-                textSize = 14f
-                setPadding(dp(8), 0, 0, 0)
-            })
-            providersBox.addView(head)
+    private fun providerCard(ui: ProviderUi, p: JSONObject): View {
+        val key = p.optString("key")
+        val name = displayName(p)
+        val models = p.optJSONArray("models") ?: JSONArray()
+        val enabled = p.optBoolean("enabled", true)
+        val hasKey = p.optBoolean("hasKey")
+        val inUse = (0 until models.length()).any {
+            models.optJSONObject(it)?.optBoolean("current") == true
+        }
 
-            // ── 展开的模型列表 ──
-            if (expanded.contains(key)) {
-                if (baseUrl.isNotBlank()) {
-                    providersBox.addView(simpleCard("", baseUrl, small = true))
-                }
-                // 批量管理入口：以前只能长按模型一个个删，几十个模型要按几十次
-                val ops = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    setPadding(0, dp(6), 0, dp(2))
-                }
-                ops.addView(actionChip("☐ 批量删除模型") { batchDeleteModels(models) })
-                ops.addView(actionChip("🗑️ 删除运营商") { confirmDeleteProvider(key, note) })
-                providersBox.addView(ops)
-                for (j in 0 until models.length()) {
-                    val m = models.getJSONObject(j)
-                    val uid = m.optString("uid")
-                    val model = m.optString("model")
-                    val name = m.optString("name")
-                    val current = m.optBoolean("current")
+        val card = ui.card(18f, 14).apply {
+            layoutParams = ui.itemMargin()
+            setOnClickListener { openDetail(key) }
+        }
+        val row = ui.horizontal()
+        row.addView(ui.avatar(initialOf(name, p.optString("baseUrl")), 42))
 
-                    val row = LinearLayout(this).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER_VERTICAL
-                        background = getDrawable(R.drawable.bg_btn_soft)
-                        setPadding(dp(14), dp(10), dp(14), dp(10))
-                        (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(4)
-                    }
-                    row.addView(TextView(this).apply {
-                        text = if (current) "✓ " else ""
-                        setTextColor(0xFF2F66D8.toInt())
-                        textSize = 13f
-                    }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-                    row.addView(TextView(this).apply {
-                        text = model.ifBlank { name }
-                        setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF3A4353.toInt())
-                        textSize = 13f
-                        ellipsize = null
-                    }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-                    row.addView(TextView(this).apply {
-                        text = if (current) "使用中" else "使用"
-                        setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF66707F.toInt())
-                        textSize = 12f
-                    })
-                    row.setOnClickListener {
-                        if (current) return@setOnClickListener
-                        status.text = "切换到 ${model.ifBlank { name }} …"
-                        command("useModel", JSONObject().put("uid", uid))
-                    }
-                    row.setOnLongClickListener {
-                        AlertDialog.Builder(this)
-                            .setTitle("删除模型")
-                            .setMessage(model.ifBlank { name })
-                            .setPositiveButton("删除") { _, _ ->
-                                command("removeModel", JSONObject().put("uid", uid))
-                            }
-                            .setNegativeButton("取消", null)
-                            .show()
-                        true
-                    }
-                    providersBox.addView(row)
-                }
-            }
+        val mid = ui.vertical().apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setPadding(ui.dp(12), 0, ui.dp(6), 0)
+        }
+        mid.addView(ui.text(name, 16f, ui.tk.text, bold = true))
+
+        val badges = ui.horizontal().apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = ui.dp(7) }
+        }
+        badges.addView(ui.badge(if (inUse) "使用中" else if (enabled) "启用" else "已停用",
+            if (inUse || enabled) ProviderUi.Badge.ON else ProviderUi.Badge.OFF))
+        val countBadge = ui.badge("${models.length()} 个模型", ProviderUi.Badge.NEUTRAL)
+        countBadge.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { marginStart = ui.dp(6) }
+        badges.addView(countBadge)
+        if (!hasKey) {
+            val warn = ui.badge("未填密钥", ProviderUi.Badge.WARN)
+            warn.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { marginStart = ui.dp(6) }
+            badges.addView(warn)
+        }
+        mid.addView(badges)
+        row.addView(mid)
+
+        val more = ui.icon(R.drawable.ic_more_vert, 22).apply {
+            setOnClickListener { showProviderMenu(p) }
+        }
+        row.addView(more)
+        card.addView(row)
+        return card
+    }
+
+    // ───────────────────────────── 模型渲染 ─────────────────────────────
+
+    private fun renderModels(models: JSONArray) {
+        val ui = ProviderUi(this)
+        modelBox.removeAllViews()
+        modelCount.text = "${models.length()} 个模型"
+        if (models.length() == 0) {
+            val card = ui.card(18f, 20).apply { layoutParams = ui.itemMargin() }
+            card.addView(ui.text("这家还没有模型", 15f, ui.tk.textDim))
+            card.addView(ui.text("点右下角「添加新模型」，按地址拉取后勾选加入", 12f, ui.tk.textFaint))
+            modelBox.addView(card)
+            return
+        }
+        for (i in 0 until models.length()) {
+            val m = models.optJSONObject(i) ?: continue
+            modelBox.addView(modelCard(ui, m))
         }
     }
 
-    /** 展开区里的操作 chip，两个各占一半宽度。 */
-    private fun actionChip(label: String, onClick: () -> Unit): TextView =
-        TextView(this).apply {
-            text = label
-            textSize = 11f
-            gravity = Gravity.CENTER
-            setTextColor(0xFF2F66D8.toInt())
-            background = getDrawable(R.drawable.bg_btn_soft)
-            setPadding(dp(6), dp(8), dp(6), dp(8))
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                .apply { marginEnd = dp(6) }
-            setOnClickListener { onClick() }
+    private fun modelCard(ui: ProviderUi, m: JSONObject): View {
+        val uid = m.optString("uid")
+        val label = m.optString("model").ifBlank { m.optString("name") }
+        val current = m.optBoolean("current")
+        val card = ui.card(16f, 12).apply {
+            layoutParams = ui.itemMargin()
+            if (!current) setOnClickListener {
+                setStatus("切换到 $label …")
+                command("useModel", JSONObject().put("uid", uid))
+            }
         }
+        val row = ui.horizontal()
+        val icon = ui.icon(R.drawable.ic_llm, 30)
+        icon.setColorFilter(if (current) ui.tk.accent else ui.tk.icon)
+        row.addView(icon)
 
-    /** 长按运营商卡片：重命名 / 批量删模型 / 删除整个运营商。 */
-    private fun showProviderMenu(key: String, note: String, models: JSONArray) {
+        val mid = ui.vertical().apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setPadding(ui.dp(12), 0, ui.dp(6), 0)
+        }
+        val title = ui.text(label, 14f, if (current) ui.tk.accent else ui.tk.text, bold = current)
+        title.maxLines = 2
+        title.ellipsize = TextUtils.TruncateAt.END
+        mid.addView(title)
+
+        val badges = ui.horizontal().apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = ui.dp(7) }
+        }
+        badges.addView(ui.badge(if (current) "使用中" else "点击使用",
+            if (current) ProviderUi.Badge.ON else ProviderUi.Badge.NEUTRAL))
+        val tempBadge = ui.badge("温度 ${m.optDouble("temperature", 0.8)}", ProviderUi.Badge.NEUTRAL)
+        tempBadge.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { marginStart = ui.dp(6) }
+        badges.addView(tempBadge)
+        val maxBadge = ui.badge("上限 ${m.optInt("maxTokens", 8192)}", ProviderUi.Badge.NEUTRAL)
+        maxBadge.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { marginStart = ui.dp(6) }
+        badges.addView(maxBadge)
+        mid.addView(badges)
+        row.addView(mid)
+
+        val more = ui.icon(R.drawable.ic_more_vert, 20).apply {
+            setOnClickListener { showModelMenu(m) }
+        }
+        row.addView(more)
+        card.addView(row)
+        return card
+    }
+
+    private fun showModelMenu(m: JSONObject) {
+        val uid = m.optString("uid")
+        val label = m.optString("model").ifBlank { m.optString("name") }
         AlertDialog.Builder(this)
-            .setTitle(note.ifBlank { "运营商" })
-            .setItems(
-                arrayOf("重命名", "批量删除模型（${models.length()} 个）", "删除整个运营商"),
-            ) { _, which ->
+            .setTitle(label)
+            .setItems(arrayOf("使用这个模型", "删除模型")) { _, which ->
                 when (which) {
-                    0 -> promptRenameProvider(key, note)
-                    1 -> batchDeleteModels(models)
-                    2 -> confirmDeleteProvider(key, note)
+                    0 -> command("useModel", JSONObject().put("uid", uid))
+                    1 -> AlertDialog.Builder(this)
+                        .setTitle("删除模型")
+                        .setMessage(label)
+                        .setPositiveButton("删除") { _, _ ->
+                            command("removeModel", JSONObject().put("uid", uid))
+                        }
+                        .setNegativeButton("取消", null)
+                        .show()
                 }
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    // ───────────────────────────── 菜单 / 对话框 ─────────────────────────────
+
+    private fun showProviderMenu(p: JSONObject) {
+        val key = p.optString("key")
+        val models = p.optJSONArray("models") ?: JSONArray()
+        AlertDialog.Builder(this)
+            .setTitle(displayName(p))
+            .setItems(arrayOf("重命名", "批量删除模型（${models.length()} 个）", "删除整个运营商")) { _, which ->
+                when (which) {
+                    0 -> promptRenameProvider(p)
+                    1 -> batchDeleteModels(models)
+                    2 -> confirmDeleteProvider(p)
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+        if (key.isEmpty()) toast("这条运营商数据缺少 key，请刷新后重试")
     }
 
     /** 多选删除：一条 llmRemoveModels 命令搞定，删前二次确认。 */
@@ -365,10 +709,11 @@ class ApiConfigActivity : Activity() {
             .show()
     }
 
-    private fun confirmDeleteProvider(key: String, note: String) {
+    private fun confirmDeleteProvider(p: JSONObject) {
+        val key = p.optString("key")
         AlertDialog.Builder(this)
             .setTitle("删除运营商")
-            .setMessage("「${note.ifBlank { "未命名运营商" }}」及其下所有模型配置会被删除，此操作不可恢复。")
+            .setMessage("「${displayName(p)}」及其下所有模型配置会被删除，此操作不可恢复。")
             .setPositiveButton("删除") { _, _ ->
                 command("llmRemoveProvider", JSONObject().put("key", key))
             }
@@ -376,173 +721,169 @@ class ApiConfigActivity : Activity() {
             .show()
     }
 
-    /** 长按运营商卡片：改显示名。 */
-    private fun promptRenameProvider(key: String, current: String) {
-        val input = EditText(this).apply {
-            setText(current)
-            hint = "如「玄猫中转」"
-            setTextSize(14f)
-            setTextColor(0xFF1A2230.toInt())
-            setBackgroundResource(R.drawable.bg_input)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            setSelection(text?.length ?: 0)
-        }
-        val wrap = LinearLayout(this).apply {
-            setPadding(dp(20), dp(10), dp(20), 0)
-            addView(input)
-        }
-        AlertDialog.Builder(this)
-            .setTitle("重命名运营商")
-            .setView(wrap)
-            .setPositiveButton("保存") { _, _ ->
-                val name = input.text?.toString()?.trim().orEmpty()
-                if (name.isEmpty()) {
-                    toast("名字不能为空")
-                    return@setPositiveButton
-                }
-                command("llmRenameProvider", JSONObject().put("key", key).put("name", name))
-            }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    /** 新建 LLM 运营商 = 名称 + 地址 + 密钥；创建后自动切为当前。 */
-    private fun promptNewProvider() {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), 0)
-        }
-        fun addLabel(t: String) = box.addView(TextView(this).apply {
-            text = t
-            setTextColor(0xFF5A6B85.toInt())
-            textSize = 12f
-            setPadding(0, dp(10), 0, dp(2))
-        })
-        fun addInput(hint: String, uri: Boolean = false): EditText = EditText(this).apply {
-            this.hint = hint
-            setTextSize(13f)
-            setTextColor(0xFF1A2230.toInt())
-            background = getDrawable(R.drawable.bg_input)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            inputType = if (uri) android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
-            else android.text.InputType.TYPE_CLASS_TEXT
-        }.also { box.addView(it) }
-
-        addLabel("名称（可留空，用域名）")
-        val name = addInput("如「玄猫中转」")
-        addLabel("请求地址（Base URL）")
-        val url = addInput("https://api.example.com/v1", uri = true)
-        addLabel("API 密钥")
-        val key = addInput("sk-…")
-
-        AlertDialog.Builder(this)
-            .setTitle("新建运营商")
-            .setView(box)
-            .setPositiveButton("创建") { _, _ ->
-                val u = url.text?.toString()?.trim().orEmpty()
-                if (u.isEmpty()) {
-                    status.text = "地址不能为空"
-                    return@setPositiveButton
-                }
-                command(
-                    "llmAddProvider",
-                    JSONObject()
-                        .put("name", name.text?.toString()?.trim() ?: "")
-                        .put("baseUrl", u)
-                        .put("apiKey", key.text?.toString()?.trim() ?: ""),
-                )
-            }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    private fun i2(v: Int): Int = v
-
-    private fun simpleCard(title: String, sub: String, small: Boolean = false): View {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = getDrawable(R.drawable.bg_card)
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-        }
-        if (title.isNotBlank()) {
-            box.addView(TextView(this).apply {
-                text = title
-                setTextColor(0xFF1A2230.toInt())
-                textSize = if (small) 12f else 14f
-            })
-        }
-        if (sub.isNotBlank()) {
-            box.addView(TextView(this).apply {
-                text = sub
-                setTextColor(0xFF66707F.toInt())
-                textSize = if (small) 11f else 12f
-                if (title.isNotBlank()) (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(2)
-            })
-        }
-        return box
-    }
-
-    private fun toast(msg: String) = android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
-
-    private fun dp(v: Int): Int = Math.round(v * resources.displayMetrics.density)
-
-    // ------------------------------------------------------------ 拉取 / 命令
-
-    /** 连接信息 JSON（带 cmd 前缀的命令体）。 */
-    private fun connJson(): JSONObject = JSONObject().put("baseUrl", baseEdit.text?.toString()?.trim() ?: "").put("apiKey", keyEdit.text?.toString()?.trim() ?: "")
-
     /**
-     * 发一条配置命令。
-     *
-     * 2026-11-07 起全部走 [EngineBridge]：配置命令在原生就地执行、立即落盘，
-     * 不再需要 WebView 活着，也不会出现「引擎还在加载 → 点了没反应」。
-     * `connJson()` 带上输入框里的地址/密钥，保存前顺带把连接信息对齐。
+     * 自定义表单弹窗：用 ProviderUi 构造，连弹窗底板都走主题色板，
+     * 深色皮肤下不会冒出一块系统白。
      */
+    private fun showFormDialog(
+        title: String,
+        fields: List<Pair<String, EditText>>,
+        positive: String,
+        onOk: () -> Unit,
+    ) {
+        val ui = ProviderUi(this)
+        val box = ui.card(20f, 18)
+        box.addView(ui.text(title, 17f, ui.tk.text, bold = true))
+        for ((label, input) in fields) {
+            val tv = ui.text(label, 12f, ui.tk.textDim)
+            tv.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = ui.dp(14) }
+            box.addView(tv)
+            box.addView(input)
+        }
+        val row = ui.horizontal().apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = ui.dp(18) }
+        }
+        val cancel = ui.soft("取消")
+        val spacer = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+        }
+        val ok = ui.primary(positive)
+        row.addView(cancel)
+        row.addView(spacer)
+        row.addView(ok)
+        box.addView(row)
+
+        val d = Dialog(this)
+        d.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        box.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+        d.setContentView(box)
+        d.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        d.window?.setLayout(
+            resources.displayMetrics.widthPixels - ui.dp(48),
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+        cancel.setOnClickListener { d.dismiss() }
+        ok.setOnClickListener { onOk(); d.dismiss() }
+        d.show()
+    }
+
+    private fun promptNewProvider() {
+        val ui = ProviderUi(this)
+        val name = ui.input("如「玄猫中转」").also { it.inputType = InputType.TYPE_CLASS_TEXT }
+        val url = ui.input("https://api.example.com/v1")
+        val key = ui.input("sk-…", password = true)
+        showFormDialog(
+            "新建运营商",
+            listOf("名称（可留空，用域名）" to name, "请求地址（Base URL）" to url, "API 密钥" to key),
+            "创建",
+        ) {
+            val u = url.text?.toString()?.trim().orEmpty()
+            if (u.isEmpty()) {
+                setStatus("地址不能为空")
+                return@showFormDialog
+            }
+            command(
+                "llmAddProvider",
+                JSONObject()
+                    .put("name", name.text?.toString()?.trim().orEmpty())
+                    .put("baseUrl", u)
+                    .put("apiKey", key.text?.toString()?.trim().orEmpty()),
+            )
+        }
+    }
+
+    private fun promptRenameProvider(p: JSONObject) {
+        val ui = ProviderUi(this)
+        val name = ui.input("给这家起个名字").also {
+            it.inputType = InputType.TYPE_CLASS_TEXT
+            it.setText(p.optString("note"))
+            it.setSelection(it.text?.length ?: 0)
+        }
+        showFormDialog("重命名运营商", listOf("名称" to name), "保存") {
+            val value = name.text?.toString()?.trim().orEmpty()
+            if (value.isEmpty()) {
+                toast("名字不能为空")
+                return@showFormDialog
+            }
+            command("llmRenameProvider", JSONObject().put("key", p.optString("key")).put("name", value))
+        }
+    }
+
+    // ───────────────────────────── 命令 ─────────────────────────────
+
     private fun command(cmd: String, extra: JSONObject = JSONObject()) {
-        val body = connJson().put("cmd", cmd)
+        val body = JSONObject().put("cmd", cmd)
         for (k in extra.keys()) body.put(k, extra.get(k))
         EngineBridge.command(body)
     }
 
-    private fun fetchModels() {
-        val baseUrl = baseEdit.text?.toString()?.trim().orEmpty()
-        val apiKey = keyEdit.text?.toString()?.trim().orEmpty()
-        if (baseUrl.isEmpty()) {
-            status.text = "请先填写请求地址（Base URL）"
+    private fun connBody(): JSONObject = JSONObject()
+        .put("key", currentKey.orEmpty())
+        .put("name", cfgName.text?.toString()?.trim().orEmpty())
+        .put("baseUrl", cfgBase.text?.toString()?.trim().orEmpty())
+        .put("apiKey", cfgKey.text?.toString()?.trim().orEmpty())
+
+    private fun saveProviderConn() {
+        val key = currentKey ?: return
+        val base = cfgBase.text?.toString()?.trim().orEmpty()
+        if (base.isEmpty()) {
+            setStatus("请先填写请求地址（Base URL）")
             return
         }
-        status.text = "拉取中…"
-        // 先把地址/密钥落到原生权威源（运营商级同步），再拉列表 —— 两件事互不阻塞
-        EngineBridge.command(
-            JSONObject().put("cmd", "saveConn")
-                .put("baseUrl", baseUrl).put("apiKey", apiKey),
-        )
-        // 网络请求也在原生（OkHttp），不再借 WebView 的 fetch
-        EngineBridge.fetchModels(baseUrl, apiKey)
+        setStatus("保存中…")
+        command("llmSaveProviderConn", connBody().put("key", key))
+    }
+
+    private fun fetchModels() {
+        val key = currentKey ?: return
+        val base = cfgBase.text?.toString()?.trim().orEmpty()
+        val apiKey = cfgKey.text?.toString()?.trim().orEmpty()
+        if (base.isEmpty()) {
+            setStatus("请先填写请求地址（Base URL）")
+            return
+        }
+        setStatus("拉取中…")
+        // 先把连接信息落到这一家（静默，不弹 toast），再拉列表 —— 两件事互不阻塞
+        pendingFetch = true
+        command("llmSaveProviderConn", JSONObject()
+            .put("key", key)
+            .put("baseUrl", base)
+            .put("apiKey", apiKey))
+        EngineBridge.fetchModels(base, apiKey)
     }
 
     private fun saveParams() {
-        val temp = tempEdit.text?.toString()?.toDoubleOrNull()
+        val temp = paramTemp.text?.toString()?.toDoubleOrNull()
         if (temp == null) {
-            status.text = "温度要填数字（如 0.8）"
+            setStatus("温度要填数字（如 0.8）")
             return
         }
         val params = JSONObject()
             .put("temperature", temp)
-            .put("maxTokens", maxEdit.text?.toString()?.toLongOrNull() ?: 8192L)
-            .put("contextWindow", ctxEdit.text?.toString()?.toLongOrNull() ?: 1000000L)
-            .put("userLookbackTokens", lookEdit.text?.toString()?.toLongOrNull() ?: 200000L)
-        status.text = "保存参数中…"
+            .put("maxTokens", paramMax.text?.toString()?.toLongOrNull() ?: 8192L)
+            .put("contextWindow", paramCtx.text?.toString()?.toLongOrNull() ?: 1000000L)
+            .put("userLookbackTokens", paramLook.text?.toString()?.toLongOrNull() ?: 200000L)
+        setStatus("保存参数中…")
         command("saveParams", JSONObject().put("params", params))
     }
 
-    // ------------------------------------------------------------ 结果回调
+    // ───────────────────────────── 结果回调 ─────────────────────────────
 
     private fun onApiResult(json: String) {
         try {
             val obj = JSONObject(json)
             val kind = obj.optString("kind")
             val ok = obj.optBoolean("ok")
+            val error = obj.optString("error")
             when (kind) {
                 "models" -> {
                     if (ok) {
@@ -554,121 +895,137 @@ class ApiConfigActivity : Activity() {
                         }
                         lastModels = models
                         when {
-                            models.isEmpty() -> status.text = "该地址返回了空模型列表"
+                            models.isEmpty() -> setStatus("该地址返回了空模型列表")
                             else -> {
-                                status.text = "拉到 ${models.size} 个模型，勾选后添加"
+                                setStatus("拉到 ${models.size} 个模型，勾选后添加")
                                 showModelMultiPicker(models)
                             }
                         }
                     } else {
-                        status.text = "拉取失败：${obj.optString("error")}"
+                        setStatus("拉取失败：$error")
                     }
                 }
-                "addModels" -> {
-                    if (ok) {
+                "llmSaveProviderConn" -> {
+                    if (error.isNotEmpty()) {
+                        pendingFetch = false
+                        setStatus("保存失败：$error")
+                    } else if (pendingFetch) {
+                        pendingFetch = false
+                        // 拉模型前的静默保存，不打断流程
+                    } else {
+                        setStatus("已保存，连接信息同步到这家全部模型")
+                        toast("已保存")
+                        reloadAfterOp()
+                    }
+                }
+                "llmAddModelsToProvider" -> {
+                    if (error.isNotEmpty()) {
+                        setStatus("添加失败：$error")
+                    } else {
                         val added = obj.optInt("added", 0)
                         val skipped = obj.optInt("skipped", 0)
-                        status.text = "已添加 $added 个" + if (skipped > 0) "（跳过重复 $skipped 个）" else ""
-                        Toast.makeText(this, status.text, Toast.LENGTH_SHORT).show()
+                        setStatus("已添加 $added 个" + if (skipped > 0) "（跳过重复 $skipped 个）" else "")
+                        toast(statusText())
                         reloadAfterOp()
-                    } else {
-                        status.text = "添加失败：${obj.optString("error")}"
                     }
+                }
+                "llmSetProviderEnabled" -> {
+                    if (error.isNotEmpty()) setStatus("操作失败：$error") else loadConfig()
                 }
                 "useModel" -> {
                     if (ok) {
-                        Toast.makeText(this, "已切换", Toast.LENGTH_SHORT).show()
+                        toast("已切换")
                         reloadAfterOp()
-                    } else {
-                        status.text = "切换失败：${obj.optString("error")}"
-                    }
+                    } else setStatus("切换失败：$error")
                 }
                 "removeModel" -> {
                     if (ok) {
-                        Toast.makeText(this, "已删除", Toast.LENGTH_SHORT).show()
+                        toast("已删除")
                         reloadAfterOp()
-                    } else {
-                        status.text = "删除失败：${obj.optString("error")}"
-                    }
+                    } else setStatus("删除失败：$error")
                 }
                 "llmRenameProvider" -> {
-                    if (ok) loadConfig() else toast("改名失败：${obj.optString("error")}")
+                    if (ok) reloadAfterOp() else toast("改名失败：$error")
                 }
-                "llmRemoveModels", "llmRemoveProvider" -> {
+                "llmRemoveModels" -> {
                     if (ok) {
                         toast("已删除 ${obj.optInt("removed", 0)} 项")
                         reloadAfterOp()
-                    } else {
-                        status.text = "删除失败：${obj.optString("error")}"
-                    }
+                    } else setStatus("删除失败：$error")
+                }
+                "llmRemoveProvider" -> {
+                    if (ok) {
+                        toast("运营商已删除")
+                        showList()
+                        loadConfig()
+                    } else setStatus("删除失败：$error")
                 }
                 "llmAddProvider" -> {
                     if (ok) {
-                        status.text = "已创建运营商，接着拉取模型即可"
+                        setStatus("已创建运营商，接着添加模型即可")
                         reloadAfterOp()
-                    } else {
-                        status.text = "创建失败：${obj.optString("error")}"
-                    }
+                    } else setStatus("创建失败：$error")
                 }
-                "saveConn" -> if (!ok) status.text = "保存失败：${obj.optString("error")}"
                 "saveParams" -> {
                     if (ok) {
-                        status.text = "参数已保存（上限/上下文已同步全部模型）"
-                        Toast.makeText(this, "参数已保存", Toast.LENGTH_SHORT).show()
-                        loadConfig()
-                    } else {
-                        status.text = "保存失败：${obj.optString("error")}"
-                    }
+                        setStatus("参数已保存（上限/上下文已同步全部模型）")
+                        toast("参数已保存")
+                        reloadAfterOp()
+                    } else setStatus("保存失败：$error")
                 }
                 /*
-                 * 兜底：新增命令即使忘了在上面写分支，也不至于「点了没反应」。
-                 * 以前每个命令都要在这里登记一次，漏了就静默失败 —— 这是
-                 * 本页面最容易出的 bug，而且编译期完全看不出来。
+                 * 兜底：新增命令即使忘了写分支，也不至于「点了没反应」。
                  */
                 else -> {
-                    if (ok) loadConfig() else status.text = "操作失败：${obj.optString("error")}"
+                    if (ok) loadConfig() else setStatus("操作失败：$error")
                 }
             }
         } catch (t: Throwable) {
-            status.text = "结果解析失败：${t.message}"
+            setStatus("结果解析失败：${t.message}")
         }
     }
 
-    /** 拉到的模型多选对话框：勾选若干 → 一次加入这家（对齐网页版）。 */
+    private fun statusText(): String =
+        if (currentKey != null) detailStatus.text?.toString().orEmpty()
+        else listStatus.text?.toString().orEmpty()
+
+    /** 拉到的模型多选对话框：勾选若干 → 一次加入当前正在看的那家。 */
     private fun showModelMultiPicker(models: List<String>) {
         val names = models.toTypedArray()
         val checked = BooleanArray(models.size)
-        // 已经在这家的模型默认勾上也行，但跳过重复由 store 处理，这里默认全不勾
+        val key = currentKey
         AlertDialog.Builder(this)
             .setTitle("选择要添加的模型（${models.size} 个）")
             .setMultiChoiceItems(names, checked) { _, which, isChecked -> checked[which] = isChecked }
             .setPositiveButton("添加所选") { _, _ ->
                 val picked = models.filterIndexed { i, _ -> checked[i] }
                 if (picked.isEmpty()) {
-                    status.text = "没有勾选任何模型"
+                    setStatus("没有勾选任何模型")
                     return@setPositiveButton
                 }
-                status.text = "添加 ${picked.size} 个模型中…"
-                val arr = JSONArray()
-                for (m in picked) arr.put(m)
-                command("addModels", JSONObject().put("models", arr))
+                addPickedModels(key, picked)
             }
             .setNeutralButton("全选") { d, _ ->
-                // 全选 = 重新弹一次并全部勾上（简单可靠，不做原地刷新）
                 d.dismiss()
                 AlertDialog.Builder(this)
                     .setTitle("选择要添加的模型（${models.size} 个）")
                     .setMultiChoiceItems(names, BooleanArray(models.size) { true }) { _, _, _ -> }
-                    .setPositiveButton("添加全部") { _, _ ->
-                        status.text = "添加 ${models.size} 个模型中…"
-                        val arr = JSONArray()
-                        for (m in models) arr.put(m)
-                        command("addModels", JSONObject().put("models", arr))
-                    }
+                    .setPositiveButton("添加全部") { _, _ -> addPickedModels(key, models) }
                     .setNegativeButton("取消", null)
                     .show()
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    private fun addPickedModels(key: String?, picked: List<String>) {
+        if (key == null) {
+            setStatus("请先选中一家运营商")
+            return
+        }
+        setStatus("添加 ${picked.size} 个模型中…")
+        val arr = JSONArray()
+        for (m in picked) arr.put(m)
+        command("llmAddModelsToProvider", JSONObject().put("key", key).put("models", arr))
     }
 }

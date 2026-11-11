@@ -1,350 +1,690 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  原生 API 接口配置页。
+  LLM 运营商配置页（2026-11-11 重构）。
 
-  交互对齐网页版设置页：
-    · 填地址 + 密钥 → 拉取模型 → 勾选多个一次加入这家；
-    · 已保存的运营商可快捷切换：点开一家 → 点它的模型即「使用」，
-      长按模型可删除；
-    · 温度按模型保存（偶尔对某张卡微调）；
-    · 单次上限 / 上下文窗口 / 历史预算 **对所有模型统一**，保存一次全生效，
-      填 0 = 不限制（不发 max_tokens / 不做历史裁剪）。
+  两级结构，仿成熟客户端的「提供商列表 → 详情」逻辑：
+    · 列表态：搜索 + 运营商卡片（头像 / 启用徽章 / 模型数 / 三点菜单）+ 新建；
+    · 详情态：配置 / 模型 / 高级设置 三个 Tab，密钥默认掩码且可显隐，
+      底部悬浮操作条随 Tab 切换；地址与密钥不再挂在全局顶部。
 
-  数据落在原生 ConnectionStore（生成时单向镜像给引擎）。
+  **换肤约定**：这里的静态控件一律用「白卡片 / 近白 / 主题蓝 / 墨黑 / 灰」
+  这些基准色，由 UiBackdrop.apply() 统一映射到当前 ThemeTokens；运行时生成的
+  列表项走 ProviderUi（同样只读 ThemeTokens）。页面里不写死最终颜色，
+  换一套皮肤或加深色主题时，全部控件一起变。
+
+  数据：原生 ConnectionStore（权威），通过 EngineBridge.command 读写。
 -->
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/pv_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F4F6FA"
-    android:fillViewport="true">
+    android:background="#F4F6FA">
 
+    <!-- ══════════════════ 列表态：提供商 ══════════════════ -->
     <LinearLayout
+        android:id="@+id/pv_list"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="match_parent"
         android:orientation="vertical"
-        android:paddingBottom="40dp">
+        android:visibility="visible">
+
+        <!-- 顶栏：返回 / 刷新 / 新建 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="6dp">
+
+            <ImageView
+                android:id="@+id/pv_back_list"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:background="@drawable/bg_circle_btn"
+                android:contentDescription="返回"
+                android:padding="9dp"
+                android:src="@drawable/ic_chevron_left"
+                android:tint="#5A6B85" />
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <ImageView
+                android:id="@+id/pv_reload"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:layout_marginEnd="10dp"
+                android:background="@drawable/bg_circle_btn"
+                android:contentDescription="刷新"
+                android:padding="9dp"
+                android:src="@drawable/ic_refresh"
+                android:tint="#5A6B85" />
+
+            <ImageView
+                android:id="@+id/pv_add"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:background="@drawable/bg_circle_btn"
+                android:contentDescription="新建运营商"
+                android:padding="9dp"
+                android:src="@drawable/ic_plus"
+                android:tint="#2F66D8" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:layout_marginTop="10dp"
+            android:text="提供商"
+            android:textColor="#1A2230"
+            android:textSize="27sp"
+            android:textStyle="bold" />
+
+        <!-- 搜索框：按名称 / 地址 / 模型名实时过滤 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="46dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_input"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="13dp"
+            android:paddingEnd="13dp">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:contentDescription="搜索"
+                android:src="@drawable/ic_search"
+                android:tint="#5A6B85" />
+
+            <EditText
+                android:id="@+id/pv_search"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:background="@null"
+                android:hint="搜索提供商或模型"
+                android:importantForAutofill="no"
+                android:inputType="text"
+                android:singleLine="true"
+                android:textColor="#1A2230"
+                android:textColorHint="#96A0B0"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/pv_list_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginTop="8dp"
+            android:text=""
+            android:textColor="#66707F"
+            android:textSize="12sp" />
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:id="@+id/pv_list_box"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="32dp" />
+        </ScrollView>
+    </LinearLayout>
+
+    <!-- ══════════════════ 详情态：单个运营商 ══════════════════ -->
+    <LinearLayout
+        android:id="@+id/pv_detail"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:visibility="gone">
 
         <!-- 顶栏 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:paddingTop="10dp"
-            android:paddingBottom="6dp">
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="8dp">
+
+            <ImageView
+                android:id="@+id/pv_back_detail"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:background="@drawable/bg_circle_btn"
+                android:contentDescription="返回列表"
+                android:padding="9dp"
+                android:src="@drawable/ic_chevron_left"
+                android:tint="#5A6B85" />
 
             <TextView
-                android:id="@+id/api_back"
-                android:layout_width="wrap_content"
+                android:id="@+id/pv_detail_avatar"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:layout_marginStart="12dp"
+                android:gravity="center"
+                android:text=""
+                android:textColor="#2F66D8"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/pv_detail_title"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:padding="10dp"
-                android:text="返回"
-                android:textColor="#5A6B85"
-                android:textSize="14sp" />
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text=""
+                android:textColor="#1A2230"
+                android:textSize="17sp"
+                android:textStyle="bold" />
+
+            <ImageView
+                android:id="@+id/pv_detail_more"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:contentDescription="更多操作"
+                android:padding="7dp"
+                android:src="@drawable/ic_more_vert"
+                android:tint="#5A6B85" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/pv_detail_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="4dp"
+            android:text=""
+            android:textColor="#66707F"
+            android:textSize="12sp" />
+
+        <!-- 分段 Tab -->
+        <LinearLayout
+            android:id="@+id/pv_tabs"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="10dp">
 
             <TextView
+                android:id="@+id/pv_tab_config"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/bg_pill_accent"
                 android:gravity="center"
-                android:text="接口配置"
-                android:textColor="#1A2230"
-                android:textSize="16sp"
+                android:paddingTop="9dp"
+                android:paddingBottom="9dp"
+                android:text="配置"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
                 android:textStyle="bold" />
 
             <TextView
-                android:id="@+id/api_reload"
+                android:id="@+id/pv_tab_models"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/bg_pill_soft"
+                android:gravity="center"
+                android:paddingTop="9dp"
+                android:paddingBottom="9dp"
+                android:text="模型"
+                android:textColor="#5A6B85"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/pv_tab_advanced"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@drawable/bg_pill_soft"
+                android:gravity="center"
+                android:paddingTop="9dp"
+                android:paddingBottom="9dp"
+                android:text="高级设置"
+                android:textColor="#5A6B85"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <!-- ── 配置 Tab ── -->
+            <ScrollView
+                android:id="@+id/pv_pane_config"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:fillViewport="true">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="24dp">
+
+                    <!-- 启用开关：停用会把当前模型挪到别家，是真开关不是摆设 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_card"
+                        android:elevation="1dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:padding="16dp">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="是否启用"
+                                android:textColor="#1A2230"
+                                android:textSize="15sp" />
+
+                            <TextView
+                                android:id="@+id/pv_cfg_state"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="3dp"
+                                android:text="停用后不再用于生成"
+                                android:textColor="#8A94A6"
+                                android:textSize="11sp" />
+                        </LinearLayout>
+
+                        <Switch
+                            android:id="@+id/pv_cfg_enabled"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:thumbTint="#FFFFFF"
+                            android:trackTint="#DCE9FF" />
+                    </LinearLayout>
+
+                    <!-- 连接信息卡 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:background="@drawable/bg_card"
+                        android:elevation="1dp"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+
+                        <TextView
+                            style="@style/PvFieldLabel"
+                            android:text="名称" />
+
+                        <EditText
+                            android:id="@+id/pv_cfg_name"
+                            style="@style/PvFieldInput"
+                            android:hint="给这家起个名字"
+                            android:inputType="text" />
+
+                        <TextView
+                            style="@style/PvFieldLabel"
+                            android:text="API Key" />
+
+                        <FrameLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content">
+
+                            <EditText
+                                android:id="@+id/pv_cfg_key"
+                                style="@style/PvFieldInput"
+                                android:hint="sk-…"
+                                android:inputType="textPassword"
+                                android:paddingEnd="46dp" />
+
+                            <ImageView
+                                android:id="@+id/pv_cfg_key_eye"
+                                android:layout_width="22dp"
+                                android:layout_height="22dp"
+                                android:layout_gravity="end|center_vertical"
+                                android:layout_marginEnd="13dp"
+                                android:contentDescription="显示或隐藏密钥"
+                                android:src="@drawable/ic_eye"
+                                android:tint="#5A6B85" />
+                        </FrameLayout>
+
+                        <TextView
+                            style="@style/PvFieldLabel"
+                            android:text="API Base Url" />
+
+                        <FrameLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content">
+
+                            <EditText
+                                android:id="@+id/pv_cfg_base"
+                                style="@style/PvFieldInput"
+                                android:hint="https://api.example.com/v1"
+                                android:inputType="textUri"
+                                android:paddingEnd="46dp" />
+
+                            <ImageView
+                                android:id="@+id/pv_cfg_refetch"
+                                android:layout_width="22dp"
+                                android:layout_height="22dp"
+                                android:layout_gravity="end|center_vertical"
+                                android:layout_marginEnd="13dp"
+                                android:contentDescription="用这个地址重新拉取模型"
+                                android:src="@drawable/ic_refresh"
+                                android:tint="#2F66D8" />
+                        </FrameLayout>
+
+                        <TextView
+                            style="@style/PvFieldLabel"
+                            android:text="请求路径（由地址推导，只读）" />
+
+                        <TextView
+                            android:id="@+id/pv_cfg_path"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_input"
+                            android:padding="12dp"
+                            android:text="/chat/completions"
+                            android:textColor="#5A6B85"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+
+                    <!-- 概览信息卡 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:background="@drawable/bg_card"
+                        android:elevation="1dp"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="概览"
+                            android:textColor="#8A94A6"
+                            android:textSize="12sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/pv_cfg_info"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:lineSpacingMultiplier="1.35"
+                            android:text=""
+                            android:textColor="#5A6B85"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+                </LinearLayout>
+            </ScrollView>
+
+            <!-- ── 模型 Tab ── -->
+            <LinearLayout
+                android:id="@+id/pv_pane_models"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="6dp">
+
+                    <TextView
+                        android:id="@+id/pv_model_batch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_pill_soft"
+                        android:paddingStart="14dp"
+                        android:paddingEnd="14dp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:text="☐ 批量删除模型"
+                        android:textColor="#2F66D8"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
+
+                    <TextView
+                        android:id="@+id/pv_model_count"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text=""
+                        android:textColor="#8A94A6"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <ScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:fillViewport="true">
+
+                    <LinearLayout
+                        android:id="@+id/pv_model_box"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:paddingStart="16dp"
+                        android:paddingEnd="16dp"
+                        android:paddingBottom="24dp" />
+                </ScrollView>
+            </LinearLayout>
+
+            <!-- ── 高级设置 Tab ── -->
+            <ScrollView
+                android:id="@+id/pv_pane_advanced"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone"
+                android:fillViewport="true">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="24dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_card"
+                        android:elevation="1dp"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal">
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginEnd="6dp"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    style="@style/PvFieldLabel"
+                                    android:text="温度（仅当前模型）" />
+
+                                <EditText
+                                    android:id="@+id/pv_param_temp"
+                                    style="@style/PvFieldInput"
+                                    android:inputType="numberDecimal" />
+                            </LinearLayout>
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginStart="6dp"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    style="@style/PvFieldLabel"
+                                    android:text="单次上限（0=不限制）" />
+
+                                <EditText
+                                    android:id="@+id/pv_param_max"
+                                    style="@style/PvFieldInput"
+                                    android:inputType="number" />
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:orientation="horizontal">
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginEnd="6dp"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    style="@style/PvFieldLabel"
+                                    android:text="上下文窗口（0=不裁剪）" />
+
+                                <EditText
+                                    android:id="@+id/pv_param_ctx"
+                                    style="@style/PvFieldInput"
+                                    android:inputType="number" />
+                            </LinearLayout>
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:layout_marginStart="6dp"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    style="@style/PvFieldLabel"
+                                    android:text="历史预算（token）" />
+
+                                <EditText
+                                    android:id="@+id/pv_param_look"
+                                    style="@style/PvFieldInput"
+                                    android:inputType="number" />
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="14dp"
+                            android:lineSpacingMultiplier="1.35"
+                            android:text="单次上限 / 上下文窗口 / 历史预算：保存时对所有模型统一生效，填 0 = 不限制；温度只影响当前模型。"
+                            android:textColor="#8A94A6"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+                </LinearLayout>
+            </ScrollView>
+        </FrameLayout>
+
+        <!-- 悬浮操作条：文案与动作随 Tab 切换 -->
+        <LinearLayout
+            android:id="@+id/pv_float_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="16dp">
+
+            <TextView
+                android:id="@+id/pv_float_left"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:padding="10dp"
-                android:text="刷新"
-                android:textColor="#2F66D8"
-                android:textSize="14sp" />
-        </LinearLayout>
-
-        <!-- ══ 连接 ══ -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="8dp"
-            android:paddingBottom="6dp"
-            android:text="连接"
-            android:textColor="#8A94A6"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:layout_marginEnd="12dp"
-            android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="14dp"
-            android:elevation="1dp">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="请求地址（Base URL）"
-                android:textColor="#5A6B85"
-                android:textSize="12sp" />
-
-            <EditText
-                android:id="@+id/api_base"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:background="@drawable/bg_input"
-                android:hint="https://api.example.com/v1"
-                android:importantForAutofill="no"
-                android:inputType="textUri"
-                android:padding="12dp"
-                android:textColor="#1A2230"
-                android:textColorHint="#9AA4B2"
-                android:textSize="14sp" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
-                android:text="API 密钥"
-                android:textColor="#5A6B85"
-                android:textSize="12sp" />
-
-            <EditText
-                android:id="@+id/api_key"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:background="@drawable/bg_input"
-                android:hint="sk-…"
-                android:importantForAutofill="no"
-                android:inputType="textVisiblePassword"
-                android:padding="12dp"
-                android:textColor="#1A2230"
-                android:textColorHint="#9AA4B2"
-                android:textSize="14sp" />
-
-            <TextView
-                android:id="@+id/api_fetch"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
-                android:background="@drawable/bg_btn_accent"
+                android:background="@drawable/bg_pill_soft"
                 android:gravity="center"
-                android:padding="13dp"
-                android:text="拉取模型列表"
-                android:textColor="#2F66D8"
-                android:textSize="14sp"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="11dp"
+                android:paddingBottom="11dp"
+                android:text="删除运营商"
+                android:textColor="#5A6B85"
+                android:textSize="13sp"
                 android:textStyle="bold" />
 
-            <TextView
-                android:id="@+id/api_status"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text=""
-                android:textColor="#66707F"
-                android:textSize="12sp" />
-        </LinearLayout>
-
-        <!-- ══ 运营商与模型 ══ -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="18dp"
-            android:paddingBottom="6dp"
-            android:text="运营商与模型"
-            android:textColor="#8A94A6"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <LinearLayout
-            android:id="@+id/api_providers_box"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:layout_marginEnd="12dp"
-            android:orientation="vertical" />
-
-        <!-- ══ 生成参数 ══ -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="18dp"
-            android:paddingBottom="6dp"
-            android:text="生成参数（当前模型）"
-            android:textColor="#8A94A6"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:layout_marginEnd="12dp"
-            android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="14dp"
-            android:elevation="1dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:layout_marginEnd="6dp"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="温度"
-                        android:textColor="#5A6B85"
-                        android:textSize="12sp" />
-
-                    <EditText
-                        android:id="@+id/api_param_temp"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:background="@drawable/bg_input"
-                        android:importantForAutofill="no"
-                        android:inputType="numberDecimal"
-                        android:padding="10dp"
-                        android:textColor="#1A2230"
-                        android:textSize="13sp" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:layout_marginStart="6dp"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="单次上限（token，0=不限制）"
-                        android:textColor="#5A6B85"
-                        android:textSize="12sp" />
-
-                    <EditText
-                        android:id="@+id/api_param_max"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:background="@drawable/bg_input"
-                        android:importantForAutofill="no"
-                        android:inputType="number"
-                        android:padding="10dp"
-                        android:textColor="#1A2230"
-                        android:textSize="13sp" />
-                </LinearLayout>
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:orientation="horizontal">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:layout_marginEnd="6dp"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="上下文窗口（0=不裁剪）"
-                        android:textColor="#5A6B85"
-                        android:textSize="12sp" />
-
-                    <EditText
-                        android:id="@+id/api_param_ctx"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:background="@drawable/bg_input"
-                        android:importantForAutofill="no"
-                        android:inputType="number"
-                        android:padding="10dp"
-                        android:textColor="#1A2230"
-                        android:textSize="13sp" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:layout_marginStart="6dp"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="历史预算（token）"
-                        android:textColor="#5A6B85"
-                        android:textSize="12sp" />
-
-                    <EditText
-                        android:id="@+id/api_param_look"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:background="@drawable/bg_input"
-                        android:importantForAutofill="no"
-                        android:inputType="number"
-                        android:padding="10dp"
-                        android:textColor="#1A2230"
-                        android:textSize="13sp" />
-                </LinearLayout>
-            </LinearLayout>
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
 
             <TextView
-                android:layout_width="match_parent"
+                android:id="@+id/pv_float_right"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:text="单次上限 / 上下文窗口 / 历史预算：保存时对所有模型统一生效，填 0 = 不限制；温度只影响当前模型。"
-                android:textColor="#8A94A6"
-                android:textSize="11sp" />
-
-            <TextView
-                android:id="@+id/api_param_save"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
-                android:background="@drawable/bg_btn_soft"
+                android:background="@drawable/bg_pill_accent"
                 android:gravity="center"
-                android:padding="12dp"
-                android:text="保存参数"
-                android:textColor="#5A6B85"
-                android:textSize="14sp" />
+                android:paddingStart="20dp"
+                android:paddingEnd="20dp"
+                android:paddingTop="11dp"
+                android:paddingBottom="11dp"
+                android:text="保存"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
         </LinearLayout>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:gravity="center"
-            android:paddingStart="24dp"
-            android:paddingEnd="24dp"
-            android:text="地址与密钥按「运营商」保存：同一家下的所有模型共用，\n改一处即全部生效（与网页版一致）。长按模型可删除。"
-            android:textColor="#9AA4B2"
-            android:textSize="11sp" />
     </LinearLayout>
-</ScrollView>
+</FrameLayout>

@@ -68,6 +68,9 @@ object ConnectionStore {
         "tplSave", "tplRemove", "dnaSave", "dnaRemove",
         // 2026-11-08 新增：出图参考图（发给生图模型的那张，按场景存，实时可换）
         "genRefSet",
+        // 2026-11-11 新增：运营商维度编辑（配置页改成「列表 → 详情」后，
+        // 保存/加模型/启停都必须按 key 落到那一家，不能再依赖 currentConfigId）
+        "llmSaveProviderConn", "llmAddModelsToProvider", "llmSetProviderEnabled",
     )
 
     private val lock = Any()
@@ -226,6 +229,7 @@ object ConnectionStore {
             groups[key]!!.put(c)
         }
         val providers = JSONArray()
+        val disabled = disabledLlmKeys(llm)
         for (key in keys) {
             val list = groups[key]!!
             val models = JSONArray()
@@ -238,6 +242,8 @@ object ConnectionStore {
                         .put("uid", c.optString("_uid"))
                         .put("model", c.optString("model"))
                         .put("name", c.optString("_name"))
+                        .put("temperature", c.optDouble("temperature", 0.8))
+                        .put("maxTokens", c.optInt("maxTokens", 8192))
                         .put("current", c.optString("_uid") == curId),
                 )
             }
@@ -246,7 +252,11 @@ object ConnectionStore {
                     .put("key", key)
                     .put("note", notes.optString(key))
                     .put("baseUrl", list.optJSONObject(0)?.optString("baseUrl") ?: "")
+                    // 详情页要能显示/编辑这一家的密钥（本机 UI，默认掩码展示）；
+                    // 以前只有顶层当前模型的 apiKey，编辑非当前运营商时取不到。
+                    .put("apiKey", list.optJSONObject(0)?.optString("apiKey") ?: "")
                     .put("hasKey", hasKey)
+                    .put("enabled", key !in disabled)
                     .put("models", models),
             )
         }
@@ -497,8 +507,11 @@ object ConnectionStore {
                 if (curLlm == null) curLlm = addLlmConfig("默认配置")
                 patchConnection(curLlm!!, a)
                 syncLlmGroup(configs, curLlm!!, a)
+                val oldKey = llmKey(curLlm!!)
                 val groupId = curLlm!!.optString("providerId").ifBlank { curLlm!!.optString("_uid") }
                 curLlm!!.put("providerId", groupId)
+                // 老数据第一次加模型时分组 key 会变，把备注/停用标记一起搬过去
+                migrateLlmProviderKey(llm, oldKey, llmKey(curLlm!!))
                 val models = stringArray(a.optJSONArray("models"))
                 var added = 0
                 var skipped = 0
@@ -588,6 +601,101 @@ object ConnectionStore {
             "llmRenameProvider" -> {
                 val notes = llm.optJSONObject("providerNotes") ?: JSONObject().also { llm.put("providerNotes", it) }
                 notes.put(a.optString("key"), a.optString("name").trim())
+            }
+            /**
+             * 运营商维度保存连接信息。
+             *
+             * 旧版 `saveConn` 只改 currentConfigId 指向的那一家，配置页一旦允许
+             * 直接编辑「非当前」的运营商，保存就会串台。这里按 key 精确找到整组，
+             * 连接信息同步到组内每个模型（与 [syncLlmGroup] 同一语义）。
+             */
+            "llmSaveProviderConn" -> {
+                val key = a.optString("key")
+                val group = llmConfigsOfKey(configs, key)
+                if (group.isEmpty()) {
+                    reply.put("error", "运营商不存在或已被删除")
+                } else {
+                    for (c in group) patchConnection(c, a)
+                    if (a.has("name")) {
+                        val notes = llm.optJSONObject("providerNotes")
+                            ?: JSONObject().also { llm.put("providerNotes", it) }
+                        notes.put(key, a.optString("name").trim())
+                    }
+                    reply.put("updated", group.size)
+                }
+            }
+            /**
+             * 往「指定运营商」批量加模型，不走 currentConfigId。
+             *
+             * 详情页的模型 Tab 有「+ 添加新模型」，点的是当前正在看的那家；
+             * 若沿用 addModels（作用于当前模型所在的组），在非当前运营商下
+             * 添加会把模型塞进别家 —— 与「拉取模型永远拉第一家」同源的串台 bug。
+             */
+            "llmAddModelsToProvider" -> {
+                val key = a.optString("key")
+                val group = llmConfigsOfKey(configs, key)
+                if (group.isEmpty()) {
+                    reply.put("error", "运营商不存在或已被删除")
+                } else {
+                    val seed = group[0]
+                    if (a.has("baseUrl") || a.has("apiKey")) patchConnection(seed, a)
+                    val oldKey = llmKey(seed)
+                    val groupId = seed.optString("providerId").ifBlank { seed.optString("_uid") }
+                    seed.put("providerId", groupId)
+                    // 同上：老运营商的 key 会从 __own__:uid 变成 uid，
+                    // 不搬备注的话用户起的名字会在加完模型后凭空消失。
+                    migrateLlmProviderKey(llm, oldKey, llmKey(seed))
+                    val models = stringArray(a.optJSONArray("models"))
+                    var added = 0
+                    var skipped = 0
+                    for (m in models) {
+                        val exists = (0 until configs.length()).any {
+                            val c = configs.optJSONObject(it)
+                            c?.optString("providerId") == groupId && c.optString("model") == m
+                        }
+                        if (exists) { skipped++; continue }
+                        if (seed.optString("model").isEmpty() && added == 0) {
+                            seed.put("model", m).put("_name", m)
+                        } else {
+                            val c = JSONObject(seed.toString())
+                            c.put("_uid", newId("api")).put("_name", m).put("model", m)
+                            c.put("providerId", groupId)
+                            configs.put(c)
+                        }
+                        added++
+                    }
+                    reply.put("added", added).put("skipped", skipped)
+                }
+            }
+            /**
+             * 启用 / 停用一家运营商。
+             *
+             * 停用不是只改个徽章：如果当前模型正好在这一家，就把 currentConfigId
+             * 挪到第一家仍启用的运营商（都停用了就留空，生成侧自然报「未连接」）。
+             * 这样开关有真实效果，不会出现「显示停用但还能用」的假状态。
+             */
+            "llmSetProviderEnabled" -> {
+                val key = a.optString("key")
+                val enabled = a.optBoolean("enabled", true)
+                val dis = llm.optJSONArray("providerDisabled")
+                    ?: JSONArray().also { llm.put("providerDisabled", it) }
+                for (i in dis.length() - 1 downTo 0) if (dis.optString(i) == key) dis.remove(i)
+                if (!enabled) dis.put(key)
+                if (!enabled) {
+                    val cur = findByUid(configs, llm.optString("currentConfigId"))
+                    if (cur != null && llmKey(cur) == key) {
+                        var next = ""
+                        for (i in 0 until configs.length()) {
+                            val c = configs.optJSONObject(i) ?: continue
+                            if (!jsonArrayContains(dis, llmKey(c))) {
+                                next = c.optString("_uid")
+                                break
+                            }
+                        }
+                        llm.put("currentConfigId", next)
+                    }
+                }
+                reply.put("enabled", enabled)
             }
 
             "imgSaveConn" -> {
@@ -925,13 +1033,18 @@ object ConnectionStore {
 
     private fun addLlmConfig(name: String): JSONObject {
         val llm = doc.optJSONObject("llm")!!
+        val uid = newId("api")
         val c = JSONObject()
-            .put("_uid", newId("api")).put("_name", name)
+            .put("_uid", uid).put("_name", name)
+            // 从创建起就把 providerId 定死成自己的 uid：分组 key 以后永远不会
+            // 因为「加了第一个模型」而从 __own__:uid 漂移到 uid（那样会丢掉
+            // providerNotes 里的名字，详情页的 key 也会失效被踢回列表）。
+            .put("providerId", uid)
             .put("baseUrl", "").put("apiKey", "").put("model", "")
             .put("temperature", 0.8).put("maxTokens", 8192)
             .put("contextWindow", 1000000).put("userLookbackTokens", 200000)
         arr(llm, "configs").put(c)
-        llm.put("currentConfigId", c.optString("_uid"))
+        llm.put("currentConfigId", uid)
         return c
     }
 
@@ -1009,6 +1122,49 @@ object ConnectionStore {
     /** 与 apiConfig.ts 的 providerKeyOf 一致：显式 providerId 优先，否则各自独立。 */
     private fun llmKey(c: JSONObject): String =
         c.optString("providerId").ifBlank { "__own__:" + c.optString("_uid") }
+
+    /** 按分组 key 取出这一家下面的全部模型配置（顺序与落盘一致）。 */
+    private fun llmConfigsOfKey(configs: JSONArray, key: String): List<JSONObject> {
+        val out = ArrayList<JSONObject>()
+        for (i in 0 until configs.length()) {
+            val c = configs.optJSONObject(i) ?: continue
+            if (llmKey(c) == key) out.add(c)
+        }
+        return out
+    }
+
+    /** 停用的运营商 key 集合；老数据没有这个字段 = 全部启用（向上兼容）。 */
+    private fun disabledLlmKeys(llm: JSONObject): Set<String> {
+        val a = llm.optJSONArray("providerDisabled") ?: return emptySet()
+        val out = HashSet<String>()
+        for (i in 0 until a.length()) {
+            val k = a.optString(i)
+            if (k.isNotEmpty()) out.add(k)
+        }
+        return out
+    }
+
+    private fun jsonArrayContains(a: JSONArray, value: String): Boolean {
+        for (i in 0 until a.length()) if (a.optString(i) == value) return true
+        return false
+    }
+
+    /**
+     * 老运营商第一次加模型时，分组 key 会从 `__own__:uid` 变成 `uid`。
+     * 按 key 存的备注与停用标记必须跟着搬，否则改名丢失、停用状态失效。
+     */
+    private fun migrateLlmProviderKey(llm: JSONObject, oldKey: String, newKey: String) {
+        if (oldKey == newKey) return
+        llm.optJSONObject("providerNotes")?.let { notes ->
+            if (notes.has(oldKey)) {
+                notes.put(newKey, notes.optString(oldKey))
+                notes.remove(oldKey)
+            }
+        }
+        llm.optJSONArray("providerDisabled")?.let { dis ->
+            for (i in 0 until dis.length()) if (dis.optString(i) == oldKey) dis.put(i, newKey)
+        }
+    }
 
     /** 与 imageApiSummary 一致：生图按去尾斜杠的 baseUrl 分组，空地址各自独立。 */
     private fun imageKey(a: JSONObject): String {

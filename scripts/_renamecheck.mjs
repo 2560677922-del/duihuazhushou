@@ -61,12 +61,15 @@ for (const c of nativeCalls) {
 }
 
 // ---- 3. 结果回调要能触发重载，否则改完列表不变 ----
+// 资产页已重构成「成功即重载」的默认分支（AssetsHomeActivity.onApiResult），
+// 新增命令零维护。这里校验兜底分支仍在，而不是逐条登记命令名 ——
+// 逐条登记的写法早已被证明会漏（漏了就是「保存成功但列表不动」）。
 check(
-  'onApiResult 监听三条改名命令',
-  ['presetRename', 'regexRename', 'wbRename'].every((c) => {
+  'onApiResult 成功即重载（改名后列表刷新）',
+  (() => {
     const seg = NATIVE.slice(NATIVE.indexOf('private fun onApiResult'));
-    return seg.includes(`"${c}"`);
-  }),
+    return seg.includes('ok -> reloadKeepingScroll()') && seg.includes('else -> toast');
+  })(),
 );
 
 // ---- 4. 运行时行为：抽出 setAssetName 真跑 ----
