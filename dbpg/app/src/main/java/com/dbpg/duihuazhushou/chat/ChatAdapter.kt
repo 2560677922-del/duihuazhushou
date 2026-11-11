@@ -1,11 +1,13 @@
 package com.dbpg.duihuazhushou.chat
 
+import android.graphics.Outline
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -15,6 +17,7 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.dbpg.duihuazhushou.R
 import com.dbpg.duihuazhushou.appearance.AppearanceConfig
+import com.dbpg.duihuazhushou.character.CharacterAvatar
 import com.dbpg.duihuazhushou.appearance.BubbleStyle
 import com.dbpg.duihuazhushou.appearance.ThemePalette
 import com.dbpg.duihuazhushou.chat.render.CardBitmaps
@@ -144,7 +147,9 @@ class ChatAdapter(
 
     class VH(
         root: FrameLayout,
+        val avatar: ImageView,
         val bubble: LinearLayout,
+        val speaker: TextView,
         val text: TextView,
         val blocks: LinearLayout,
         val webHost: FrameLayout,
@@ -189,7 +194,9 @@ class ChatAdapter(
         v.tag = "dhp:keep-color"
         val holder = VH(
             v as FrameLayout,
+            v.findViewById(R.id.msg_avatar),
             v.findViewById(R.id.bubble),
+            v.findViewById(R.id.msg_speaker),
             v.findViewById(R.id.msg_text),
             v.findViewById(R.id.msg_blocks),
             v.findViewById(R.id.msg_web),
@@ -340,6 +347,20 @@ class ChatAdapter(
         val isUser = item.role == "user"
         val isSystem = item.role == "system"
 
+        // 群聊公共区才有发言人名字；私聊/单人整行不占位
+        holder.speaker.visibility =
+            if (!isUser && item.speakerName.isNotBlank()) View.VISIBLE else View.GONE
+        if (item.speakerName.isNotBlank()) holder.speaker.text = item.speakerName
+
+        /*
+         * 头像：只有群聊消息（AI 侧、知道角色名）才占位。
+         *
+         * 用户消息永远靠右、不带头像；单人聊天的角色名原生不知道，
+         * 也就不会误显示成空白圆。
+         */
+        val showAvatar = !isUser && !isSystem && item.avatarKey.isNotBlank()
+        holder.avatar.visibility = if (showAvatar) View.VISIBLE else View.GONE
+
         // 1) 对齐 + 气泡配色
         val lp = holder.bubble.layoutParams as FrameLayout.LayoutParams
         lp.gravity = when {
@@ -347,7 +368,20 @@ class ChatAdapter(
             isSystem -> Gravity.CENTER_HORIZONTAL
             else -> Gravity.START
         }
+        // 有头像时气泡让出 42dp（头像 34 + 间距 8），否则首行会被头像压住
+        lp.leftMargin = if (!isUser && !isSystem && item.avatarKey.isNotBlank()) (42 * density).toInt() else 0
         holder.bubble.layoutParams = lp
+        if (!isUser && !isSystem && item.avatarKey.isNotBlank()) {
+            holder.avatar.clipToOutline = true
+            holder.avatar.outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setOval(0, 0, view.width, view.height)
+                }
+            }
+            val bmp = CharacterAvatar.bitmap(ctx, item.avatarKey)
+            if (bmp != null) holder.avatar.setImageBitmap(bmp)
+            else holder.avatar.setImageResource(R.drawable.ic_avatar_placeholder)
+        }
         // 气泡款式（圆润/柔和/方角/极简）：圆角、描边、配色、投影都跟着款式走。
         // 每次 bind 重建 Drawable —— 共享实例会被 RecyclerView 复用染色（经典坑）。
         val style = BubbleStyle.byId(config.bubbleStyle)

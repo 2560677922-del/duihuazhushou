@@ -56,6 +56,16 @@ object SessionHistory {
         summaries: List<SummaryBlock> = doc.summaries,
         /** 摘要那条消息的角色。默认 system；个别中转不接受多条 system 时切 assistant。 */
         summaryRole: String = ROLE_SYSTEM,
+        /**
+         * 群聊公共区的发言人名（speakerId → 显示名）。
+         *
+         * 只在公共区传：同一条时间线上有多个人说话，必须在正文前标【名字】，
+         * 否则模型会把别人的台词当自己的。私聊/单人会话传空 Map，导出结果
+         * 与以前逐字节一致。
+         *
+         * 不用 OpenAI messages 的 `name` 字段：中转兼容性参差，正文前缀最稳。
+         */
+        speakerNames: Map<String, String> = emptyMap(),
     ): List<PromptMessage> {
         val stop = if (uptoActionId == null) -1 else doc.actions.indexOfFirst { it.id == uptoActionId }
         val end = if (stop < 0) doc.actions.size else stop
@@ -94,7 +104,15 @@ object SessionHistory {
             val user = clean(a.user)
             if (user.isNotEmpty()) out.add(PromptMessage(ROLE_USER, user))
             val ai = clean(a.ai)
-            if (ai.isNotEmpty()) out.add(PromptMessage(ROLE_ASSISTANT, ai))
+            if (ai.isNotEmpty()) {
+                val who = a.speakerId.takeIf { it.isNotEmpty() }?.let { speakerNames[it] }
+                out.add(
+                    PromptMessage(
+                        ROLE_ASSISTANT,
+                        if (who.isNullOrBlank()) ai else "【$who】$ai",
+                    ),
+                )
+            }
         }
         return out
     }

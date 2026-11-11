@@ -114,6 +114,13 @@ data class SessionAction(
     val user: String = "",
     val ai: String = "",
     val timestamp: Long = 0L,
+    /**
+     * 这条 AI 回复是谁说的（群聊公共区用；单人会话为空）。
+     *
+     * 只存 id 不存名字：成员改名后历史气泡跟着变，不会留下旧名字。
+     * 私聊频道的消息不需要这个字段 —— 一个会话只有一个角色。
+     */
+    val speakerId: String = "",
     val images: List<ActionImage> = emptyList(),
     val variants: List<MessageVariant> = emptyList(),
     val variantIndex: Int = 0,
@@ -125,6 +132,7 @@ data class SessionAction(
         o.put("user", user)
         o.put("ai", ai)
         o.put("timestamp", timestamp)
+        if (speakerId.isEmpty()) o.remove("speakerId") else o.put("speakerId", speakerId)
         if (images.isEmpty()) {
             // 空数组也写：web 的读取路径有时会 Array.isArray 判断
             o.put("images", JSONArray())
@@ -149,6 +157,7 @@ data class SessionAction(
                 user = o.optString("user", ""),
                 ai = o.optString("ai", ""),
                 timestamp = optLong(o, "timestamp"),
+                speakerId = o.optString("speakerId", ""),
                 images = ActionImage.parseArray(o.optJSONArray("images")),
                 variants = variants,
                 variantIndex = o.optInt("variantIndex", 0),
@@ -164,6 +173,42 @@ data class SessionDraft(
     val ai: String = "",
     val updatedAt: Long = 0L,
 )
+
+/**
+ * 会话属于哪个群聊频道（原生私有，JSON 键 `nativeGroup`）。
+ *
+ * 群聊 = 一个容器 + N+1 个普通会话（公共区 1 个、每个成员 1 个）。
+ * 这样私聊频道直接复用单人聊天的全部能力（分支/变体/摘要），
+ * 不需要另一套消息模型；只有公共区才用 [SessionAction.speakerId] 区分发言人。
+ */
+data class GroupRef(
+    val groupId: String = "",
+    /** [KIND_PUBLIC] 或 [KIND_MEMBER] */
+    val kind: String = "",
+    /** kind=member 时的角色卡 uid；公共区为空 */
+    val memberId: String = "",
+) {
+    companion object {
+        const val KIND_PUBLIC = "public"
+        const val KIND_MEMBER = "member"
+
+        fun parse(o: JSONObject?): GroupRef? {
+            if (o == null) return null
+            val id = o.optString("groupId", "")
+            if (id.isEmpty()) return null
+            return GroupRef(
+                groupId = id,
+                kind = o.optString("kind", ""),
+                memberId = o.optString("memberId", ""),
+            )
+        }
+    }
+
+    fun toJson(): JSONObject = JSONObject()
+        .put("groupId", groupId)
+        .put("kind", kind)
+        .put("memberId", memberId)
+}
 
 /** 会话文档（web: AdventureSession）。 */
 data class SessionDoc(
@@ -182,6 +227,11 @@ data class SessionDoc(
      */
     val summaries: List<SummaryBlock> = emptyList(),
     /**
+     * 群聊频道归属（原生私有，JSON 键 `nativeGroup`）。
+     * null = 单人冒险。群聊子会话不会出现在「冒险」列表里。
+     */
+    val group: GroupRef? = null,
+    /**
      * 当前格式版本。
      *
      * 现在恒为 1；加字段不需要升版本（靠 raw 兜底），
@@ -198,6 +248,8 @@ data class SessionDoc(
         updatedAt = updatedAt,
         createdAt = createdAt,
         preview = actions.lastOrNull()?.let { it.ai.ifBlank { it.user } }?.take(80).orEmpty(),
+        groupId = group?.groupId.orEmpty(),
+        channelKind = group?.kind.orEmpty(),
     )
 
     fun toJson(): JSONObject {
@@ -220,6 +272,7 @@ data class SessionDoc(
         // 摘要为空时删键而不是写空数组：避免让"从没用过摘要"的会话多背一个字段
         if (summaries.isEmpty()) o.remove(KEY_SUMMARIES) else
             o.put(KEY_SUMMARIES, JSONArray().also { a -> summaries.forEach { a.put(it.toJson()) } })
+        if (group == null) o.remove(KEY_GROUP) else o.put(KEY_GROUP, group.toJson())
         return o
     }
 
@@ -228,6 +281,7 @@ data class SessionDoc(
     companion object {
         /** 原生私有键名前缀：和 nativeLocalPath 一样，避免和 web 将来字段撞名。 */
         private const val KEY_SUMMARIES = "nativeSummaries"
+        private const val KEY_GROUP = "nativeGroup"
 
         /** 解析失败返回 null（坏文件不该让整个列表崩）。 */
         fun parse(text: String?): SessionDoc? {
@@ -257,6 +311,7 @@ data class SessionDoc(
                     )
                 },
                 summaries = SummaryBlock.parseArray(o.optJSONArray(KEY_SUMMARIES)),
+                group = GroupRef.parse(o.optJSONObject(KEY_GROUP)),
                 schemaVersion = o.optInt("schemaVersion", 1),
                 raw = o.toString(),
             )
@@ -273,6 +328,9 @@ data class SessionIndexEntry(
     val createdAt: Long = 0L,
     /** 最后一条消息的开头，列表页做副标题 */
     val preview: String = "",
+    /** 群聊频道归属；空串 = 单人会话（冒险列表只收这类） */
+    val groupId: String = "",
+    val channelKind: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
@@ -281,6 +339,12 @@ data class SessionIndexEntry(
         .put("updatedAt", updatedAt)
         .put("createdAt", createdAt)
         .put("preview", preview)
+        .apply {
+            if (groupId.isNotEmpty()) {
+                put("groupId", groupId)
+                put("channelKind", channelKind)
+            }
+        }
 
     companion object {
         fun parse(o: JSONObject?): SessionIndexEntry? {
@@ -294,6 +358,8 @@ data class SessionIndexEntry(
                 updatedAt = optLong(o, "updatedAt"),
                 createdAt = optLong(o, "createdAt"),
                 preview = o.optString("preview", ""),
+                groupId = o.optString("groupId", ""),
+                channelKind = o.optString("channelKind", ""),
             )
         }
 

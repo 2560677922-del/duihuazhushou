@@ -29,6 +29,18 @@ object SessionBindingStore {
 
     /** 一个对话的资产引用。空集合＝跟随全局（资产页当前启用的全部）。 */
     data class Binding(
+        /**
+         * 这个对话扮演谁（角色卡 uid）。
+         *
+         * ★ 以前会话完全不记角色：先跟 A 聊、再跟 B 新建，回 A 的旧会话继续发，
+         *   用的却是 B 的卡。这个字段就是修它的落点 —— 打开会话时读出来，
+         *   生成时按请求带给引擎，不再依赖网页的全局 currentCharacterId。
+         *
+         * null = 老会话没记过（按全局当前角色走）。
+         */
+        val characterId: String? = null,
+        /** 角色显示名：聊天头像按名字去原生卡库找图，不用再问网页 */
+        val characterName: String? = null,
         /** 引用的世界书 id；null = 没配置过（跟随全局），空列表 = 明确不引任何书 */
         val worldBookIds: List<String>? = null,
         /** 引用的预设 id；null = 跟随全局 */
@@ -39,7 +51,7 @@ object SessionBindingStore {
         val dnaIds: List<String>? = null,
     ) {
         val isDefault: Boolean
-            get() = worldBookIds == null && presetId == null &&
+            get() = characterId == null && characterName == null && worldBookIds == null && presetId == null &&
                 regexGroupIds == null && dnaIds == null
     }
 
@@ -50,6 +62,8 @@ object SessionBindingStore {
         val root = readRoot(ctx)
         val o = root.optJSONObject(sessionId) ?: return Binding()
         return Binding(
+            characterId = if (o.has("characterId")) o.optString("characterId").ifEmpty { null } else null,
+            characterName = if (o.has("characterName")) o.optString("characterName").ifEmpty { null } else null,
             worldBookIds = o.optJSONArray("worldBookIds")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } },
             presetId = if (o.has("presetId")) o.optString("presetId") else null,
             regexGroupIds = o.optJSONArray("regexGroupIds")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } },
@@ -61,6 +75,8 @@ object SessionBindingStore {
         if (sessionId.isBlank()) return
         val root = readRoot(ctx)
         val o = JSONObject()
+        b.characterId?.let { o.put("characterId", it) }
+        b.characterName?.let { o.put("characterName", it) }
         b.worldBookIds?.let { o.put("worldBookIds", JSONArray(it)) }
         b.presetId?.let { o.put("presetId", it) }
         b.regexGroupIds?.let { o.put("regexGroupIds", JSONArray(it)) }

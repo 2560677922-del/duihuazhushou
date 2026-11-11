@@ -62,6 +62,18 @@ object GenBridge {
         assetBinding: JSONObject? = null,
         /** 显式预设 id：重新生成时也要带上，别让引擎靠全局状态猜 */
         presetId: String = "",
+        /**
+         * 本次扮演的角色卡 uid。
+         *
+         * 会话自己记着角色（SessionBindingStore.characterId），每次生成都带，
+         * 这样两个会话交替发消息不会用错卡 —— 全局 currentCharacterId 只服务
+         * 网页版和角色库入口。
+         */
+        characterId: String = "",
+        /** 明确不注入角色卡（群聊公共区用户发言） */
+        noCharacter: Boolean = false,
+        /** 用户角色（资产页「我的角色」）：名字与人设，写进 {{user}} / {{persona}} */
+        userPersona: JSONObject? = null,
         sink: Sink,
     ): String? {
         val wv: WebView = MainActivity.getWebView() ?: return null
@@ -94,6 +106,9 @@ object GenBridge {
         if (assetBinding != null && assetBinding.length() > 0) {
             req.put("assetBinding", assetBinding)
         }
+        if (characterId.isNotBlank()) req.put("characterId", characterId)
+        if (noCharacter) req.put("noCharacter", true)
+        if (userPersona != null && userPersona.length() > 0) req.put("userPersona", userPersona)
 
         MainActivity.runOnUi {
             wv.evaluateJavascript(
@@ -191,6 +206,25 @@ object GenBridge {
             "window.__dhpGen && window.__dhpGen.assetCatalog ? window.__dhpGen.assetCatalog() : null",
             onResult,
         )
+    }
+
+    /**
+     * 把「会话 → 角色卡」绑定到引擎（会话级映射，不动全局当前角色）。
+     *
+     * 打开会话时调一次：显示侧的 `{{char}}` 宏、生成侧取角色卡都按它走。
+     * 引擎还没就绪就跳过 —— 生成请求本身也带 characterId，不会用错卡。
+     */
+    fun bindSession(sessionId: String, characterId: String) {
+        if (sessionId.isBlank()) return
+        val wv = MainActivity.getWebView() ?: return
+        MainActivity.runOnUi {
+            wv.evaluateJavascript(
+                "window.__dhpGen && window.__dhpGen.bindSession ? " +
+                    "window.__dhpGen.bindSession(" +
+                    "${JSONObject.quote(sessionId)}, ${JSONObject.quote(characterId)}) : null",
+                null,
+            )
+        }
     }
 
     /**

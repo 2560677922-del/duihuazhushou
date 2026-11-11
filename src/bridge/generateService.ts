@@ -155,6 +155,54 @@ interface NativeGenRequest {
   imageInstructionMax?: number;
   /** 显式预设 id（原生每次生成都带，含重新生成），优先于引擎全局当前预设 */
   presetId?: string;
+  /**
+   * 这次生成扮演的角色卡 uid。
+   *
+   * 以前引擎只认 `assets.currentCharacterId`（全局单例）：先在 A 的会话里聊、
+   * 再去角色库点 B 开新聊天，回 A 继续发就用成了 B 的卡。原生现在每次请求
+   * 都带这个字段，缺省才回退到全局（兼容网页版 / 老原生版本）。
+   */
+  characterId?: string;
+  /**
+   * 明确要求"不注入任何角色卡"。
+   *
+   * 群聊公共区里用户自己说话时用：这时既没有成员在扮演，也不该把
+   * 上次角色库选中的卡塞进来（否则模型会以为用户就是那个人）。
+   */
+  noCharacter?: boolean;
+  /** 本次生效的用户角色（资产页「我的角色」）：写 {{user}} 名字与人设块 */
+  userPersona?: { name?: string; description?: string };
+}
+
+/**
+ * 会话 id → 角色卡 uid。
+ *
+ * 原生打开会话时绑定一次，生成与显示都按 sessionId 取卡，不再依赖全局单例。
+ * 群聊里多个频道并排存在时，这是"谁的会话用谁的卡"的唯一依据。
+ */
+const sessionCharacters = new Map<string, string>();
+
+/**
+ * 取这次要扮演的卡：显式请求 > 会话绑定 > 全局当前角色。
+ *
+ * 前两级都是"这个会话自己的角色"，只有都没命中时才退回全局 ——
+ * 老会话没记过角色，退回全局与旧行为一致。
+ */
+function characterOf(sessionId: string, explicit?: string): any {
+  const assets = useAssetsStore();
+  const id = String(explicit || sessionCharacters.get(sessionId) || '');
+  if (id) {
+    const hit = (assets.characters as any[]).find((c: any) => c?._uid === id);
+    if (hit) return hit;
+  }
+  return assets.getCurrentCharacter();
+}
+
+/** 原生打开/切换频道时调用：把会话和角色卡绑死。 */
+function bindSession(sessionId: string, characterId: string): void {
+  if (!sessionId) return;
+  if (characterId) sessionCharacters.set(sessionId, characterId);
+  else sessionCharacters.delete(sessionId);
 }
 
 /** 请求 id → 中断句柄。停止生成时按 id 掐断，不会误伤别的会话。 */
@@ -216,6 +264,8 @@ function buildMessages(
   imageMax: number,
   sessionId: string,
   assetBinding?: { worldBookIds?: string[]; presetId?: string; regexGroupIds?: string[] },
+  /** 本次这一轮"谁在说"：角色卡、是否注入卡、用户人设 */
+  turn?: { characterId?: string; noCharacter?: boolean; userPersona?: { name?: string; description?: string } },
 ): BuiltMessages | null {
   const assets = useAssetsStore();
   // 按对话绑定取资产：绑定 ∩ 资产页启用项。没绑定的对话跟随全局（旧行为）。
@@ -257,7 +307,8 @@ function buildMessages(
 
   const result = assemblePrompt({
     preset,
-    characterCard: assets.getCurrentCharacter(),
+    characterCard: turn?.noCharacter ? undefined : characterOf(sessionId, turn?.characterId),
+    userPersona: turn?.userPersona,
     worldBooks: worldBookJsons,
     regexScripts,
     chatHistory,
@@ -351,6 +402,11 @@ async function generate(reqJson: string): Promise<void> {
       imageMax,
       sessionId,
       binding,
+      {
+        characterId: req.characterId,
+        noCharacter: req.noCharacter === true,
+        userPersona: req.userPersona,
+      },
     );
     if (!built) {
       callNative('onGenError', requestId, '还没有启用预设，请先在「资产」里选一个');
@@ -576,7 +632,7 @@ function displayConfig(sessionId: string): string {
   try {
     const assets = useAssetsStore();
     const variables = useVariablesStore();
-    const character: any = assets.getCurrentCharacter();
+    const character: any = characterOf(sessionId);
     const scripts = assets.getCurrentRegexScripts();
 
     return JSON.stringify({
@@ -1897,6 +1953,7 @@ export function installGenerateService(): void {
     imageConfig,
     displayConfig,
     assetCatalog,
+    bindSession,
     setActive: (json: string) => {
       void setActive(json);
     },

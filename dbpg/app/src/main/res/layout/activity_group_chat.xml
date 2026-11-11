@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  群聊页。
+
+  结构与单人聊天页刻意保持一致（同一套顶栏/列表/输入栏），只多两条：
+    · 顶栏下的「频道栏」：公共区 + 每个成员一个频道，点谁就切到谁的会话；
+    · 公共区输入栏多一个「续写」：按成员顺序叫下一位发言。
+
+  频道栏放在顶栏之下而不是做成抽屉：切频道是这个页面最高频的动作，
+  藏起来等于每次多两步。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/gc_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/app_bg">
+
+    <!-- 顶栏：返回 + 群名（点一下改名）+ ⋯ -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingStart="6dp"
+        android:paddingEnd="6dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="4dp"
+        android:background="#FFFFFFFF"
+        android:gravity="center_vertical">
+
+        <ImageView
+            android:id="@+id/gc_back"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:contentDescription="返回"
+            android:padding="10dp"
+            android:src="@drawable/ic_chevron_left"
+            android:tint="#3A4353" />
+
+        <TextView
+            android:id="@+id/gc_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="群聊"
+            android:textColor="#1A2230"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/gc_more"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="10dp"
+            android:text="⋯"
+            android:textColor="#3A4353"
+            android:textSize="20sp"
+            android:contentDescription="群设置" />
+    </LinearLayout>
+
+    <!-- 频道栏：横向滚动，公共固定第一个；右侧加号固定不滚 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#FFFFFFFF"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="8dp"
+        android:gravity="center_vertical">
+
+        <HorizontalScrollView
+            android:id="@+id/gc_channel_scroll"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/gc_channels"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical" />
+        </HorizontalScrollView>
+
+        <TextView
+            android:id="@+id/gc_add_member"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/bg_circle_btn"
+            android:gravity="center"
+            android:text="＋"
+            android:textColor="#5A6B85"
+            android:textSize="16sp"
+            android:contentDescription="邀请成员" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/gc_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:scrollbars="vertical"
+            android:clipToPadding="false" />
+
+        <TextView
+            android:id="@+id/gc_empty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:lineSpacingExtra="6dp"
+            android:padding="32dp"
+            android:text="公共区还没有消息\n\n你说话，或点「续写」让成员按顺序发言"
+            android:textColor="#66707F"
+            android:textSize="14sp"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <!-- 输入栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="8dp"
+        android:background="@drawable/bg_input_bar"
+        android:gravity="center_vertical">
+
+        <!-- 公共区专属：让下一位成员发言；私聊频道隐藏 -->
+        <TextView
+            android:id="@+id/gc_next"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
+            android:background="@drawable/bg_pill_soft"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="7dp"
+            android:paddingBottom="7dp"
+            android:text="续写"
+            android:textColor="#2F66D8"
+            android:textSize="13sp"
+            android:contentDescription="让下一位成员发言" />
+
+        <EditText
+            android:id="@+id/gc_input"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minHeight="42dp"
+            android:background="@drawable/bg_input"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:textColor="#1A2230"
+            android:textSize="15sp"
+            android:hint="说点什么…"
+            android:textColorHint="#9AA4B2"
+            android:inputType="textMultiLine|textCapSentences"
+            android:maxLines="5" />
+
+        <TextView
+            android:id="@+id/gc_send"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="14dp"
+            android:paddingEnd="6dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:text="发送"
+            android:textColor="#6EA8FE"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/gc_stop"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="14dp"
+            android:paddingEnd="6dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:text="停止"
+            android:textColor="#E06C75"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+    </LinearLayout>
+</LinearLayout>

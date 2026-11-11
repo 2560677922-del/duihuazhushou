@@ -10,6 +10,7 @@ import com.dbpg.duihuazhushou.chat.render.RenderCache
 import com.dbpg.duihuazhushou.chat.render.plugin.PluginRegistry
 import com.dbpg.duihuazhushou.chat.render.plugin.PluginRenderMeta
 import com.dbpg.duihuazhushou.imagegen.AutoImageService
+import com.dbpg.duihuazhushou.session.GroupStore
 import com.dbpg.duihuazhushou.session.SessionBindingStore
 import com.dbpg.duihuazhushou.session.SessionRepo
 import com.dbpg.duihuazhushou.settings.ConnectionStore
@@ -24,6 +25,7 @@ import com.dbpg.stcore.render.RenderKey
 import com.dbpg.stcore.render.StreamPipeline
 import com.dbpg.stcore.richtext.FoldParser
 import com.dbpg.stcore.session.ActionImage
+import com.dbpg.stcore.session.GroupRef
 import com.dbpg.stcore.session.SessionAction
 import com.dbpg.stcore.session.SessionDoc
 import com.dbpg.stcore.session.SessionEditor
@@ -150,6 +152,25 @@ class ChatController(
      */
     private var summaryPresetId: String? = null
 
+    /**
+     * 本会话扮演的角色卡（来自 SessionBindingStore）。
+     *
+     * 打开会话时读一次并绑到引擎；生成时再按请求带一份。
+     * 空 = 老会话没记过角色，按引擎全局当前角色走。
+     */
+    private var characterId: String? = null
+
+    /** 角色显示名（头像按它去原生卡库找图）。 */
+    @Volatile
+    private var characterName: String? = null
+
+    /** 当前使用的用户角色（全局一份，切会话不重置）。 */
+    private var persona: com.dbpg.duihuazhushou.character.PersonaStore.Persona? = null
+
+    /** 本会话所属群聊（单人会话为 null）。渲染时用它把 speakerId 映射成名字。 */
+    @Volatile
+    private var group: GroupStore.Group? = null
+
     /** 同一时间只允许一个摘要任务：并发会互相覆盖区间。 */
     private var summarizing = false
 
@@ -200,13 +221,65 @@ class ChatController(
 
     private fun bind(d: SessionDoc) {
         doc = d
-        summaryPresetId = com.dbpg.duihuazhushou.session.SessionBindingStore
-            .load(appContext, d.id).presetId
+        bindAssets(d)
         sink.onTitle(d.title.ifBlank { "冒险" })
         render(true)
         refreshDisplayConfig()
         refreshImageEnv()
         refreshActivePreset()
+    }
+
+    /**
+     * 读本会话的资产绑定，并把「会话 → 角色卡」同步给引擎。
+     *
+     * 这一步是修"换个角色再回来就串卡"的关键：会话自己记着跟谁聊，
+     * 打开时把这张卡绑上去，显示宏 `{{char}}` 用的就是它，不靠全局单例。
+     */
+    private fun bindAssets(d: SessionDoc) {
+        val b = SessionBindingStore.load(appContext, d.id)
+        summaryPresetId = b.presetId
+        characterId = b.characterId
+        characterName = b.characterName
+        persona = com.dbpg.duihuazhushou.character.PersonaStore.active(appContext)
+        group = d.group?.let { GroupStore.get(appContext, it.groupId) }
+        GenBridge.bindSession(d.id, b.characterId.orEmpty())
+        if (b.characterId == null && d.actions.isEmpty()) adoptCurrentCharacter(d, b)
+    }
+
+    /**
+     * 空会话没有绑定角色时，把引擎当前角色固化到绑定里。
+     *
+     * 「用它开聊」的流程是：网页把角色设为 currentCharacterId → 建空会话 →
+     * 拉起原生聊天。这时会话文件里还没有角色，不固化下来的话，用户换个角色
+     * 再回来就串卡了（这正是这次要修的 bug）。
+     *
+     * 只对**空会话**做：老会话继续跟随全局，不会被"现在选中的卡"污染。
+     */
+    private fun adoptCurrentCharacter(d: SessionDoc, b: SessionBindingStore.Binding) {
+        GenBridge.fetchAssetCatalog { json ->
+            val root = runCatching { JSONObject(json ?: "{}") }.getOrNull() ?: return@fetchAssetCatalog
+            val cur = root.optJSONObject("current") ?: return@fetchAssetCatalog
+            val cid = cur.optString("characterId", "")
+            if (cid.isBlank()) return@fetchAssetCatalog
+            // 这期间用户可能已经手动改过绑定 / 切了会话
+            if (doc?.id != d.id) return@fetchAssetCatalog
+            if (SessionBindingStore.load(appContext, d.id).characterId != null) return@fetchAssetCatalog
+
+            val name = root.optJSONArray("characters")?.let { arr ->
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+                    .firstOrNull { it.optString("id") == cid }?.optString("name")
+            }.orEmpty()
+
+            SessionBindingStore.save(
+                appContext,
+                d.id,
+                b.copy(characterId = cid, characterName = name),
+            )
+            characterId = cid
+            characterName = name
+            GenBridge.bindSession(d.id, cid)
+            render(true)
+        }
     }
 
     /** 从设置页/其他界面回来时重新读盘（可能被别的地方改过）。 */
@@ -221,6 +294,23 @@ class ChatController(
     }
 
     /**
+     * 重新把当前内容推给界面（群聊切回一个后台频道时用）。
+     *
+     * 不读盘：数据一直在内存里，后台生成也会照常更新 doc，
+     * 直接重绘比 reload 少一次 IO。
+     */
+    fun refreshView() = render(false)
+
+    /** 群聊页销毁：停掉这个频道的生成并释放渲染线程。 */
+    fun shutdown() {
+        release()
+        io.shutdown()
+    }
+
+    /** 这个频道是否正在生成（切回来时要还原发送/停止按钮）。 */
+    fun isGenerating(): Boolean = genId != null
+
+    /**
      * 重拉"怎么渲染 / 生图配置"。
      *
      * 用户在网页设置里换了预设、正则、生图接口后回到聊天页，这里要跟上，
@@ -229,8 +319,8 @@ class ChatController(
     fun refreshConfig() {
         // 绑定可能刚被「本对话资产」改过：摘要要跟着用新的预设
         doc?.let {
-            summaryPresetId = com.dbpg.duihuazhushou.session.SessionBindingStore
-                .load(appContext, it.id).presetId
+            bindAssets(it)
+            GenBridge.bindSession(it.id, characterId.orEmpty())
         }
         refreshDisplayConfig()
         refreshImageEnv()
@@ -432,6 +522,8 @@ class ChatController(
                     id = "a:${a.id}",
                     role = "assistant",
                     content = rendered.plain,
+                    speakerName = speakerNameOf(d, a),
+                    avatarKey = avatarKeyOf(d, a),
                     imagePaths = rendered.paths,
                     streaming = generating,
                     actionId = a.id,
@@ -447,6 +539,37 @@ class ChatController(
             )
         }
         return out
+    }
+
+    /**
+     * 这条回复的发言人名字（群聊专用）。
+     *
+     * 公共区看 speakerId；成员频道固定是该频道的角色；单人会话返回空 ——
+     * 单人聊天的角色由绑定决定，但原生只知道角色 uid，不知道显示名，
+     * 与其显示一半不如不显示。
+     */
+    /**
+     * 这条消息的头像 key：群聊按发言人；单人会话用绑定的角色名。
+     *
+     * 单人聊天不显示名字（私聊里每句都顶个"阿岚"很吵），只用头像。
+     */
+    private fun avatarKeyOf(d: SessionDoc, a: SessionAction): String {
+        val id = a.speakerId.ifBlank {
+            if (d.group?.kind == GroupRef.KIND_MEMBER) d.group?.memberId.orEmpty() else ""
+        }
+        if (id.isNotBlank()) {
+            return group?.members?.firstOrNull { it.characterId == id }?.name.orEmpty()
+        }
+        return if (d.group == null) characterName.orEmpty() else ""
+    }
+
+    private fun speakerNameOf(d: SessionDoc, a: SessionAction): String {
+        val g = group ?: return ""
+        val id = a.speakerId.ifBlank {
+            if (d.group?.kind == GroupRef.KIND_MEMBER) d.group?.memberId.orEmpty() else ""
+        }
+        if (id.isBlank()) return ""
+        return g.members.firstOrNull { it.characterId == id }?.name.orEmpty()
     }
 
     /**
@@ -712,6 +835,35 @@ class ChatController(
      * 会砍掉这条之后的内容（它们建立在旧回答上，已不成立），
      * 但**保留当前这条的旧正文** —— 会进 variants，用户还能用 ‹ › 翻回来。
      */
+    /**
+     * 群聊公共区：让某个成员说一句。
+     *
+     * 仍然是一轮 = 一个 Action，只是 user 栏留空、ai 栏放回复、speakerId 记发言人。
+     * 这样列表、变体、重新生成、摘要锚点的语义与普通轮次完全一致，不用第二套消息模型。
+     *
+     * @param prompt 送给模型的"接着说"提示；角色人格由请求里的角色卡提供
+     */
+    fun sendAs(speakerId: String, prompt: String = "继续") {
+        val d = doc ?: return
+        if (speakerId.isBlank()) return
+        if (genId != null) {
+            sink.onToast("还在生成，先停一下")
+            return
+        }
+        val actionId = SessionRepo.newId("a")
+        val next = SessionEditor.appendAction(
+            doc = d,
+            actionId = actionId,
+            user = "",
+            ai = "",
+            speakerId = speakerId,
+        )
+        doc = next
+        SessionRepo.save(next)
+        render(true)
+        beginGen(actionId, prompt, isNew = true, characterOverride = speakerId)
+    }
+
     fun regenerate(actionId: String) {
         val d = doc ?: return
         if (genId != null) {
@@ -754,8 +906,22 @@ class ChatController(
         regenerate(actionId)
     }
 
-    private fun beginGen(actionId: String, userInput: String, isNew: Boolean) {
+    private fun beginGen(
+        actionId: String,
+        userInput: String,
+        isNew: Boolean,
+        /** 群聊公共区：这条回复由谁说（私聊为空） */
+        speakerId: String = "",
+        /** 这次生成要用谁的角色卡；空 = 用会话绑定的那个 */
+        characterOverride: String = "",
+    ) {
         val d = doc ?: return
+        val group = d.group?.let { GroupStore.get(appContext, it.groupId) }
+        val speakers = if (d.group?.kind == GroupRef.KIND_PUBLIC) {
+            group?.members?.associate { it.characterId to it.name }.orEmpty()
+        } else {
+            emptyMap()
+        }
         /*
          * 导出上下文：摘要开启时，被覆盖的轮次用摘要替代原文。
          *
@@ -769,18 +935,41 @@ class ChatController(
             uptoActionId = actionId,
             summaries = if (sCfg.enabled) d.summaries else emptyList(),
             summaryRole = sCfg.role,
+            // 公共区一条时间线上有多个人说话，必须标名字；私聊/单人不受影响
+            speakerNames = speakers,
         )
         val env = imageEnv
 
         // 本对话的资产引用（世界书/预设/正则）：绑定 ∩ 资产页启用项在引擎侧过滤
         val binding = com.dbpg.duihuazhushou.session.SessionBindingStore.load(appContext, d.id)
-        val effectivePreset = binding.presetId?.takeIf { it.isNotBlank() } ?: activePresetId
+        val books = booksFor(d, group, binding)
+        val effectivePreset = binding.presetId?.takeIf { it.isNotBlank() }
+            ?: group?.presetId?.takeIf { it.isNotBlank() }
+            ?: activePresetId
         val bindingJson = JSONObject().apply {
-            binding.worldBookIds?.let { put("worldBookIds", org.json.JSONArray(it)) }
-            binding.regexGroupIds?.let { put("regexGroupIds", org.json.JSONArray(it)) }
+            books?.let { put("worldBookIds", org.json.JSONArray(it)) }
+            // 正则：成员显式选了用自己的，否则用群级的；都没配就跟随全局
+            (binding.regexGroupIds ?: group?.regexGroupIds)?.let {
+                put("regexGroupIds", org.json.JSONArray(it))
+            }
             // 重新生成也必须带预设：会话没绑定时退回引擎当前启用的那个
             if (effectivePreset.isNotBlank()) put("presetId", effectivePreset)
         }
+
+        // 谁的角色卡：本条消息的发言人（公共区）> 本次指定 > 会话绑定（成员频道）> 空
+        // 从 action 读而不是从调用方传，重新生成同一条时才能自动用回同一个发言人。
+        val speakerId = d.actions.find { it.id == actionId }?.speakerId.orEmpty()
+        val roleId = speakerId.takeIf { it.isNotBlank() }
+            ?: characterOverride.takeIf { it.isNotBlank() }
+            ?: characterId.orEmpty()
+        // 公共区里用户自己说话：不注入角色卡（否则会套用成员/上次选中的卡）
+        val noCharacter = d.group?.kind == GroupRef.KIND_PUBLIC && speakerId.isEmpty()
+
+        // 用户角色：所有会话共用（{{user}} 名字 + 人设块），没配就不带
+        val personaJson = persona?.takeIf { it.name.isNotBlank() || it.description.isNotBlank() }
+            ?.let {
+                JSONObject().put("name", it.name).put("description", it.description)
+            }
 
         val reqId = GenBridge.request(
             sessionId = d.id,
@@ -790,6 +979,9 @@ class ChatController(
             imageMax = env?.settings?.maxPerReply ?: 2,
             assetBinding = bindingJson,
             presetId = effectivePreset,
+            characterId = roleId,
+            noCharacter = noCharacter,
+            userPersona = personaJson,
             sink = this,
         )
         if (reqId == null) {
@@ -807,6 +999,25 @@ class ChatController(
         genIsNew = isNew
         sink.onGenerating(true)
         render(true)
+    }
+
+    /**
+     * 本次生成该注入哪些世界书。
+     *
+     * 群聊的分层规则：
+     *   - 公共区：只带群公共书；
+     *   - 成员频道：群公共书 ∪ 该成员私有书（公共书强制生效，成员去不掉）；
+     *   - 单人会话：完全按绑定（null = 跟随全局）。
+     */
+    private fun booksFor(
+        d: SessionDoc,
+        group: GroupStore.Group?,
+        binding: SessionBindingStore.Binding,
+    ): List<String>? = when (d.group?.kind) {
+        GroupRef.KIND_PUBLIC -> group?.publicWorldBookIds ?: binding.worldBookIds
+        GroupRef.KIND_MEMBER -> if (group == null) binding.worldBookIds else
+            (group.publicWorldBookIds + binding.worldBookIds.orEmpty()).distinct()
+        else -> binding.worldBookIds
     }
 
     fun stop() {

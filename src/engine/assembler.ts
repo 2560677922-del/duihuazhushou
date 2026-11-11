@@ -40,6 +40,7 @@ export function assemblePrompt(opts: AssemblyOptions): AssemblyResult {
     worldBooks = [],
     regexScripts = [],
     characterCard,
+    userPersona,
     chatHistory,
     currentUserInput,
     authorNote,
@@ -118,10 +119,13 @@ export function assemblePrompt(opts: AssemblyOptions): AssemblyResult {
   const macroCtx: MacroContext = {
     char: characterCard?.name ?? (preset?.getSetting ? preset.getSetting('name_char') : undefined) ?? '',
     user:
-      (preset?.getSetting ? preset.getSetting('name_user') : undefined) ?? '用户',
+      String(userPersona?.name || '').trim() ||
+      (preset?.getSetting ? preset.getSetting('name_user') : undefined) ||
+      '用户',
     description: characterCard?.description ?? '',
     scenario: characterCard?.scenario ?? '',
-    persona: characterCard?.persona ?? '',
+    // {{persona}} 在 ST 里就是"用户人设"；没有用户卡时才回退到角色卡上的同名字段
+    persona: String(userPersona?.description || '').trim() || characterCard?.persona || '',
     original: characterCard?.first_mes ?? characterCard?.firstMes ?? '',
     mes_example: characterCard?.mes_example ?? characterCard?.mesExample ?? '',
     chat: history.map((m) => `${m.role}: ${m.content}`).join('\n'),
@@ -156,13 +160,14 @@ export function assemblePrompt(opts: AssemblyOptions): AssemblyResult {
    * （避免同样的内容出现两遍，那会浪费 token 也干扰模型）。
    */
   const withCharacter = injectCharacterCardIfMissing(afterVars, characterCard);
+  const withPersona = injectUserPersonaIfMissing(withCharacter, userPersona);
 
   // ---- 阶段 3b：正则 ----
   //
   // placement 说明：这些开关决定"这类消息要不要被处理"。
   // 推理过程和斜杠命令也打开 —— 否则标了这两种作用的规则会被整条跳过，
   // 用户看到的现象就是"有的正则没生效"。
-  const { messages: afterRegex, hits: regexApplied } = runRegex(withCharacter, regexScripts, {
+  const { messages: afterRegex, hits: regexApplied } = runRegex(withPersona, regexScripts, {
     dryRun: false,
     placement: {
       user: true,
@@ -280,6 +285,51 @@ function injectCharacterCardIfMissing(
     content: block,
     _origin: 'preset',
     _name: '角色卡（自动注入）',
+  } as ChatMessage);
+  return out;
+}
+
+/**
+ * 用户角色（persona）兜底注入。
+ *
+ * 与角色卡注入同一套规则：预设已经引用过（`{{persona}}` 或描述原文出现）
+ * 就不再补，避免同样的内容进两遍。
+ *
+ * 位置在角色卡**之前**：ST 的默认顺序是 Persona → 角色描述/性格/场景，
+ * 先交代"你是谁"，再交代"对面是谁"。
+ */
+function injectUserPersonaIfMissing(
+  messages: ChatMessage[],
+  persona?: { name?: string; description?: string },
+): ChatMessage[] {
+  const desc = String(persona?.description || '').trim();
+  if (!desc) return messages;
+
+  // 预设里已经用 {{persona}} 展开了 → 不重复注入
+  const probe = desc.slice(0, 24);
+  if (probe && messages.some((m) => String(m.content || '').includes(probe))) return messages;
+
+  const name = String(persona?.name || '').trim() || '我';
+  const block =
+    '以下是"用户"这个角色的设定，请把它当作对话对象（不要替用户说话，也不要在正文复述）：\n\n' +
+    `用户：${name}\n${desc}`;
+
+  const out = [...messages];
+  // 有自动注入的角色卡就插在它前面；否则插在第一条历史之前
+  let insertAt = out.length;
+  const cardAt = out.findIndex((m) => m._name === '角色卡（自动注入）');
+  if (cardAt >= 0) {
+    insertAt = cardAt;
+  } else {
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (out[i]._origin === 'history') insertAt = i;
+    }
+  }
+  out.splice(insertAt, 0, {
+    role: 'system',
+    content: block,
+    _origin: 'preset',
+    _name: '用户角色（自动注入）',
   } as ChatMessage);
   return out;
 }

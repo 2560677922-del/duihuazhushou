@@ -47,6 +47,7 @@ class SessionAdapter(
     }
 
     private fun subtitleOf(item: SessionSummary): String {
+        item.detail?.let { return it }
         val count = if (item.messageCount > 0) "${item.messageCount} 条消息" else "空会话"
         val time = relativeTime(item.updatedAt)
         return if (time.isBlank()) count else "$count · $time"

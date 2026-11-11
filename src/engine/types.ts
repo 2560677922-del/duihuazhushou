@@ -30,6 +30,13 @@ export interface AssemblyOptions {
   regexScripts?: any[];
   /** parsecard CharacterCard 实例（可选，作为主角/NPC） */
   characterCard?: any;
+  /**
+   * 用户的角色（资产页「我的角色」）。
+   *
+   * 只影响两件事：`{{user}}` 的名字、`{{persona}}` / 用户人设块的内容。
+   * 不注入角色卡，也不改预设 —— 它是"你是谁"，不是"AI 演谁"。
+   */
+  userPersona?: { name?: string; description?: string };
   chatHistory: ChatMessage[];
   currentUserInput?: string;
   /** 作者注释，作为 user 消息按 depth 回溯注入 */

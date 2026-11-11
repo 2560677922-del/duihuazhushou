@@ -42,6 +42,14 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.DHP" />
 
+        <!-- 群聊：一个群 + N+1 个频道会话；入口在首页「群聊」模式 -->
+        <activity
+            android:name=".GroupChatActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:theme="@style/Theme.DHP" />
+
         <!-- 卡片查看器：列表里是位图，进这里才是真 WebView（可选中/可脚本） -->
         <activity
             android:name=".chat.render.CardViewerActivity"

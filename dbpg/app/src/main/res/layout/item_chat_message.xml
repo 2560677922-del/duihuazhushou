@@ -13,6 +13,18 @@
     android:paddingTop="4dp"
     android:paddingBottom="4dp">
 
+    <!-- 群聊头像：只有 AI 消息且知道角色名时显示；用户消息不显示 -->
+    <ImageView
+        android:id="@+id/msg_avatar"
+        android:layout_width="34dp"
+        android:layout_height="34dp"
+        android:layout_gravity="start|top"
+        android:layout_marginTop="2dp"
+        android:background="@drawable/avatar_bg"
+        android:contentDescription="@null"
+        android:scaleType="centerCrop"
+        android:visibility="gone" />
+
     <LinearLayout
         android:id="@+id/bubble"
         android:layout_width="wrap_content"
@@ -21,6 +33,17 @@
         android:maxWidth="280dp"
         android:padding="10dp"
         android:background="@drawable/bubble_bg">
+
+        <!-- 群聊公共区：发言人名字（私聊/单人为空，整行不占位） -->
+        <TextView
+            android:id="@+id/msg_speaker"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingBottom="4dp"
+            android:textColor="#2F66D8"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
 
         <!--
           富文本容器：装一个 HtmlMessageView（WebView）。

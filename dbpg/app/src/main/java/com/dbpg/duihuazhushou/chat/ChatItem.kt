@@ -15,6 +15,20 @@ data class ChatItem(
     val id: String,
     val role: String,                       // user / assistant / system
     val content: String,
+    /**
+     * 群聊公共区的发言人名字（私聊 / 单人为空）。
+     *
+     * 只用于气泡上方那行小字，不参与正文；名字由 memberId 现查，
+     * 成员改名后历史消息跟着变，不会留下一串旧名字。
+     */
+    val speakerName: String = "",
+    /**
+     * 这条 AI 回复的头像 key（角色名）。空 = 不显示头像。
+     *
+     * 只存名字不存 Bitmap：列表 DiffUtil 会比较整个对象，塞 Bitmap 会让
+     * 每次流式更新都比一遍像素引用；名字交给 [CharacterAvatar] 做 LRU。
+     */
+    val avatarKey: String = "",
     val imagePaths: List<String> = emptyList(),
     val streaming: Boolean = false,
     /** 对应会话里的哪一轮；空串 = 不是会话消息（只读预览） */

@@ -138,6 +138,9 @@ class AssetsHomeActivity : Activity() {
         load()
     }
 
+    /** 给 PersonaSection 用：它只改本地用户卡，改动后要重绘整个 tab。 */
+    fun reloadKeepingScrollPublic() = reloadKeepingScroll()
+
     private fun restoreScroll() {
         if (pendingScrollY < 0) return
         val sv = findViewById<ScrollView>(R.id.assets_scroll)
@@ -154,12 +157,13 @@ class AssetsHomeActivity : Activity() {
 
         when (tab) {
             TAB_CHARACTER -> {
-                status.text = "角色卡的导入、浏览与启用在原生卡库"
+                status.text = "角色卡与用户角色：角色卡是 AI 要演的人，用户角色是「你」"
                 box.addView(actionCard("🎭  打开角色卡库", "导入 .png / .json 卡 · 分段浏览设定 · 换当前角色") {
                     startActivity(
                         Intent(this, com.dbpg.duihuazhushou.character.CharacterListActivity::class.java),
                     )
                 })
+                PersonaSection.render(this, box)
             }
             TAB_PRESET -> {
                 val arr = a.optJSONArray("presets") ?: JSONArray()
@@ -1570,6 +1574,7 @@ class AssetsHomeActivity : Activity() {
                     pendingExportJson = null
                 }
             }
+            PersonaSection.REQ_AVATAR -> PersonaSection.handleAvatarResult(this, uri)
         }
         pendingExportUri = null
     }

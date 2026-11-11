@@ -169,12 +169,15 @@ object SessionEditor {
         ai: String,
         now: Long = System.currentTimeMillis(),
         images: List<ActionImage> = emptyList(),
+        /** 群聊公共区：这条 AI 回复由哪个成员说；单人会话留空 */
+        speakerId: String = "",
     ): SessionDoc = doc.copy(
         actions = doc.actions + SessionAction(
             id = actionId,
             user = user,
             ai = ai,
             timestamp = now,
+            speakerId = speakerId,
             images = images,
         ),
         updatedAt = now,
