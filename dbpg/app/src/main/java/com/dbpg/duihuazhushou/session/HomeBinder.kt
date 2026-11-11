@@ -186,9 +186,8 @@ object HomeBinder {
     private fun createGroup(activity: Activity, onDone: () -> Unit) {
         GenBridge.fetchAssetCatalog { json ->
             if (activity.isFinishing) return@fetchAssetCatalog
-            val chars = runCatching {
-                JSONObject(json ?: "{}").optJSONArray("characters")
-            }.getOrNull()
+            val root = runCatching { JSONObject(json ?: "{}") }.getOrNull()
+            val chars = root?.optJSONArray("characters")
             if (chars == null || chars.length() == 0) {
                 toast(activity, "角色库是空的，先去资产页导入角色卡")
                 return@fetchAssetCatalog
@@ -214,7 +213,12 @@ object HomeBinder {
                         toast(activity, "至少选一个角色")
                         return@setPositiveButton
                     }
-                    promptGroupName(activity, picked, onDone)
+                    // 默认继承资产页当前启用的世界书：新群一进来就有设定，
+                    // 而不是"公共区一本书都没有"（用户会以为设定丢了）
+                    val books = root.optJSONObject("current")?.optJSONArray("worldBookIds")
+                    val defaultBooks = if (books == null) emptyList() else
+                        List(books.length()) { books.optString(it) }
+                    promptGroupName(activity, picked, defaultBooks, onDone)
                 }
                 .setNegativeButton("取消", null)
                 .show()
@@ -224,6 +228,7 @@ object HomeBinder {
     private fun promptGroupName(
         activity: Activity,
         members: List<Pair<String, String>>,
+        publicBooks: List<String>,
         onDone: () -> Unit,
     ) {
         val input = EditText(activity).apply {
@@ -245,7 +250,12 @@ object HomeBinder {
                 val title = input.text?.toString().orEmpty().trim().ifBlank { "新群聊" }
                 toast(activity, "正在建频道…")
                 Thread {
-                    val g = GroupStore.create(activity.applicationContext, title, members)
+                    val g = GroupStore.create(
+                        activity.applicationContext,
+                        title,
+                        members,
+                        publicWorldBookIds = publicBooks,
+                    )
                     activity.runOnUiThread {
                         openGroup(activity, g.id)
                         onDone()
