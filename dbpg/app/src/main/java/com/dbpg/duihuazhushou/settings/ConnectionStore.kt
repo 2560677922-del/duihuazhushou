@@ -71,6 +71,7 @@ object ConnectionStore {
         // 2026-11-11 新增：运营商维度编辑（配置页改成「列表 → 详情」后，
         // 保存/加模型/启停都必须按 key 落到那一家，不能再依赖 currentConfigId）
         "llmSaveProviderConn", "llmAddModelsToProvider", "llmSetProviderEnabled",
+        "imgSaveProviderConn", "imgAddModelsToProvider",
     )
 
     private val lock = Any()
@@ -213,7 +214,9 @@ object ConnectionStore {
         val configs = arr(llm, "configs")
         val notes = llm.optJSONObject("providerNotes") ?: JSONObject()
         val curId = llm.optString("currentConfigId")
-        val cur = findByUid(configs, curId) ?: configs.optJSONObject(0)
+        // 不在这里「找不到就取第一条」：那样 currentConfigId 坏了页面也看不出来，
+        // 显示会悄悄飘到别的模型上。有效性由 normalize() 在读盘/写命令后统一兜住。
+        val cur = findByUid(configs, curId)
 
         // 运营商分组规则与 store 的 providers getter 一致：
         // 有 providerId 用之（addModelsToProvider 建出来的一组），否则各自独立。
@@ -264,7 +267,6 @@ object ConnectionStore {
             .put("baseUrl", cur?.optString("baseUrl") ?: "")
             .put("apiKey", cur?.optString("apiKey") ?: "")
             .put("model", cur?.optString("model") ?: "")
-            .put("modelName", cur?.optString("_name") ?: "")
             .put("uid", cur?.optString("_uid") ?: "")
             .put(
                 "params", JSONObject()
@@ -281,7 +283,8 @@ object ConnectionStore {
         val image = doc.optJSONObject("image") ?: JSONObject()
         val apis = arr(image, "apiConfigs")
         val curId = image.optString("currentApiId")
-        val cur = findByUid(apis, curId) ?: apis.optJSONObject(0)
+        val cur = findByUid(apis, curId)
+        val sceneIds = image.optJSONObject("sceneApiIds") ?: JSONObject()
         val auto = image.optJSONObject("autoImage") ?: JSONObject()
         val llm = doc.optJSONObject("llm") ?: JSONObject()
 
@@ -311,15 +314,19 @@ object ConnectionStore {
         for (key in keys) {
             val list = groups[key]!!
             val models = JSONArray()
+            val allUids = HashSet<String>()
             var hasKey = false
             var current = false
             for (j in 0 until list.length()) {
                 val a = list.optJSONObject(j) ?: continue
+                allUids.add(a.optString("_uid"))
                 if (a.optString("apiKey").isNotEmpty() || a.optString("novelaiToken").isNotEmpty()) hasKey = true
                 val isCur = a.optString("_uid") == curId
                 if (isCur) current = true
                 val model = a.optString("model").ifEmpty { a.optString("novelaiModel") }
-                if (model.isNotEmpty() || list.length() == 1) {
+                // 只把真的有模型的条目当模型列出来：老数据里的空壳接口
+                // 不该在列表里显示成「未命名模型」。
+                if (model.isNotEmpty()) {
                     models.put(
                         JSONObject()
                             .put("uid", a.optString("_uid"))
@@ -330,13 +337,22 @@ object ConnectionStore {
                 }
             }
             val first = list.optJSONObject(0)
+            // 场景没显式选过就跟随 currentApiId（老数据与网页自动配图都这么认）
+            val usedBy = JSONArray()
+            if (sceneIds.optString("chat").ifBlank { curId } in allUids) usedBy.put("chat")
+            if (sceneIds.optString("tag").ifBlank { curId } in allUids) usedBy.put("tag")
             providers.put(
                 JSONObject()
                     .put("key", key)
+                    .put("uid", first?.optString("_uid") ?: "")
                     .put("baseUrl", first?.optString("baseUrl") ?: "")
                     .put("name", first?.optString("name").orEmpty().ifEmpty { hostOf(first?.optString("baseUrl") ?: "").ifEmpty { "(未填地址)" } })
+                    // 详情页要能编辑这一家的密钥；以前只有顶层当前接口的 apiKey。
+                    .put("apiKey", first?.optString("apiKey") ?: "")
+                    .put("engine", if (first != null) engineOf(first) else "custom")
                     .put("hasKey", hasKey)
                     .put("current", current)
+                    .put("usedBy", usedBy)
                     .put("models", models),
             )
         }
@@ -364,7 +380,6 @@ object ConnectionStore {
         val apiName = groups[curKey]?.optJSONObject(0)?.optString("name").orEmpty()
             .ifEmpty { hostOf(cur?.optString("baseUrl") ?: "") }
         val style = findByUid(arr(image, "styleConfigs"), image.optString("currentStyleId"))
-        val sceneIds = image.optJSONObject("sceneApiIds") ?: JSONObject()
 
         /**
          * 场景视图：只为 UI 显示，地址/密钥供内部发请求用，界面不展示。
@@ -434,7 +449,7 @@ object ConnectionStore {
         val image = doc.optJSONObject("image") ?: JSONObject()
         val styles = arr(image, "styleConfigs")
         val curId = image.optString("currentStyleId")
-        val style = findByUid(styles, curId) ?: styles.optJSONObject(0)
+        val style = findByUid(styles, curId)
         val list = JSONArray()
         for (i in 0 until styles.length()) {
             val s = styles.optJSONObject(i) ?: continue
@@ -732,6 +747,61 @@ object ConnectionStore {
                 }
                 reply.put("added", added).put("skipped", skipped)
             }
+            /**
+             * 生图运营商维度保存连接信息。
+             *
+             * 与 LLM 的 llmSaveProviderConn 同一个理由：编辑「非当前」运营商时
+             * 不能落到 currentApiId 那一家去。地址改了分组 key 就变了，
+             * 所以把新 key 回给页面，让它继续停在看得见的这一家上。
+             */
+            "imgSaveProviderConn" -> {
+                val key = a.optString("key")
+                val group = imageApisOfKey(apis, key)
+                if (group.isEmpty()) {
+                    reply.put("error", "运营商不存在或已被删除")
+                } else {
+                    for (x in group) {
+                        patchConnection(x, a)
+                        if (a.has("name")) x.put("name", a.optString("name").trim())
+                    }
+                    reply.put("key", imageKey(group[0]))
+                    reply.put("updated", group.size)
+                }
+            }
+            /** 往指定生图运营商批量加模型，不走 currentApiId。 */
+            "imgAddModelsToProvider" -> {
+                val key = a.optString("key")
+                val group = imageApisOfKey(apis, key)
+                if (group.isEmpty()) {
+                    reply.put("error", "运营商不存在或已被删除")
+                } else {
+                    val seed = group[0]
+                    if (a.has("baseUrl") || a.has("apiKey")) patchConnection(seed, a)
+                    val baseUrl = seed.optString("baseUrl")
+                    val models = stringArray(a.optJSONArray("models"))
+                    var added = 0
+                    var skipped = 0
+                    var anchorEmpty = seed.optString("model").isEmpty() && seed.optString("novelaiModel").isEmpty()
+                    for (m in models) {
+                        val exists = (0 until apis.length()).any {
+                            val x = apis.optJSONObject(it)
+                            x?.optString("baseUrl") == baseUrl &&
+                                (x.optString("model").ifEmpty { x.optString("novelaiModel") }) == m
+                        }
+                        if (exists) { skipped++; continue }
+                        if (anchorEmpty) {
+                            seed.put("model", m)
+                            anchorEmpty = false
+                        } else {
+                            val x = JSONObject(seed.toString())
+                            x.put("_uid", newId("imgapi")).put("name", m).put("model", m)
+                            apis.put(x)
+                        }
+                        added++
+                    }
+                    reply.put("added", added).put("skipped", skipped)
+                }
+            }
             "imgUseApi" -> {
                 val uid = a.optString("uid")
                 // 场景隔离：标签生图换运营商/模型不该把对话生图跟着改掉，反之亦然。
@@ -954,6 +1024,9 @@ object ConnectionStore {
                 if (a.has("info")) slot.put("info", a.optDouble("info", 0.7))
                 reply.put("ok", true)
             }
+            // 登记在 LOCAL_COMMANDS 却没实现，属于代码 bug；直接回错，
+            // 免得页面收到一个假的 ok:true 以为改成功了。
+            else -> reply.put("error", "未知命令：$cmd")
         }
         normalize()
         persist()
@@ -997,6 +1070,25 @@ object ConnectionStore {
             val a = apis.optJSONObject(i) ?: continue
             if (a.optString("engine").isEmpty()) a.put("engine", engineOf(a))
         }
+        // 当前项必须真实存在：读盘与每条写命令后都过一遍，渲染/生成侧就不用
+        // 再写「找不到就取第一条」的兜底（那种兜底会让坏状态一直藏着）。
+        val configs = arr(llm, "configs")
+        if (findByUid(configs, llm.optString("currentConfigId")) == null) {
+            val disabled = disabledLlmKeys(llm)
+            var next = ""
+            for (i in 0 until configs.length()) {
+                val c = configs.optJSONObject(i) ?: continue
+                if (llmKey(c) !in disabled) { next = c.optString("_uid"); break }
+            }
+            llm.put("currentConfigId", next)
+        }
+        if (findByUid(apis, image.optString("currentApiId")) == null) {
+            image.put("currentApiId", apis.optJSONObject(0)?.optString("_uid") ?: "")
+        }
+        val styles = arr(image, "styleConfigs")
+        if (findByUid(styles, image.optString("currentStyleId")) == null) {
+            image.put("currentStyleId", styles.optJSONObject(0)?.optString("_uid") ?: "")
+        }
     }
 
     /**
@@ -1021,15 +1113,14 @@ object ConnectionStore {
         runCatching { file?.writeText(doc.toString()) }
     }
 
+    /** currentConfigId 的有效性由 normalize() 保证，这里只做精确查找。 */
     private fun currentLlm(): JSONObject? {
         val llm = doc.optJSONObject("llm") ?: return null
         return findByUid(arr(llm, "configs"), llm.optString("currentConfigId"))
-            ?: arr(llm, "configs").optJSONObject(0)
     }
 
     private fun currentStyle(image: JSONObject): JSONObject? =
         findByUid(arr(image, "styleConfigs"), image.optString("currentStyleId"))
-            ?: arr(image, "styleConfigs").optJSONObject(0)
 
     private fun addLlmConfig(name: String): JSONObject {
         val llm = doc.optJSONObject("llm")!!
@@ -1170,6 +1261,16 @@ object ConnectionStore {
     private fun imageKey(a: JSONObject): String {
         val u = a.optString("baseUrl").trim().trimEnd('/')
         return u.ifEmpty { "__own__:" + a.optString("_uid") }
+    }
+
+    /** 按分组 key 取出这家生图运营商下的全部接口（顺序与落盘一致）。 */
+    private fun imageApisOfKey(apis: JSONArray, key: String): List<JSONObject> {
+        val out = ArrayList<JSONObject>()
+        for (i in 0 until apis.length()) {
+            val a = apis.optJSONObject(i) ?: continue
+            if (imageKey(a) == key) out.add(a)
+        }
+        return out
     }
 
     private fun hostOf(url: String): String = runCatching {

@@ -177,4 +177,53 @@ class ConnectionStoreProviderTest {
         }
         assertTrue(r.optString("error").isNotEmpty())
     }
+
+    /**
+     * 对话页右上角的模型 chip 曾经读 `modelName`（即 `_name` 别名），
+     * 网页侧新建模型时别名默认叫「新模型」，于是切后台再回来就显示「新模型」，
+     * 而请求一直走真实 model。现在快照只暴露真实 model。
+     */
+    @Test
+    fun `getConfig 只回真实模型 id，不再带别名 modelName`() {
+        val keyA = twoProviders()
+        apply("llmAddModelsToProvider") {
+            put("key", keyA)
+            put("models", JSONArray().put("gemini-3.1-pro"))
+        }
+        val cfg = ConnectionStore.snapshot("getConfig")!!
+        val uid = cfg.optJSONArray("providers")!!.optJSONObject(0)!!
+            .optJSONArray("models")!!.optJSONObject(0)!!.optString("uid")
+        apply("useModel") { put("uid", uid) }
+
+        val after = ConnectionStore.snapshot("getConfig")!!
+        assertEquals("gemini-3.1-pro", after.optString("model"))
+        assertFalse("别名会让人误以为换了模型", after.has("modelName"))
+    }
+
+    @Test
+    fun `currentConfigId 失效时修复到第一个启用项`() {
+        val keyA = twoProviders()
+        apply("llmAddModelsToProvider") { put("key", keyA).put("models", JSONArray().put("m-1")) }
+        val allUids = providers().flatMap { p ->
+            val ms = p.optJSONArray("models") ?: JSONArray()
+            (0 until ms.length()).map { ms.optJSONObject(it)!!.optString("uid") }
+        }
+        val doc = ConnectionStore::class.java.getDeclaredField("doc").apply { isAccessible = true }
+            .get(ConnectionStore) as JSONObject
+        doc.optJSONObject("llm")!!.put("currentConfigId", "ghost-uid")
+
+        // 任意一条写命令都会走到 normalize()
+        apply("saveParams") { put("params", JSONObject()) }
+        val repaired = ConnectionStore.snapshot("getConfig")!!.optString("uid")
+        assertTrue("必须修复成一个真实存在的模型", repaired in allUids)
+    }
+
+    @Test
+    fun `全部停用时当前模型留空，不偷偷复活停用项`() {
+        twoProviders()
+        val ps = providers()
+        apply("llmSetProviderEnabled") { put("key", ps[0].optString("key")).put("enabled", false) }
+        apply("llmSetProviderEnabled") { put("key", ps[1].optString("key")).put("enabled", false) }
+        assertEquals("", ConnectionStore.snapshot("getConfig")!!.optString("uid"))
+    }
 }

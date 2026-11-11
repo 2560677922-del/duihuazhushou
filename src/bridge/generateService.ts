@@ -724,7 +724,6 @@ function apiConfigSummary(): string {
     baseUrl: cur?.baseUrl || '',
     apiKey: cur?.apiKey || '',
     model: cur?.model || '',
-    modelName: cur?._name || '',
     uid: cur?._uid || '',
     params: {
       temperature: cur?.temperature ?? 0.8,

@@ -1,11 +1,17 @@
 package com.dbpg.duihuazhushou.settings
 
+import android.app.Activity
+import android.app.Dialog
 import android.content.Context
+import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.view.Window
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -183,4 +189,58 @@ internal class ProviderUi(private val ctx: Context) {
     fun itemMargin(): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             .apply { topMargin = dp(10) }
+
+    /**
+     * 主题化表单弹窗：LLM 与生图两个运营商页共用。
+     *
+     * 不用系统 AlertDialog 的 setView，是因为深色皮肤下它会冒出一块系统白底；
+     * 这里连弹窗底板都走 ThemeTokens。
+     */
+    fun formDialog(
+        activity: Activity,
+        title: String,
+        fields: List<Pair<String, EditText>>,
+        positive: String,
+        onOk: () -> Unit,
+    ) {
+        val box = card(20f, 18)
+        box.addView(text(title, 17f, tk.text, bold = true))
+        for ((label, input) in fields) {
+            val tv = text(label, 12f, tk.textDim)
+            tv.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(14) }
+            box.addView(tv)
+            box.addView(input)
+        }
+        val row = horizontal().apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(18) }
+        }
+        val cancel = soft("取消")
+        val ok = primary(positive)
+        row.addView(cancel)
+        row.addView(View(ctx).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
+        row.addView(ok)
+        box.addView(row)
+
+        val d = Dialog(activity)
+        d.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        box.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+        d.setContentView(box)
+        d.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        d.window?.setLayout(
+            activity.resources.displayMetrics.widthPixels - dp(48),
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+        cancel.setOnClickListener { d.dismiss() }
+        ok.setOnClickListener { onOk(); d.dismiss() }
+        d.show()
+    }
 }

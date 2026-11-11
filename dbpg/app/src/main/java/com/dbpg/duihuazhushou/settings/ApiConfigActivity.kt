@@ -4,11 +4,8 @@ import com.dbpg.duihuazhushou.Insets
 
 import android.app.Activity
 import android.app.AlertDialog
-import android.app.Dialog
 import android.content.res.ColorStateList
-import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
@@ -16,8 +13,6 @@ import android.text.TextUtils
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
-import android.view.ViewGroup
-import android.view.Window
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -96,7 +91,6 @@ class ApiConfigActivity : Activity() {
     private var tab = 0
     private var search = ""
     private var keyVisible = false
-    private var lastModels: List<String> = emptyList()
 
     /** 用户是否动过详情表单：刷新时别把正在打的字冲掉。 */
     private var userEditedConn = false
@@ -259,29 +253,25 @@ class ApiConfigActivity : Activity() {
         if (listStatus.text?.toString().orEmpty().startsWith("引擎") ||
             detailStatus.text?.toString().orEmpty().startsWith("引擎")
         ) setStatus("")
-        try {
-            providers = obj.optJSONArray("providers") ?: JSONArray()
-            if (!userEditedParams) {
-                val params = obj.optJSONObject("params") ?: JSONObject()
-                fillingConn = true
-                setIfDiffers(paramTemp, num(params, "temperature"))
-                setIfDiffers(paramMax, num(params, "maxTokens"))
-                setIfDiffers(paramCtx, num(params, "contextWindow"))
-                setIfDiffers(paramLook, num(params, "userLookbackTokens"))
-                fillingConn = false
-            }
-            val key = currentKey
-            if (key != null && findProvider(key) == null) {
-                // 这家被删了（可能从别的入口），退回列表
-                showList()
-            } else {
-                paintTabs()
-                if (key != null) fillDetail(findProvider(key)!!)
-            }
-            renderList()
-        } catch (t: Throwable) {
-            setStatus("配置读取失败：${t.message}")
+        providers = obj.optJSONArray("providers") ?: JSONArray()
+        if (!userEditedParams) {
+            val params = obj.optJSONObject("params") ?: JSONObject()
+            fillingConn = true
+            setIfDiffers(paramTemp, num(params, "temperature"))
+            setIfDiffers(paramMax, num(params, "maxTokens"))
+            setIfDiffers(paramCtx, num(params, "contextWindow"))
+            setIfDiffers(paramLook, num(params, "userLookbackTokens"))
+            fillingConn = false
         }
+        val key = currentKey
+        if (key != null && findProvider(key) == null) {
+            // 这家被删了（可能从别的入口），退回列表
+            showList()
+        } else {
+            paintTabs()
+            if (key != null) fillDetail(findProvider(key)!!)
+        }
+        renderList()
     }
 
     private fun num(o: JSONObject, key: String): String {
@@ -451,11 +441,7 @@ class ApiConfigActivity : Activity() {
         return if (s.isEmpty()) "?" else s.substring(0, 1).uppercase()
     }
 
-    private fun hostOf(url: String): String = runCatching {
-        val s = url.trim()
-        if (s.isEmpty()) return ""
-        java.net.URI(s).host ?: ""
-    }.getOrDefault("")
+    private fun hostOf(url: String): String = android.net.Uri.parse(url.trim()).host.orEmpty()
 
     // ───────────────────────────── 列表渲染 ─────────────────────────────
 
@@ -656,7 +642,6 @@ class ApiConfigActivity : Activity() {
     // ───────────────────────────── 菜单 / 对话框 ─────────────────────────────
 
     private fun showProviderMenu(p: JSONObject) {
-        val key = p.optString("key")
         val models = p.optJSONArray("models") ?: JSONArray()
         AlertDialog.Builder(this)
             .setTitle(displayName(p))
@@ -669,7 +654,6 @@ class ApiConfigActivity : Activity() {
             }
             .setNegativeButton("取消", null)
             .show()
-        if (key.isEmpty()) toast("这条运营商数据缺少 key，请刷新后重试")
     }
 
     /** 多选删除：一条 llmRemoveModels 命令搞定，删前二次确认。 */
@@ -721,67 +705,13 @@ class ApiConfigActivity : Activity() {
             .show()
     }
 
-    /**
-     * 自定义表单弹窗：用 ProviderUi 构造，连弹窗底板都走主题色板，
-     * 深色皮肤下不会冒出一块系统白。
-     */
-    private fun showFormDialog(
-        title: String,
-        fields: List<Pair<String, EditText>>,
-        positive: String,
-        onOk: () -> Unit,
-    ) {
-        val ui = ProviderUi(this)
-        val box = ui.card(20f, 18)
-        box.addView(ui.text(title, 17f, ui.tk.text, bold = true))
-        for ((label, input) in fields) {
-            val tv = ui.text(label, 12f, ui.tk.textDim)
-            tv.layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = ui.dp(14) }
-            box.addView(tv)
-            box.addView(input)
-        }
-        val row = ui.horizontal().apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = ui.dp(18) }
-        }
-        val cancel = ui.soft("取消")
-        val spacer = View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
-        }
-        val ok = ui.primary(positive)
-        row.addView(cancel)
-        row.addView(spacer)
-        row.addView(ok)
-        box.addView(row)
-
-        val d = Dialog(this)
-        d.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        box.layoutParams = ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        )
-        d.setContentView(box)
-        d.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        d.window?.setLayout(
-            resources.displayMetrics.widthPixels - ui.dp(48),
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        )
-        cancel.setOnClickListener { d.dismiss() }
-        ok.setOnClickListener { onOk(); d.dismiss() }
-        d.show()
-    }
-
     private fun promptNewProvider() {
         val ui = ProviderUi(this)
         val name = ui.input("如「玄猫中转」").also { it.inputType = InputType.TYPE_CLASS_TEXT }
         val url = ui.input("https://api.example.com/v1")
         val key = ui.input("sk-…", password = true)
-        showFormDialog(
+        ui.formDialog(
+            this,
             "新建运营商",
             listOf("名称（可留空，用域名）" to name, "请求地址（Base URL）" to url, "API 密钥" to key),
             "创建",
@@ -789,7 +719,7 @@ class ApiConfigActivity : Activity() {
             val u = url.text?.toString()?.trim().orEmpty()
             if (u.isEmpty()) {
                 setStatus("地址不能为空")
-                return@showFormDialog
+                return@formDialog
             }
             command(
                 "llmAddProvider",
@@ -808,11 +738,11 @@ class ApiConfigActivity : Activity() {
             it.setText(p.optString("note"))
             it.setSelection(it.text?.length ?: 0)
         }
-        showFormDialog("重命名运营商", listOf("名称" to name), "保存") {
+        ui.formDialog(this, "重命名运营商", listOf("名称" to name), "保存") {
             val value = name.text?.toString()?.trim().orEmpty()
             if (value.isEmpty()) {
                 toast("名字不能为空")
-                return@showFormDialog
+                return@formDialog
             }
             command("llmRenameProvider", JSONObject().put("key", p.optString("key")).put("name", value))
         }
@@ -893,7 +823,6 @@ class ApiConfigActivity : Activity() {
                             val m = arr.optString(i)
                             if (m.isNotBlank()) models.add(m)
                         }
-                        lastModels = models
                         when {
                             models.isEmpty() -> setStatus("该地址返回了空模型列表")
                             else -> {

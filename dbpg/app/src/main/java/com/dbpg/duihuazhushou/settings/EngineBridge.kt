@@ -168,7 +168,11 @@ object EngineBridge {
         val cmd = body.optString("cmd")
         if (cmd in ConnectionStore.LOCAL_COMMANDS) {
             val extra = ConnectionStore.apply(cmd, body)
-            val reply = JSONObject(extra.toString()).put("kind", cmd).put("ok", true)
+            // 本地命令失败时 ConnectionStore 会回 error；别再把 ok 写死成 true，
+            // 否则页面会把「没改成」当成「改成了」（世界书导入就踩过这个坑）。
+            val reply = JSONObject(extra.toString())
+                .put("kind", cmd)
+                .put("ok", !extra.has("error"))
             NativeBridge.fireLocal(reply.toString())
             pushToEngine()
             return

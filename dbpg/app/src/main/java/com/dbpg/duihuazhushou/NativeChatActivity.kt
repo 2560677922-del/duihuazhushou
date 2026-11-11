@@ -1041,7 +1041,10 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     private fun refreshModelChip() {
         EngineBridge.fetch(this, "getConfig") { obj ->
             if (obj == null || isFinishing) return@fetch
-            val name = obj.optString("modelName").ifBlank { obj.optString("model") }
+            // 只认真实 model id。以前读的是 _name 别名（网页侧新加模型时默认叫
+            // 「新模型」），切后台回来 chip 就会从 gemini3.1p 变成「新模型」，
+            // 而请求一直走 model —— 显示和真实状态脱节，看着像换了模型。
+            val name = obj.optString("model")
             modelChip.text = if (name.isBlank()) "模型 ▾" else "$name ▾"
         }
     }
