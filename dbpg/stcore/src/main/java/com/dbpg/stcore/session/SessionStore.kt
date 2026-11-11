@@ -145,10 +145,6 @@ class SessionStore(private val root: File) {
         writeIndex(out)
         return out
     }
-
-    @Synchronized
-    fun rebuildIndexSorted(): List<SessionIndexEntry> = rebuildIndex().sortedByDescending { it.updatedAt }
-
     // ------------------------------------------------------------ 内部
 
     private fun ensureIndex(): MutableList<SessionIndexEntry> {

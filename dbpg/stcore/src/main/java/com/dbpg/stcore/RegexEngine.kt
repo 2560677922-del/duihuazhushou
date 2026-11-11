@@ -162,14 +162,6 @@ private fun inDepthRange(s: RawScript, depthFromEnd: Int): Boolean {
     return true
 }
 
-private fun numOrNull(v: Any?): Int? {
-    return when (v) {
-        null -> null
-        is Int -> v
-        is String -> if (v.isEmpty()) null else v.toIntOrNull()
-        else -> null
-    }
-}
 
 /**
  * 兼容两种字段命名（camelCase / snake_case）地构造 RawScript。

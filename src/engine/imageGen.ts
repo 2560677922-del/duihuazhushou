@@ -443,41 +443,15 @@ export function composePrompt(
   return out.join(', ');
 }
 
-/** 去掉字符串里的重复标签（保留原有顺序与大小写） */
-export function dedupeTags(value: string): string {
-  return composePrompt([value]);
-}
-
-/** 归一化 baseUrl，避免出现 /v1/v1 或重复端点。导出供对话接口复用。 */
-export function trimEndpoint(url: string): string {
-  return url
-    .trim()
-    .replace(/\/+$/, '')
-    .replace(/\/(chat\/completions|images\/generations|models)$/i, '')
-    .replace(/\/+$/, '');
-}
-
-// 端点探测结果缓存：把“哪条候选路径真的能用”记下来，避免每次都试错
+// 生成成功后把可用端点记下来，同一次会话内不用重复试错
 const endpointCache = new Map<string, string>();
-
-/** 已确认可用的端点（由设置页的「测试连接」写入） */
-export function rememberEndpoint(key: string, url: string) {
-  endpointCache.set(key, url);
-}
-
-export function forgetEndpoint(key: string) {
-  endpointCache.delete(key);
-}
 
 function resolveNovelAIGenerateUrls(config: ImageGenConfig): string[] {
   if (config.endpoint && config.endpoint.trim()) {
     const exact = config.endpoint.trim();
     return [exact, ...candidateNovelAIEndpoints(config.baseUrl || '').filter((c) => c !== exact)];
   }
-  const key = `nai:${config.baseUrl || 'official'}`;
-  const cached = endpointCache.get(key);
-  const cands = candidateNovelAIEndpoints(config.baseUrl || '');
-  return cached ? [cached, ...cands.filter((c) => c !== cached)] : cands;
+  return candidateNovelAIEndpoints(config.baseUrl || '');
 }
 
 function resolveOpenAIImageUrls(config: ImageGenConfig): string[] {
@@ -486,85 +460,8 @@ function resolveOpenAIImageUrls(config: ImageGenConfig): string[] {
     const exact = config.endpoint.trim();
     return [exact, ...candidateImageEndpoints(config.baseUrl || '').filter((c) => c !== exact)];
   }
-  const key = `openai-img:${config.baseUrl || ''}`;
-  const cached = endpointCache.get(key);
-  const cands = candidateImageEndpoints(config.baseUrl || '');
-  return cached ? [cached, ...cands.filter((c) => c !== cached)] : cands;
+  return candidateImageEndpoints(config.baseUrl || '');
 }
-
-/** 把一次成功探测到的端点记下来，供设置页回存配置 */
-export function getResolvedEndpoint(baseUrl: string): string | undefined {
-  return (
-    endpointCache.get(`openai-img:${baseUrl || ''}`) ||
-    endpointCache.get(`nai:${baseUrl || 'official'}`)
-  );
-}
-
-/**
- * 只测一个地址是否可用（用于设置页的端点自测）。
- * 用一个极小的请求，避免浪费额度。
- */
-export async function probeEndpoint(
-  url: string,
-  config: ImageGenConfig,
-): Promise<{ ok: boolean; status?: number; message: string }> {
-  try {
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: authHeaders(config),
-      body: JSON.stringify(
-        config.provider === 'novelai-relay'
-          ? buildNovelAIRequest({
-              prompt: 'test',
-              negativePrompt: 'lowres',
-              model: config.novelaiModel || config.model || 'nai-diffusion-4-5-full',
-              width: 832,
-              height: 1216,
-              steps: 1,
-              scale: 6,
-              sampler: config.sampler || 'k_euler_ancestral',
-              seed: 1,
-            })
-          : {
-              model: config.model || config.novelaiModel || 'nai-diffusion-4-5-full',
-              prompt: 'test',
-              negative_prompt: 'lowres',
-              width: 832,
-              height: 1216,
-              steps: 1,
-              scale: 6,
-              sampler: config.sampler || 'k_euler_ancestral',
-              seed: 1,
-            },
-      ),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => '');
-      return {
-        ok: false,
-        status: resp.status,
-        message: `HTTP ${resp.status} ${text.slice(0, 140)}`,
-      };
-    }
-
-    try {
-      const dataUrl = await extractImageFromResponse(resp);
-      // 顺手记下可用端点
-      endpointCache.set(`openai-img:${config.baseUrl || ''}`, url);
-      return { ok: true, status: resp.status, message: `可用（返回图片 ${dataUrl.length} 字符）` };
-    } catch (e) {
-      return {
-        ok: false,
-        status: resp.status,
-        message: `HTTP 200 但不是图片接口：${e instanceof Error ? e.message : String(e)}`,
-      };
-    }
-  } catch (e) {
-    return { ok: false, message: `连不上：${e instanceof Error ? e.message : String(e)}` };
-  }
-}
-
 
 function authHeaders(config: ImageGenConfig): Record<string, string> {
   const headers: Record<string, string> = {
@@ -1214,43 +1111,6 @@ export async function fetchModels(config: {
   );
 }
 
-/**
- * 连通性测试：真的发一次极小的生成请求，确认地址 / 密钥 / 模型三者都能用。
- * 供设置页「测试连接」按钮调用。
- */
-export async function testImageConnection(config: ImageGenConfig): Promise<{
-  ok: boolean;
-  endpoint?: string;
-  message: string;
-}> {
-  const tiny = {
-    ...config,
-    width: 832,
-    height: 1216,
-    steps: 1,
-    seed: 1,
-    qualityTags: '',
-    artistTags: '',
-    referenceImage: undefined,
-    promptTemplate: undefined,
-  };
-
-  try {
-    const result = await generateImage(
-      null,
-      tiny,
-      { contextMessages: [], skipOptimization: true, manualPrompt: 'test, 1girl' },
-    );
-    return {
-      ok: true,
-      endpoint: endpointCache.get(`openai-img:${config.baseUrl || ''}`) ||
-        endpointCache.get(`nai:${config.baseUrl || 'official'}`),
-      message: `连接成功，已生成 1 张测试图（${result.provider} / ${result.model}）`,
-    };
-  } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : String(e) };
-  }
-}
 
 
 /**

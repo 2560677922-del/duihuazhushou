@@ -268,22 +268,6 @@ object SessionEditor {
         )
     }
 
-    /** 整会话复制（不改内容，纯粹开一条并行线）。 */
-    fun duplicate(
-        doc: SessionDoc,
-        newSessionId: String,
-        newActionId: (Int) -> String,
-        titleSuffix: String = "（副本）",
-        now: Long = System.currentTimeMillis(),
-    ): SessionDoc = SessionDoc(
-        id = newSessionId,
-        title = doc.title + titleSuffix,
-        sceneDescription = doc.sceneDescription,
-        actions = doc.actions.mapIndexed { i, a -> a.copy(id = newActionId(i)) },
-        createdAt = now,
-        updatedAt = now,
-    )
-
     // ------------------------------------------------------------ 内部
 
     /**

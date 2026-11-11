@@ -68,10 +68,6 @@ fun stripImageMarkers(text: String): String {
         .replace(Regex("\\n{3,}"), "\n\n")
 }
 
-fun hasImageMarker(text: String): Boolean {
-    if (text.isEmpty()) return false
-    return IMAGE_MARKER_RE.containsMatchIn(text)
-}
 
 sealed class ContentBlock {
     data class Text(val text: String, val index: Int) : ContentBlock()

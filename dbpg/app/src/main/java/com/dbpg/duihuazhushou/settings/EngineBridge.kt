@@ -122,20 +122,6 @@ object EngineBridge {
         mainHandler.postDelayed({ fetchInternal(activity, fn, tries + 1, cb) }, READY_RETRY_MS)
     }
 
-    /** 调一个同步取值函数（可带一个字符串参数），结果在主线程回调。 */
-    fun fetchArg(activity: Activity, fn: String, arg: String, cb: (JSONObject?) -> Unit) {
-        val w = MainActivity.getWebView()
-        if (w == null) {
-            cb(null)
-            return
-        }
-        w.evaluateJavascript(
-            "window.__dhpApi ? window.__dhpApi.$fn(${JSONObject.quote(arg)}) : null",
-        ) { r ->
-            activity.runOnUiThread { cb(parse(r)) }
-        }
-    }
-
     /**
      * 不带 Activity 的同步取值（后台服务用）。
      *

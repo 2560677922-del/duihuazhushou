@@ -30,7 +30,6 @@ import com.dbpg.stcore.session.SessionEditor
 import com.dbpg.stcore.session.SessionHistory
 import com.dbpg.stcore.session.SummaryBlock
 import com.dbpg.stcore.session.SummaryPlanner
-import com.dbpg.stcore.isFullHtmlDocument
 import com.dbpg.stcore.stripHtmlNoise
 import com.dbpg.stcore.stripImageMarkers
 import com.dbpg.stcore.transformForDisplayRich
@@ -1043,14 +1042,6 @@ class ChatController(
         render(false)
     }
 
-    fun deleteAction(actionId: String) {
-        val d = doc ?: return
-        val next = SessionEditor.remove(d, actionId)
-        doc = next
-        SessionRepo.save(next)
-        render(false)
-    }
-
     /**
      * 从这一轮分支：复制到这一轮（含）成新会话，原会话不动。
      *
@@ -1284,10 +1275,6 @@ class ChatController(
         GenBridge.release(this)
         clearGenState()
     }
-
-    /** 供界面取某条消息的图片（点图放大用）。 */
-    fun imagePathsOf(item: ChatItem): List<String> = item.imagePaths
-
     /**
      * 摘掉消息里对某张已删本地图片的引用。
      *

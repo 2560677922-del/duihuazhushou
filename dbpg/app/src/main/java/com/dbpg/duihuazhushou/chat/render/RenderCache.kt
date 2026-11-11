@@ -90,26 +90,6 @@ class RenderCache private constructor(context: Context) {
         }
     }
 
-    /** 只更新高度（卡片量完高度后回写，不重存正文）。 */
-    @Synchronized
-    fun putHeight(sessionId: String, key: RenderKey, heightPx: Int) {
-        val k = cacheKey(sessionId, key)
-        memory.get(k)?.let { if (it.heightPx != heightPx) memory.put(k, it.copy(heightPx = heightPx)) }
-        val db = runCatching { helper.writableDatabase }.getOrNull() ?: return
-        runCatching {
-            val cv = ContentValues().apply { put("height_px", heightPx) }
-            db.update(TABLE, cv, "session_id=? AND key_hash=?", arrayOf(sessionId, key.stable()))
-        }
-    }
-
-    /** 删会话时清掉它的全部产物（分支/删除/导入覆盖都要调）。 */
-    @Synchronized
-    fun invalidateSession(sessionId: String) {
-        memory.evictAll()
-        val db = runCatching { helper.writableDatabase }.getOrNull() ?: return
-        runCatching { db.delete(TABLE, "session_id=?", arrayOf(sessionId)) }
-    }
-
     /**
      * 配置变了（换正则/预设/变量/字体）。
      *
@@ -129,16 +109,6 @@ class RenderCache private constructor(context: Context) {
      */
     @Synchronized
     fun clearForLookChange() = clearAll()
-
-    /** 当前占用（调试/设置页显示用）。 */
-    @Synchronized
-    fun stats(): Pair<Int, Long> {
-        val db = runCatching { helper.readableDatabase }.getOrNull() ?: return 0 to 0L
-        return runCatching {
-            db.rawQuery("SELECT COUNT(*), COALESCE(SUM(LENGTH(plain)+LENGTH(COALESCE(html,''))),0) FROM $TABLE", null)
-                .use { c -> if (c.moveToFirst()) c.getInt(0) to c.getLong(1) else 0 to 0L }
-        }.getOrDefault(0 to 0L)
-    }
 
     private fun cacheKey(sessionId: String, key: RenderKey): String = "$sessionId|${key.stable()}"
 

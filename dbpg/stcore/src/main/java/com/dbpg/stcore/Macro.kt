@@ -140,5 +140,3 @@ private fun expandMacros(text: String, ctx: MacroContext, keepUnknown: Boolean):
     }
 }
 
-fun applyMacrosToMessages(msgs: List<ChatMessage>, ctx: MacroContext): List<ChatMessage> =
-    msgs.map { it.copy(content = applyMacros(it.content, ctx)) }

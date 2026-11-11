@@ -732,8 +732,6 @@ class NativeImageGenActivity : Activity() {
         sizeValue.text = "$curWidth × $curHeight"
     }
 
-    /** 选择器/风格变更后刷新（放在 onResume 与动作完成后调用）。 */
-    private fun refreshSelectors() = loadSelectors()
 
     private fun showResults(images: List<ImageStore.StoredImage>) {
         results.removeAllViews()

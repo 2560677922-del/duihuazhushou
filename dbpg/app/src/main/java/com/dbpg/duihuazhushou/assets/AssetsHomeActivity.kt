@@ -1373,51 +1373,6 @@ class AssetsHomeActivity : Activity() {
 
     // ------------------------------------------------------------ 通用控件
 
-    private fun assetRow(
-        data: JSONObject,
-        titleOf: (JSONObject) -> String,
-        currentOf: (JSONObject) -> Boolean,
-        currentLabel: String,
-        actionLabel: String,
-        subOf: (JSONObject) -> String = { "" },
-        onUse: () -> Unit,
-        onExport: () -> Unit,
-    ): View {
-        val current = currentOf(data)
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = getDrawable(R.drawable.bg_card)
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(8)
-            setOnClickListener { onUse() }
-            setOnLongClickListener { onExport(); true }
-        }
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(TextView(this).apply {
-            text = (if (current) "✓ " else "") + titleOf(data)
-            setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF1A2230.toInt())
-            textSize = 14f
-            if (current) setTypeface(typeface, Typeface.BOLD)
-        })
-        val sub = subOf(data)
-        if (sub.isNotBlank() && sub != titleOf(data)) {
-            col.addView(TextView(this).apply {
-                text = sub
-                setTextColor(0xFF66707F.toInt())
-                textSize = 11f
-                setPadding(0, dp(2), 0, 0)
-            })
-        }
-        card.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        card.addView(TextView(this).apply {
-            text = if (current) currentLabel else actionLabel
-            setTextColor(if (current) 0xFF2F66D8.toInt() else 0xFF66707F.toInt())
-            textSize = 12f
-        })
-        return card
-    }
-
     private fun actionCard(title: String, sub: String, onClick: () -> Unit): View {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL

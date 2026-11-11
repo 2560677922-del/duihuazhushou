@@ -78,19 +78,4 @@ object StreamPipeline {
         return if (streaming) out + "▍" else out
     }
 
-    /**
-     * 判断一段美化配置能不能安全地用于流式。
-     *
-     * 只做保守判断：规则里出现跨段特征（整段匹配、DOTALL、`[\s\S]`、包裹标签）
-     * 就认为不安全。设置页里的"流式美化"开关只是"允许尝试"，最终仍由这里守门。
-     */
-    fun isScriptSafeForStream(findRegex: String, replace: String): Boolean {
-        if (findRegex.isEmpty()) return false
-        val crossSegment = listOf("[\\s\\S]", "(?s)", "\\A", "\\z", "^/", "/s")
-        if (crossSegment.any { findRegex.contains(it) }) return false
-        // 替换串是"整篇包壳"（生成 <style>/<div> 外壳）时，半截文本会产出坏 HTML
-        if (replace.contains("<style", true) || replace.contains("<script", true)) return false
-        if (replace.contains("[\\s\\S]")) return false
-        return true
-    }
 }

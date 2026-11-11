@@ -107,25 +107,6 @@ object SessionHistory {
     fun userInputOf(doc: SessionDoc, actionId: String): String =
         clean(doc.actions.find { it.id == actionId }?.user.orEmpty())
 
-    /** 最后一轮的 user 文本（继续对话时可能是"重发上一条"）。 */
-    fun lastUserInput(doc: SessionDoc): String =
-        doc.actions.lastOrNull()?.let { clean(it.user) }.orEmpty()
-
-    /**
-     * 当前这一轮 AI 的**完整**正文（含标记），用来做显示和自动配图。
-     * 与 [export] 不同：这里保留 `[[IMG: ...]]`，因为界面要按标记落图。
-     */
-    fun aiTextOf(doc: SessionDoc, actionId: String): String =
-        doc.actions.find { it.id == actionId }?.ai.orEmpty()
-
-    /**
-     * 粗估这段历史有多少字符。
-     *
-     * 不引 tokenizer：只用来判断"要不要提示用户上下文可能超了"，
-     * 精确计数是 web assembler 的事（它有真 tokenizer）。
-     */
-    fun approximateLength(messages: List<PromptMessage>): Int =
-        messages.sumOf { it.content.length + 4 }
 
     // ------------------------------------------------------------ 内部
 

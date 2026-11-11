@@ -116,19 +116,6 @@ internal class ProviderUi(private val ctx: Context) {
         setPadding(dp(9), dp(3), dp(9), dp(3))
     }.keep()
 
-    /** 分段 Tab：选中是主题实底 + onAccent 文字，未选中是次级面板。 */
-    fun pill(label: String, selected: Boolean): TextView = TextView(ctx).apply {
-        text = label
-        textSize = 13f
-        gravity = Gravity.CENTER
-        setTypeface(typeface, if (selected) Typeface.BOLD else Typeface.NORMAL)
-        setTextColor(if (selected) tk.onAccent else tk.textDim)
-        background = shape(if (selected) tk.accent else tk.panelSoft, 999f)
-        setPadding(dp(10), dp(9), dp(10), dp(9))
-        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            .apply { marginEnd = dp(8) }
-    }.keep()
-
     /** 主按钮（可带左侧矢量图标）。 */
     fun primary(label: String, iconRes: Int = 0): TextView = TextView(ctx).apply {
         text = label

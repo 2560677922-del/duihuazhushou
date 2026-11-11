@@ -49,6 +49,12 @@ object ConnectionStore {
 
     private const val FILE_NAME = "connection_store.json"
 
+    /** 生成参数默认值：新模型落库时写入，读快照缺字段时也用它。 */
+    const val DEFAULT_MAX_TOKENS = 8192
+    const val DEFAULT_CONTEXT_WINDOW = 1_000_000
+    const val DEFAULT_LOOKBACK_TOKENS = 200_000
+    const val DEFAULT_TEMPERATURE = 0.8
+
     /** 配置类的三个同步取值函数：改走本地，不再问引擎。 */
     val LOCAL_FETCH = setOf("getConfig", "getImageConfig", "getImageStyle")
 
@@ -170,10 +176,10 @@ object ConnectionStore {
             .put("baseUrl", cur.optString("baseUrl"))
             .put("apiKey", cur.optString("apiKey"))
             .put("model", cur.optString("model"))
-            .put("temperature", cur.optDouble("temperature", 0.8))
-            .put("maxTokens", cur.optInt("maxTokens", 8192))
-            .put("contextWindow", cur.optInt("contextWindow", 1000000))
-            .put("userLookbackTokens", cur.optInt("userLookbackTokens", 200000))
+            .put("temperature", cur.optDouble("temperature", DEFAULT_TEMPERATURE))
+            .put("maxTokens", cur.optInt("maxTokens", DEFAULT_MAX_TOKENS))
+            .put("contextWindow", cur.optInt("contextWindow", DEFAULT_CONTEXT_WINDOW))
+            .put("userLookbackTokens", cur.optInt("userLookbackTokens", DEFAULT_LOOKBACK_TOKENS))
     }
 
     /**
@@ -246,7 +252,7 @@ object ConnectionStore {
                         .put("model", c.optString("model"))
                         .put("name", c.optString("_name"))
                         .put("temperature", c.optDouble("temperature", 0.8))
-                        .put("maxTokens", c.optInt("maxTokens", 8192))
+                        .put("maxTokens", c.optInt("maxTokens", DEFAULT_MAX_TOKENS))
                         .put("current", c.optString("_uid") == curId),
                 )
             }
@@ -270,10 +276,10 @@ object ConnectionStore {
             .put("uid", cur?.optString("_uid") ?: "")
             .put(
                 "params", JSONObject()
-                    .put("temperature", cur?.optDouble("temperature", 0.8) ?: 0.8)
-                    .put("maxTokens", cur?.optInt("maxTokens", 8192) ?: 8192)
-                    .put("contextWindow", cur?.optInt("contextWindow", 1000000) ?: 1000000)
-                    .put("userLookbackTokens", cur?.optInt("userLookbackTokens", 200000) ?: 200000),
+                    .put("temperature", cur?.optDouble("temperature", DEFAULT_TEMPERATURE) ?: DEFAULT_TEMPERATURE)
+                    .put("maxTokens", cur?.optInt("maxTokens", DEFAULT_MAX_TOKENS) ?: DEFAULT_MAX_TOKENS)
+                    .put("contextWindow", cur?.optInt("contextWindow", DEFAULT_CONTEXT_WINDOW) ?: DEFAULT_CONTEXT_WINDOW)
+                    .put("userLookbackTokens", cur?.optInt("userLookbackTokens", DEFAULT_LOOKBACK_TOKENS) ?: DEFAULT_LOOKBACK_TOKENS),
             )
             .put("providers", providers)
     }
@@ -464,7 +470,6 @@ object ConnectionStore {
             )
         }
         val curApi = findByUid(arr(image, "apiConfigs"), image.optString("currentApiId"))
-            ?: arr(image, "apiConfigs").optJSONObject(0)
         return JSONObject()
             .put("styles", list)
             .put("engine", if (curApi != null) engineOf(curApi) else "custom")
@@ -527,25 +532,7 @@ object ConnectionStore {
                 curLlm!!.put("providerId", groupId)
                 // 老数据第一次加模型时分组 key 会变，把备注/停用标记一起搬过去
                 migrateLlmProviderKey(llm, oldKey, llmKey(curLlm!!))
-                val models = stringArray(a.optJSONArray("models"))
-                var added = 0
-                var skipped = 0
-                for (m in models) {
-                    val exists = (0 until configs.length()).any {
-                        val c = configs.optJSONObject(it)
-                        c?.optString("providerId") == groupId && c.optString("model") == m
-                    }
-                    if (exists) { skipped++; continue }
-                    if (curLlm!!.optString("model").isEmpty() && added == 0) {
-                        curLlm!!.put("model", m).put("_name", m)
-                    } else {
-                        val c = JSONObject(curLlm!!.toString())
-                        c.put("_uid", newId("api")).put("_name", m).put("model", m)
-                        c.put("providerId", groupId)
-                        configs.put(c)
-                    }
-                    added++
-                }
+                val (added, skipped) = appendLlmModels(configs, curLlm!!, groupId, stringArray(a.optJSONArray("models")))
                 reply.put("added", added).put("skipped", skipped)
             }
             "useModel" -> llm.put("currentConfigId", a.optString("uid"))
@@ -660,25 +647,7 @@ object ConnectionStore {
                     // 同上：老运营商的 key 会从 __own__:uid 变成 uid，
                     // 不搬备注的话用户起的名字会在加完模型后凭空消失。
                     migrateLlmProviderKey(llm, oldKey, llmKey(seed))
-                    val models = stringArray(a.optJSONArray("models"))
-                    var added = 0
-                    var skipped = 0
-                    for (m in models) {
-                        val exists = (0 until configs.length()).any {
-                            val c = configs.optJSONObject(it)
-                            c?.optString("providerId") == groupId && c.optString("model") == m
-                        }
-                        if (exists) { skipped++; continue }
-                        if (seed.optString("model").isEmpty() && added == 0) {
-                            seed.put("model", m).put("_name", m)
-                        } else {
-                            val c = JSONObject(seed.toString())
-                            c.put("_uid", newId("api")).put("_name", m).put("model", m)
-                            c.put("providerId", groupId)
-                            configs.put(c)
-                        }
-                        added++
-                    }
+                    val (added, skipped) = appendLlmModels(configs, seed, groupId, stringArray(a.optJSONArray("models")))
                     reply.put("added", added).put("skipped", skipped)
                 }
             }
@@ -723,28 +692,7 @@ object ConnectionStore {
                 if (curApi == null) curApi = addImageApi("新接口")
                 patchConnection(curApi!!, a)
                 val baseUrl = a.optString("baseUrl").ifBlank { curApi!!.optString("baseUrl") }
-                val models = stringArray(a.optJSONArray("models"))
-                var added = 0
-                var skipped = 0
-                var anchorEmpty = curApi!!.optString("model").isEmpty() && curApi!!.optString("novelaiModel").isEmpty()
-                for (m in models) {
-                    val exists = (0 until apis.length()).any {
-                        val x = apis.optJSONObject(it)
-                        x?.optString("baseUrl") == baseUrl &&
-                            (x.optString("model").ifEmpty { x.optString("novelaiModel") }) == m
-                    }
-                    if (exists) { skipped++; continue }
-                    if (anchorEmpty) {
-                        curApi!!.put("model", m)
-                        anchorEmpty = false
-                    } else {
-                        val x = JSONObject(curApi!!.toString())
-                        x.put("_uid", newId("imgapi")).put("name", m).put("model", m)
-                        x.put("baseUrl", baseUrl)
-                        apis.put(x)
-                    }
-                    added++
-                }
+                val (added, skipped) = appendImageModels(apis, curApi!!, baseUrl, stringArray(a.optJSONArray("models")))
                 reply.put("added", added).put("skipped", skipped)
             }
             /**
@@ -778,27 +726,7 @@ object ConnectionStore {
                     val seed = group[0]
                     if (a.has("baseUrl") || a.has("apiKey")) patchConnection(seed, a)
                     val baseUrl = seed.optString("baseUrl")
-                    val models = stringArray(a.optJSONArray("models"))
-                    var added = 0
-                    var skipped = 0
-                    var anchorEmpty = seed.optString("model").isEmpty() && seed.optString("novelaiModel").isEmpty()
-                    for (m in models) {
-                        val exists = (0 until apis.length()).any {
-                            val x = apis.optJSONObject(it)
-                            x?.optString("baseUrl") == baseUrl &&
-                                (x.optString("model").ifEmpty { x.optString("novelaiModel") }) == m
-                        }
-                        if (exists) { skipped++; continue }
-                        if (anchorEmpty) {
-                            seed.put("model", m)
-                            anchorEmpty = false
-                        } else {
-                            val x = JSONObject(seed.toString())
-                            x.put("_uid", newId("imgapi")).put("name", m).put("model", m)
-                            apis.put(x)
-                        }
-                        added++
-                    }
+                    val (added, skipped) = appendImageModels(apis, seed, baseUrl, stringArray(a.optJSONArray("models")))
                     reply.put("added", added).put("skipped", skipped)
                 }
             }
@@ -856,12 +784,15 @@ object ConnectionStore {
             }
             "imgSetEngine" -> {
                 // 同一家运营商（同一 baseUrl）下的模型共享渲染器，避免逐条设。
-                val target = findByUid(apis, a.optString("uid").ifBlank { image.optString("currentApiId") }) ?: curApi
-                val key = target?.let { imageKey(it) }
-                for (i in 0 until apis.length()) {
-                    val x = apis.optJSONObject(i) ?: continue
-                    if (x === target || (key != null && imageKey(x) == key)) {
-                        x.put("engine", a.optString("engine"))
+                val uid = a.optString("uid").ifBlank { image.optString("currentApiId") }
+                val target = findByUid(apis, uid)
+                if (target == null) {
+                    reply.put("error", "接口不存在或已被删除")
+                } else {
+                    val key = imageKey(target)
+                    for (i in 0 until apis.length()) {
+                        val x = apis.optJSONObject(i) ?: continue
+                        if (imageKey(x) == key) x.put("engine", a.optString("engine"))
                     }
                 }
             }
@@ -1132,8 +1063,8 @@ object ConnectionStore {
             // providerNotes 里的名字，详情页的 key 也会失效被踢回列表）。
             .put("providerId", uid)
             .put("baseUrl", "").put("apiKey", "").put("model", "")
-            .put("temperature", 0.8).put("maxTokens", 8192)
-            .put("contextWindow", 1000000).put("userLookbackTokens", 200000)
+            .put("temperature", DEFAULT_TEMPERATURE).put("maxTokens", DEFAULT_MAX_TOKENS)
+            .put("contextWindow", DEFAULT_CONTEXT_WINDOW).put("userLookbackTokens", DEFAULT_LOOKBACK_TOKENS)
         arr(llm, "configs").put(c)
         llm.put("currentConfigId", uid)
         return c
@@ -1160,6 +1091,75 @@ object ConnectionStore {
             .put("negativePrompt", "").put("promptTemplate", "").put("thumb", "")
         arr(image, "styleConfigs").put(s)
         return s
+    }
+
+    /**
+     * 把一批模型名加进 [seed] 所在的那一组，返回 (新增, 跳过)。
+     *
+     * seed 自己还没模型时第一条就落在它身上（免得组里多出一条空壳），
+     * 之后每条都复制 seed 的连接信息另起一条。addModels 与
+     * llmAddModelsToProvider 只差「哪一组」，循环体共用这一份。
+     */
+    private fun appendLlmModels(
+        configs: JSONArray,
+        seed: JSONObject,
+        groupId: String,
+        models: List<String>,
+    ): Pair<Int, Int> {
+        var added = 0
+        var skipped = 0
+        for (m in models) {
+            val exists = (0 until configs.length()).any {
+                val c = configs.optJSONObject(it)
+                c?.optString("providerId") == groupId && c.optString("model") == m
+            }
+            if (exists) {
+                skipped++
+                continue
+            }
+            if (seed.optString("model").isEmpty() && added == 0) {
+                seed.put("model", m).put("_name", m)
+            } else {
+                configs.put(
+                    JSONObject(seed.toString())
+                        .put("_uid", newId("api")).put("_name", m).put("model", m)
+                        .put("providerId", groupId),
+                )
+            }
+            added++
+        }
+        return added to skipped
+    }
+
+    /** 生图侧同一件事：组按 baseUrl 划分，模型名可能是 model 或 novelaiModel。 */
+    private fun appendImageModels(
+        apis: JSONArray,
+        seed: JSONObject,
+        baseUrl: String,
+        models: List<String>,
+    ): Pair<Int, Int> {
+        var added = 0
+        var skipped = 0
+        var anchorEmpty = seed.optString("model").isEmpty() && seed.optString("novelaiModel").isEmpty()
+        for (m in models) {
+            val exists = (0 until apis.length()).any {
+                val x = apis.optJSONObject(it)
+                x?.optString("baseUrl") == baseUrl &&
+                    (x.optString("model").ifEmpty { x.optString("novelaiModel") }) == m
+            }
+            if (exists) {
+                skipped++
+                continue
+            }
+            if (anchorEmpty) {
+                seed.put("model", m)
+                anchorEmpty = false
+            } else {
+                apis.put(JSONObject(seed.toString()).put("_uid", newId("imgapi")).put("name", m).put("model", m))
+            }
+            added++
+        }
+        return added to skipped
     }
 
     /** 改一家运营商的连接信息时，同步到它下面所有模型（web 的 updateProvider 语义）。 */

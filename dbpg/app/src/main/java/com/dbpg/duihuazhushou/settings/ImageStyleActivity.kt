@@ -14,7 +14,6 @@ import android.view.Gravity
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import com.dbpg.duihuazhushou.Insets

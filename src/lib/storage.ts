@@ -802,37 +802,6 @@ export function uid(): string {
 }
 
 /**
- * 整库导出为单个 JSON 对象（供项目导出 / 备份）。
- *
- * 关于 undefined：
- *   底层是 localforage（IndexedDB），而 IndexedDB **不能存 undefined**，
- *   写入时会被静默丢弃（不抛错）。所以导出过程中可能根本读不到那把键。
- *   实测有过：appearanceThemeId 值是 undefined，导出文件里就没这一项，
- *   换台设备导入后该键不存在，代码读到 undefined —— 表现是"设置好像没迁过来"。
- *
- *   JSON 本身也表达不了 undefined（序列化时会整个键消失），
- *   所以统一转成 null：**键还在，值是 null**，语义上就是"这里没设过"。
- *   比键凭空消失好得多 —— 至少导入方能确定"这个设置是空的"，
- *   而不是"这个设置是不是迁移漏了"。
- */
-export async function exportAll(): Promise<Record<string, unknown>> {
-  const out: Record<string, unknown> = {};
-
-  /** 把 undefined / NaN / Infinity 这类 JSON 表达不了的值规整掉 */
-  const normalize = (v: unknown): unknown => {
-    if (v === undefined) return null;
-    if (typeof v === 'number' && !Number.isFinite(v)) return null;
-    return v;
-  };
-
-  await store.iterate((value, key) => {
-    out[key] = normalize(value);
-  });
-
-  return out;
-}
-
-/**
  * 导入数据。
  * 关键改动：默认是「增补」而不是「清空后导入」。
  * 旧实现先 store.clear() 再写入，一旦误选旧导出文件，

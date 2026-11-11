@@ -311,13 +311,6 @@ export function stripImageMarkers(text: string): string {
     .replace(/\n{3,}/g, '\n\n'); // 合并多余空行
 }
 
-/** 文本里是否含有插图标记 */
-export function hasImageMarker(text: string): boolean {
-  if (!text) return false;
-  IMAGE_MARKER_RE.lastIndex = 0;
-  return IMAGE_MARKER_RE.test(text);
-}
-
 /**
  * 把正文切成「段落块」，并在标记所在位置插入图片占位。
  * 返回的块序列供渲染层逐块渲染，图片块与文本块交替。

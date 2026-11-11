@@ -103,8 +103,6 @@ class CharacterRepository(private val context: Context) {
         return CharacterFile(target, card)
     }
 
-    /** 读原始字节，用于把卡片原样交给网页侧导入。 */
-    fun readRaw(file: File): ByteArray? = runCatching { file.readBytes() }.getOrNull()
 
     private fun isSupported(name: String): Boolean {
         val n = name.lowercase()

@@ -600,7 +600,7 @@ class ApiConfigActivity : Activity() {
             LinearLayout.LayoutParams.WRAP_CONTENT,
         ).apply { marginStart = ui.dp(6) }
         badges.addView(tempBadge)
-        val maxBadge = ui.badge("上限 ${m.optInt("maxTokens", 8192)}", ProviderUi.Badge.NEUTRAL)
+        val maxBadge = ui.badge("上限 ${m.optInt("maxTokens", ConnectionStore.DEFAULT_MAX_TOKENS)}", ProviderUi.Badge.NEUTRAL)
         maxBadge.layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -799,9 +799,9 @@ class ApiConfigActivity : Activity() {
         }
         val params = JSONObject()
             .put("temperature", temp)
-            .put("maxTokens", paramMax.text?.toString()?.toLongOrNull() ?: 8192L)
-            .put("contextWindow", paramCtx.text?.toString()?.toLongOrNull() ?: 1000000L)
-            .put("userLookbackTokens", paramLook.text?.toString()?.toLongOrNull() ?: 200000L)
+            .put("maxTokens", paramMax.text?.toString()?.toLongOrNull() ?: ConnectionStore.DEFAULT_MAX_TOKENS.toLong())
+            .put("contextWindow", paramCtx.text?.toString()?.toLongOrNull() ?: ConnectionStore.DEFAULT_CONTEXT_WINDOW.toLong())
+            .put("userLookbackTokens", paramLook.text?.toString()?.toLongOrNull() ?: ConnectionStore.DEFAULT_LOOKBACK_TOKENS.toLong())
         setStatus("保存参数中…")
         command("saveParams", JSONObject().put("params", params))
     }

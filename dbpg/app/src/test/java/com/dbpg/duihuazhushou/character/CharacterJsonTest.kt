@@ -3,7 +3,6 @@ package com.dbpg.duihuazhushou.character
 import com.dbpg.stcore.character.CharacterCard
 import com.dbpg.stcore.character.CharacterCardParser
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test

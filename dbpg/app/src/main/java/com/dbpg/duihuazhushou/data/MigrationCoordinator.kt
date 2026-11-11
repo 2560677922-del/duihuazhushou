@@ -303,8 +303,4 @@ object MigrationCoordinator {
         timeout = null
     }
 
-    /** 供界面显示"上次迁移结果"用（不参与流程）。 */
-    fun summaryText(): String =
-        "会话：成功 $okSessions，失败 $failedSessions" + if (okAssets + missingAssets > 0)
-            "；图片：成功 $okAssets" + if (missingAssets > 0) "，缺失 $missingAssets" else "" else ""
 }

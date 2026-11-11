@@ -2,17 +2,6 @@ import { defineStore } from 'pinia';
 import { store, genId } from '../lib/storage';
 import type { ApiConfig } from '../engine/apiClient';
 
-/**
- * baseUrl 归一化 —— 用来判断"是不是同一家运营商"。
- *
- * 去掉末尾斜杠、统一小写、去掉协议里的差异。
- * 否则 `https://x.cn/v1` 和 `https://x.cn/v1/` 会被当成两家，
- * 分组就散了（用户会看到"同一个中转出现了两次"）。
- */
-export function normalizeBaseUrl(url: string): string {
-  return url.trim().replace(/\/+$/, '').toLowerCase();
-}
-
 // API 配置 store：支持多套配置保存与切换。
 // 注意：contextWindow / userLookbackTokens 用于引擎的 Token 裁剪，
 // 与 ApiConfig 的请求字段一起存。
