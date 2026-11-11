@@ -105,7 +105,10 @@ object SessionHistory {
             if (user.isNotEmpty()) out.add(PromptMessage(ROLE_USER, user))
             val ai = clean(a.ai)
             if (ai.isNotEmpty()) {
-                val who = a.speakerId.takeIf { it.isNotEmpty() }?.let { speakerNames[it] }
+                val who = a.speakerId.takeIf { it.isNotEmpty() }?.let {
+                    // 旁白固定用保留名：即使调用方忘了往 map 里塞，也不会退化成"无主台词"
+                    if (it == GroupRef.SPEAKER_NARRATOR) GroupRef.NARRATOR_NAME else speakerNames[it]
+                }
                 out.add(
                     PromptMessage(
                         ROLE_ASSISTANT,

@@ -37,6 +37,13 @@ export interface AssemblyOptions {
    * 不注入角色卡，也不改预设 —— 它是"你是谁"，不是"AI 演谁"。
    */
   userPersona?: { name?: string; description?: string };
+  /**
+   * 群聊旁白设定。
+   *
+   * 旁白不是角色卡：不占成员位、不参与发言轮转，只在这一轮作为
+   * 一条 system 设定注入，让模型用"叙述者"的视角写环境与事件。
+   */
+  narrator?: string;
   chatHistory: ChatMessage[];
   currentUserInput?: string;
   /** 作者注释，作为 user 消息按 depth 回溯注入 */

@@ -590,6 +590,8 @@ class ChatController(
         val id = a.speakerId.ifBlank {
             if (d.group?.kind == GroupRef.KIND_MEMBER) d.group?.memberId.orEmpty() else ""
         }
+        // 旁白没有脸：只留名字，不占头像位（气泡也不会为它缩进）
+        if (id == GroupRef.SPEAKER_NARRATOR) return ""
         if (id.isNotBlank()) {
             return group?.members?.firstOrNull { it.characterId == id }?.name.orEmpty()
         }
@@ -602,6 +604,7 @@ class ChatController(
             if (d.group?.kind == GroupRef.KIND_MEMBER) d.group?.memberId.orEmpty() else ""
         }
         if (id.isBlank()) return ""
+        if (id == GroupRef.SPEAKER_NARRATOR) return GroupRef.NARRATOR_NAME
         return g.members.firstOrNull { it.characterId == id }?.name.orEmpty()
     }
 
@@ -897,6 +900,40 @@ class ChatController(
         beginGen(actionId, prompt, isNew = true, characterOverride = speakerId)
     }
 
+    /**
+     * 群聊：让旁白说一段。
+     *
+     * 与 [sendAs] 的差别只有"扮演谁"：旁白没有角色卡，只注入本群那份
+     * 旁白设定（[GroupStore.Group.narratorPrompt]），所以它写出来的是
+     * 环境与事件，而不是某个人物的台词。
+     *
+     * 生成的正文仍然是普通的一条 Action，只是 speakerId 记成
+     * [GroupRef.SPEAKER_NARRATOR] —— 这样列表、变体、重新生成、
+     * 摘要锚点的语义全部与成员发言一致，不需要第二套消息模型。
+     */
+    fun narrator() {
+        val d = doc ?: return
+        if (d.group == null) {
+            sink.onToast("只有群聊支持旁白")
+            return
+        }
+        if (genId != null) {
+            sink.onToast("还在生成，先停一下")
+            return
+        }
+        val actionId = SessionRepo.newId("a")
+        doc = SessionEditor.appendAction(
+            doc = d,
+            actionId = actionId,
+            user = "",
+            ai = "",
+            speakerId = GroupRef.SPEAKER_NARRATOR,
+        )
+        doc?.let { SessionRepo.save(it) }
+        render(true)
+        beginGen(actionId, "继续", isNew = true)
+    }
+
     fun regenerate(actionId: String) {
         val d = doc ?: return
         if (genId != null) {
@@ -992,11 +1029,18 @@ class ChatController(
         // 谁的角色卡：本条消息的发言人（公共区）> 本次指定 > 会话绑定（成员频道）> 空
         // 从 action 读而不是从调用方传，重新生成同一条时才能自动用回同一个发言人。
         val speakerId = d.actions.find { it.id == actionId }?.speakerId.orEmpty()
-        val roleId = speakerId.takeIf { it.isNotBlank() }
-            ?: characterOverride.takeIf { it.isNotBlank() }
-            ?: characterId.orEmpty()
-        // 公共区里用户自己说话：不注入角色卡（否则会套用成员/上次选中的卡）
-        val noCharacter = d.group?.kind == GroupRef.KIND_PUBLIC && speakerId.isEmpty()
+        // 旁白：不注入任何角色卡，只带本群那份旁白设定。重新生成时也走这条判断，
+        // 因为是按 Action 上的 speakerId 认的，不依赖调用入口。
+        val isNarrator = speakerId == GroupRef.SPEAKER_NARRATOR
+        val roleId = if (isNarrator) "" else {
+            speakerId.takeIf { it.isNotBlank() }
+                ?: characterOverride.takeIf { it.isNotBlank() }
+                ?: characterId.orEmpty()
+        }
+        // 公共区里用户自己说话 / 旁白：都不注入角色卡（否则会套用成员或上次选中的卡）
+        val noCharacter = isNarrator ||
+            (d.group?.kind == GroupRef.KIND_PUBLIC && speakerId.isEmpty())
+        val narratorText = if (isNarrator) group?.narratorPrompt.orEmpty() else ""
 
         // 用户角色：所有会话共用（{{user}} 名字 + 人设块），没配就不带
         val personaJson = persona?.takeIf { it.name.isNotBlank() || it.description.isNotBlank() }
@@ -1015,6 +1059,7 @@ class ChatController(
             characterId = roleId,
             noCharacter = noCharacter,
             userPersona = personaJson,
+            narratorPrompt = narratorText,
             // 成员单独选了运营商就用它，否则跟群、再跟全局
             configId = binding.apiConfigId?.takeIf { it.isNotBlank() }
                 ?: group?.apiConfigId.orEmpty(),

@@ -172,6 +172,11 @@ interface NativeGenRequest {
   noCharacter?: boolean;
   /** 本次生效的用户角色（资产页「我的角色」）：写 {{user}} 名字与人设块 */
   userPersona?: { name?: string; description?: string };
+  /**
+   * 群聊旁白设定。有值 = 这一轮由旁白说：
+   * 不注入角色卡，只补一条 system 设定（见 engine/assembler 的 injectNarratorIfAny）。
+   */
+  narratorPrompt?: string;
 }
 
 /**
@@ -265,7 +270,12 @@ function buildMessages(
   sessionId: string,
   assetBinding?: { worldBookIds?: string[]; presetId?: string; regexGroupIds?: string[] },
   /** 本次这一轮"谁在说"：角色卡、是否注入卡、用户人设 */
-  turn?: { characterId?: string; noCharacter?: boolean; userPersona?: { name?: string; description?: string } },
+  turn?: {
+    characterId?: string;
+    noCharacter?: boolean;
+    userPersona?: { name?: string; description?: string };
+    narratorPrompt?: string;
+  },
 ): BuiltMessages | null {
   const assets = useAssetsStore();
   // 按对话绑定取资产：绑定 ∩ 资产页启用项。没绑定的对话跟随全局（旧行为）。
@@ -309,6 +319,7 @@ function buildMessages(
     preset,
     characterCard: turn?.noCharacter ? undefined : characterOf(sessionId, turn?.characterId),
     userPersona: turn?.userPersona,
+    narrator: turn?.narratorPrompt,
     worldBooks: worldBookJsons,
     regexScripts,
     chatHistory,
@@ -406,6 +417,7 @@ async function generate(reqJson: string): Promise<void> {
         characterId: req.characterId,
         noCharacter: req.noCharacter === true,
         userPersona: req.userPersona,
+        narratorPrompt: req.narratorPrompt,
       },
     );
     if (!built) {

@@ -28,6 +28,7 @@ import com.dbpg.duihuazhushou.chat.ChatController
 import com.dbpg.duihuazhushou.chat.ChatItem
 import com.dbpg.duihuazhushou.chat.GenBridge
 import com.dbpg.duihuazhushou.chat.ImageFileCache
+import com.dbpg.duihuazhushou.chat.QuickImage
 import com.dbpg.duihuazhushou.character.CharacterAvatar
 import com.dbpg.duihuazhushou.gallery.ImageViewerActivity
 import com.dbpg.duihuazhushou.session.GroupStore
@@ -76,11 +77,24 @@ class GroupChatActivity : Activity() {
     private lateinit var channelScroll: android.widget.HorizontalScrollView
     private lateinit var titleView: TextView
     private lateinit var emptyView: TextView
-    private lateinit var nextBtn: TextView
+    private lateinit var plusBtn: View
+    private lateinit var inputBar: View
     private lateinit var sendBtn: TextView
     private lateinit var stopBtn: TextView
 
     private lateinit var imageCache: ImageFileCache
+    /** 出图与单人聊天共用同一份实现；落图目标在点下那一刻锁定 */
+    private val quickImage by lazy {
+        QuickImage(
+            activity = this,
+            controllerOf = { controllerFor(activeSessionId) },
+            onBusy = { busy -> plusBtn.alpha = if (busy) 0.4f else 1f },
+            onToast = { toast(it) },
+        )
+    }
+    private val apiListener = com.dbpg.duihuazhushou.NativeBridge.ApiResultListener { json ->
+        runOnUiThread { quickImage.onEngineResult(json) }
+    }
     private var stickToBottom = true
     /** 公共区「续写」的下一位；只是一个轮转指针，不落盘 */
     private var nextSpeaker = 0
@@ -112,7 +126,8 @@ class GroupChatActivity : Activity() {
         list = findViewById(R.id.gc_list)
         input = findViewById(R.id.gc_input)
         emptyView = findViewById(R.id.gc_empty)
-        nextBtn = findViewById(R.id.gc_next)
+        plusBtn = findViewById(R.id.gc_plus)
+        inputBar = findViewById(R.id.gc_input_bar)
         sendBtn = findViewById(R.id.gc_send)
         stopBtn = findViewById(R.id.gc_stop)
 
@@ -137,12 +152,7 @@ class GroupChatActivity : Activity() {
 
         sendBtn.setOnClickListener { submit() }
         stopBtn.setOnClickListener { controllerFor(activeSessionId).stop() }
-        nextBtn.setOnClickListener { continueNext() }
-        // 长按「续写」= 指定谁说话，不用等轮转
-        nextBtn.setOnLongClickListener {
-            pickSpeaker()
-            true
-        }
+        plusBtn.setOnClickListener { showPlusMenu() }
 
         paintChannels()
         selectChannel(group.publicSessionId, force = true)
@@ -151,6 +161,8 @@ class GroupChatActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // 生图标签优化的结果走全局单回调：进来时接管，走时还回去
+        com.dbpg.duihuazhushou.NativeBridge.setApiResultListener(apiListener)
         // 群配置可能被别处改过（比如新建群时继承的书），回来重读一次
         GroupStore.get(this, group.id)?.let {
             if (it != group) {
@@ -161,8 +173,15 @@ class GroupChatActivity : Activity() {
         }
     }
 
+    override fun onPause() {
+        super.onPause()
+        com.dbpg.duihuazhushou.NativeBridge.setApiResultListener(null)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        dismissPlusMenu()
+        quickImage.detach()
         // 每个频道各自收尾：正在生成的正文先落盘，再释放渲染线程
         controllers.values.forEach { runCatching { it.shutdown() } }
         controllers.clear()
@@ -303,7 +322,6 @@ class GroupChatActivity : Activity() {
         paintChannels()
 
         val isPublic = sessionId == group.publicSessionId
-        nextBtn.visibility = if (isPublic) View.VISIBLE else View.GONE
         input.hint = if (isPublic) "在公共区说点什么…" else {
             val m = group.members.firstOrNull { it.sessionId == sessionId }
             if (m == null) "说点什么…" else "对${m.name}说…"
@@ -390,16 +408,40 @@ class GroupChatActivity : Activity() {
         controllerFor(activeSessionId).send(text)
     }
 
-    /** 公共区：按成员顺序叫下一位。顺序就是频道栏顺序，切一次轮一次。 */
+    /**
+     * 「续写」。
+     *
+     * 公共区：按成员顺序叫下一位（顺序就是频道栏顺序，点一次轮一次）。
+     * 成员频道：让这个频道的主人接着说 —— 私聊里只有一个角色，
+     * 不存在"轮到谁"的问题，但仍然需要一个"你接着说"的入口。
+     */
     private fun continueNext() {
-        if (activeSessionId != group.publicSessionId) return
         if (group.members.isEmpty()) {
             toast("先邀请成员")
             return
         }
-        val m = group.members[nextSpeaker % group.members.size]
-        nextSpeaker++
-        controllerFor(activeSessionId).sendAs(m.characterId)
+        if (activeSessionId == group.publicSessionId) {
+            val m = group.members[nextSpeaker % group.members.size]
+            nextSpeaker++
+            controllerFor(activeSessionId).sendAs(m.characterId)
+            return
+        }
+        val m = group.members.firstOrNull { it.sessionId == activeSessionId } ?: return
+        controllerFor(m.sessionId).sendAs(m.characterId)
+    }
+
+    /**
+     * 「旁白」。
+     *
+     * 旁白只活在公共区：它是全群共享的叙述视角，塞进某个成员的私聊频道
+     * 会变成"这个人的内心独白"，语义就错了。所以从任何频道点它，
+     * 都先切回公共区再发。
+     */
+    private fun narratorSpeak() {
+        if (activeSessionId != group.publicSessionId) {
+            selectChannel(group.publicSessionId, force = true)
+        }
+        controllerFor(group.publicSessionId).narrator()
     }
 
     /** 长按「续写」：直接指定谁说。 */
@@ -420,6 +462,103 @@ class GroupChatActivity : Activity() {
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    // ------------------------------------------------------------ ＋ 菜单
+
+    /**
+     * 输入框左边的「＋」：续写 / 指定谁说 / 旁白 / 配图。
+     *
+     * 为什么不做成底部大面板：这几项都是"接着聊"的轻操作，用户按完还要立刻
+     * 打字。面板从输入栏上方弹一小块，位置贴着那个加号，视线不用搬家；
+     * 也不像底部抽屉那样把整个对话盖住。
+     *
+     * 位置用 window 的 y 偏移算（[inputBar] 高度 + 间距），而不是 PopupWindow：
+     * 后者在键盘弹起、刘海屏、导航栏三种情况下表现不一致，还拿不到主题底板。
+     */
+    private fun showPlusMenu() {
+        dismissPlusMenu()
+        val isPublic = activeSessionId == group.publicSessionId
+        val member = group.members.firstOrNull { it.sessionId == activeSessionId }
+
+        val box = ui.card(18f, 8)
+        box.addView(
+            ui.text("更多", 11.5f, ui.tk.textFaint).apply {
+                setPadding(ui.dp(12), ui.dp(4), ui.dp(12), ui.dp(2))
+            },
+        )
+        box.addView(
+            menuRow(R.drawable.ic_refresh, "续写") {
+                if (isPublic) "按顺序让下一位成员发言" else "让${member?.name ?: "TA"}接着说"
+            }.apply { setOnClickListener { dismissPlusMenu(); continueNext() } },
+        )
+        if (isPublic) {
+            box.addView(
+                menuRow(R.drawable.ic_avatar_placeholder, "指定谁说") { "跳过轮转，直接点人" }
+                    .apply { setOnClickListener { dismissPlusMenu(); pickSpeaker() } },
+            )
+        }
+        box.addView(
+            menuRow(R.drawable.ic_sparkle, "旁白") { "描写环境、氛围与事件推进" }
+                .apply { setOnClickListener { dismissPlusMenu(); narratorSpeak() } },
+        )
+        box.addView(
+            menuRow(R.drawable.ic_palette, "配图") { "给这个频道最新一条回复生图" }
+                .apply { setOnClickListener { dismissPlusMenu(); quickImage.generate() } },
+        )
+
+        val d = Dialog(this)
+        d.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        d.setContentView(box)
+        d.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        d.window?.setDimAmount(0.18f)
+        d.window?.setGravity(Gravity.BOTTOM or Gravity.START)
+        d.window?.setWindowAnimations(R.style.SheetAnim)
+        d.setCanceledOnTouchOutside(true)
+        d.setOnDismissListener { plusMenu = null }
+        d.show()
+        plusMenu = d
+
+        d.window?.let { w ->
+            w.setLayout(ui.dp(240), ViewGroup.LayoutParams.WRAP_CONTENT)
+            val lp = w.attributes
+            lp.x = ui.dp(8)
+            // 贴着输入栏上沿；输入栏本身在屏幕底部，所以只需要抬这么高
+            lp.y = inputBar.height + ui.dp(6)
+            w.attributes = lp
+        }
+    }
+
+    private var plusMenu: Dialog? = null
+
+    private fun dismissPlusMenu() {
+        runCatching { plusMenu?.dismiss() }
+        plusMenu = null
+    }
+
+    /** 菜单里的一行：图标圆底 + 标题 + 一句说明。 */
+    private fun menuRow(iconRes: Int, title: String, subtitle: () -> String): LinearLayout {
+        val row = ui.horizontal()
+        row.setPadding(ui.dp(10), ui.dp(8), ui.dp(10), ui.dp(8))
+        row.isClickable = true
+
+        val holder = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ui.dp(32), ui.dp(32))
+            background = ui.shape(ui.tk.accentSoft, 999f)
+        }
+        holder.addView(
+            ui.icon(iconRes, 18).apply {
+                setColorFilter(ui.tk.accent)
+                layoutParams = FrameLayout.LayoutParams(ui.dp(18), ui.dp(18), Gravity.CENTER)
+            },
+        )
+        row.addView(holder)
+
+        val col = ui.vertical().apply { setPadding(ui.dp(10), 0, 0, 0) }
+        col.addView(ui.text(title, 14f, ui.tk.text, bold = true))
+        col.addView(ui.text(subtitle(), 11f, ui.tk.textFaint))
+        row.addView(col)
+        return row
     }
 
     // ------------------------------------------------------------ 成员
@@ -703,6 +842,7 @@ class GroupChatActivity : Activity() {
             "群预设",
             "群运营商",
             "群正则组",
+            "旁白设定",
             "发言顺序",
             "邀请成员",
             "重命名",
@@ -716,10 +856,11 @@ class GroupChatActivity : Activity() {
                     1 -> pickGroupPreset()
                     2 -> pickGroupApi()
                     3 -> pickGroupRegex()
-                    4 -> orderDialog()
-                    5 -> inviteMembers()
-                    6 -> renameGroup()
-                    7 -> confirmDeleteGroup()
+                    4 -> editNarrator()
+                    5 -> orderDialog()
+                    6 -> inviteMembers()
+                    7 -> renameGroup()
+                    8 -> confirmDeleteGroup()
                 }
             }
             .setNegativeButton("取消", null)
@@ -860,6 +1001,52 @@ class GroupChatActivity : Activity() {
                 group = GroupStore.update(this, group.copy(regexGroupIds = null))
                 refreshControllers()
                 toast("已恢复跟随全局")
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * 旁白设定（本群一份）。
+     *
+     * 给一个真的能用的默认值，用户想改口吻/世界观时再改；「恢复默认」
+     * 是唯一需要的退路 —— 不提供"关闭旁白"，因为不用它就是不点那个入口。
+     */
+    private fun editNarrator() {
+        val edit = EditText(this).apply {
+            setText(group.narratorPrompt)
+            setSelection(text.length)
+            textSize = 14f
+            setTextColor(ui.tk.text)
+            setHintTextColor(ui.tk.textFaint)
+            background = ui.shape(ui.tk.panelSoft, 12f, stroke = true)
+            setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10))
+            gravity = Gravity.TOP
+            minLines = 6
+            maxLines = 12
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        }
+        AlertDialog.Builder(this)
+            .setTitle("旁白设定")
+            .setMessage("只对这个群生效。点「旁白」时作为系统设定注入，不占成员位、不参与轮转。")
+            .setView(wrapForDialog(edit))
+            .setPositiveButton("保存") { _, _ ->
+                val text = edit.text?.toString().orEmpty().trim()
+                group = GroupStore.update(
+                    this,
+                    group.copy(
+                        narratorPrompt = text.ifBlank { GroupStore.DEFAULT_NARRATOR },
+                    ),
+                )
+                toast(if (text.isBlank()) "已恢复默认旁白" else "已保存，下一句旁白生效")
+            }
+            .setNeutralButton("恢复默认") { _, _ ->
+                group = GroupStore.update(
+                    this,
+                    group.copy(narratorPrompt = GroupStore.DEFAULT_NARRATOR),
+                )
+                toast("已恢复默认旁白")
             }
             .setNegativeButton("取消", null)
             .show()
@@ -1072,6 +1259,32 @@ class GroupChatActivity : Activity() {
         )
     }
 
+    /**
+     * 给指定那条消息配图：选「带之前几条」当上下文，图挂回那条消息上。
+     *
+     * 与「＋ → 配图」的区别：那边锚点是这个频道最新一条回复，这里锚点是
+     * 用户点的那一条 —— 给旧剧情补图不会带错上下文。
+     */
+    private fun promptImageGenFor(item: ChatItem) {
+        if (item.actionId.isBlank()) return
+        if (quickImage.isBusy()) {
+            toast("还在出图，稍等一下")
+            return
+        }
+        val options = arrayOf(
+            "只这条", "这条 + 前 1 条", "这条 + 前 2 条",
+            "这条 + 前 3 条", "这条 + 前 5 条", "这条 + 前 8 条",
+        )
+        val counts = intArrayOf(0, 1, 2, 3, 5, 8)
+        AlertDialog.Builder(this)
+            .setTitle("给这条消息配图")
+            .setItems(options) { _, which ->
+                quickImage.generate(anchorActionId = item.actionId, beforeCount = counts[which])
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
     // ------------------------------------------------------------ 列表回调
 
     private val listener = object : ChatAdapter.Listener {
@@ -1108,7 +1321,7 @@ class GroupChatActivity : Activity() {
         }
 
         override fun onImageGen(item: ChatItem) {
-            toast("群聊里暂不支持单条生图")
+            promptImageGenFor(item)
         }
 
         override fun onCardNeeded(item: ChatItem, widthPx: Int) {

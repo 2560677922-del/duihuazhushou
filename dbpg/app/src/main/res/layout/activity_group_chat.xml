@@ -4,7 +4,7 @@
 
   结构与单人聊天页刻意保持一致（同一套顶栏/列表/输入栏），只多两条：
     · 顶栏下的「频道栏」：公共区 + 每个成员一个频道，点谁就切到谁的会话；
-    · 公共区输入栏多一个「续写」：按成员顺序叫下一位发言。
+    · 输入栏左侧的「+」：续写、指定谁说、旁白、配图，点开向上弹一层小菜单。
 
   频道栏放在顶栏之下而不是做成抽屉：切频道是这个页面最高频的动作，
   藏起来等于每次多两步。
@@ -143,7 +143,7 @@
             android:gravity="center"
             android:lineSpacingExtra="6dp"
             android:padding="32dp"
-            android:text="公共区还没有消息\n\n你说话，或点「续写」让成员按顺序发言"
+            android:text="公共区还没有消息\n\n你说话，或点左边的 + 让成员按顺序发言"
             android:textColor="#66707F"
             android:textSize="14sp"
             android:visibility="gone" />
@@ -151,6 +151,7 @@
 
     <!-- 输入栏 -->
     <LinearLayout
+        android:id="@+id/gc_input_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
@@ -158,21 +159,19 @@
         android:background="@drawable/bg_input_bar"
         android:gravity="center_vertical">
 
-        <!-- 公共区专属：让下一位成员发言；私聊频道隐藏 -->
-        <TextView
-            android:id="@+id/gc_next"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginEnd="6dp"
-            android:background="@drawable/bg_pill_soft"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:paddingTop="7dp"
-            android:paddingBottom="7dp"
-            android:text="续写"
-            android:textColor="#2F66D8"
-            android:textSize="13sp"
-            android:contentDescription="让下一位成员发言" />
+        <!--
+          + 号：续写 / 指定谁说 / 旁白 / 配图 都收进这里。
+          上一版把「续写」常驻在输入框左边，公共区还行，成员频道就白占位置；
+          而且生图和旁白没有入口。收成一个加号，输入框也变宽了。
+        -->
+        <ImageView
+            android:id="@+id/gc_plus"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="9dp"
+            android:contentDescription="更多操作：续写、旁白、配图"
+            android:src="@drawable/ic_plus"
+            android:tint="#5A6B85" />
 
         <EditText
             android:id="@+id/gc_input"

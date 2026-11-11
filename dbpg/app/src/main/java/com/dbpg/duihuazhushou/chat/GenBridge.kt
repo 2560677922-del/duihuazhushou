@@ -74,6 +74,13 @@ object GenBridge {
         noCharacter: Boolean = false,
         /** 用户角色（资产页「我的角色」）：名字与人设，写进 {{user}} / {{persona}} */
         userPersona: JSONObject? = null,
+        /**
+         * 本群旁白设定（不注入角色卡，只加一段系统设定）。
+         *
+         * 与 [noCharacter] 配合使用：旁白既不是成员也不是用户，
+         * 它要的是"叙述视角"，所以只带这段文字。
+         */
+        narratorPrompt: String = "",
         /** 本次用的 LLM 运营商 uid；空 = 全局当前选中 */
         configId: String = "",
         sink: Sink,
@@ -111,6 +118,7 @@ object GenBridge {
         if (characterId.isNotBlank()) req.put("characterId", characterId)
         if (noCharacter) req.put("noCharacter", true)
         if (userPersona != null && userPersona.length() > 0) req.put("userPersona", userPersona)
+        if (narratorPrompt.isNotBlank()) req.put("narratorPrompt", narratorPrompt)
 
         MainActivity.runOnUi {
             wv.evaluateJavascript(

@@ -85,4 +85,28 @@ class GroupSessionTest {
         val msgs = SessionHistory.export(d, speakerNames = mapOf("c_a" to "阿岚"))
         assertEquals("在", msgs[1].content)
     }
+
+    @Test
+    fun `旁白发言固定标成旁白 不依赖名字映射`() {
+        val d = SessionDoc(
+            id = "s1",
+            group = GroupRef("g1", GroupRef.KIND_PUBLIC),
+            actions = listOf(
+                SessionAction(id = "a1", user = "", ai = "雨点砸在铁皮顶上。", speakerId = GroupRef.SPEAKER_NARRATOR),
+                SessionAction(id = "a2", user = "", ai = "把伞收了吧。", speakerId = "c_a"),
+            ),
+        )
+        // 只给成员名字，不给旁白：旁白也必须带前缀，否则模型会把叙述当成自己的台词
+        val msgs = SessionHistory.export(d, speakerNames = mapOf("c_a" to "阿岚"))
+        assertEquals("【旁白】雨点砸在铁皮顶上。", msgs[0].content)
+        assertEquals("【阿岚】把伞收了吧。", msgs[1].content)
+    }
+
+    @Test
+    fun `旁白的 speakerId 能往返`() {
+        val a = SessionAction(id = "a1", ai = "灯灭了。", speakerId = GroupRef.SPEAKER_NARRATOR)
+        assertEquals(GroupRef.SPEAKER_NARRATOR, SessionAction.parse(a.toJson()).speakerId)
+        // 保留字不能和真实角色卡 uid 相同（角色卡 uid 都是 char_ 前缀 / uuid）
+        assertTrue(!GroupRef.SPEAKER_NARRATOR.startsWith("char_"))
+    }
 }

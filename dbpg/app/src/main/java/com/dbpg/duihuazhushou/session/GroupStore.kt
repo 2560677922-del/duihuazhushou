@@ -29,6 +29,20 @@ object GroupStore {
 
     private const val FILE_NAME = "groups.json"
 
+    /**
+     * 旁白的默认设定。
+     *
+     * 为什么旁白不做成角色卡：角色卡会进频道栏、参与「续写」轮转、
+     * 还会被当成"某个人"注入人物描述。旁白要的是**视角**，不是**人设** ——
+     * 所以它是一段只在本群生效的系统设定，不占成员位。
+     */
+    const val DEFAULT_NARRATOR =
+        "你是这个群聊场景的旁白。你只负责环境与事件，不扮演任何具体角色。\n" +
+            "· 描写场景、氛围、时间流逝、动作的结果，以及旁观者的反应；\n" +
+            "· 第三人称、现在时、具体克制，一次 1～3 段，不加标题、不解释写法；\n" +
+            "· 不替角色说台词，不替用户做决定，不复述刚刚发生的对话；\n" +
+            "· 只在有新信息时推进，没有变化就用一两句带过气氛。"
+
     data class Member(
         /** 角色卡 uid */
         val characterId: String,
@@ -55,6 +69,13 @@ object GroupStore {
          * 只是可以单独在成员界面改」。
          */
         val apiConfigId: String? = null,
+        /**
+         * 旁白设定（本群一份）。
+         *
+         * 空 = 用 [DEFAULT_NARRATOR]。用户可以在群设置里改成本群专属的
+         * 世界观口吻；改完下一句旁白就生效，不影响已经生成的内容。
+         */
+        val narratorPrompt: String = DEFAULT_NARRATOR,
         /** 成员顺序 = 公共区发言顺序（可拖动调整） */
         val members: List<Member> = emptyList(),
         val createdAt: Long = 0L,
@@ -251,6 +272,7 @@ object GroupStore {
             g.presetId?.let { put("presetId", it) }
             g.regexGroupIds?.let { put("regexGroupIds", JSONArray(it)) }
             g.apiConfigId?.let { put("apiConfigId", it) }
+            if (g.narratorPrompt != DEFAULT_NARRATOR) put("narratorPrompt", g.narratorPrompt)
         }
         .put("createdAt", g.createdAt)
         .put("updatedAt", g.updatedAt)
@@ -282,6 +304,7 @@ object GroupStore {
                 List(arr.length()) { arr.optString(it) }
             },
             apiConfigId = if (o.has("apiConfigId")) o.optString("apiConfigId").ifEmpty { null } else null,
+            narratorPrompt = o.optString("narratorPrompt").ifBlank { DEFAULT_NARRATOR },
             members = members,
             createdAt = o.optLong("createdAt", 0L),
             updatedAt = o.optLong("updatedAt", 0L),

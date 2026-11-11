@@ -192,6 +192,18 @@ data class GroupRef(
         const val KIND_PUBLIC = "public"
         const val KIND_MEMBER = "member"
 
+        /**
+         * 旁白的发言人 id。
+         *
+         * 旁白不是成员（不进频道栏、不参与轮转、没有角色卡），但它的发言
+         * 和成员发言存在同一条时间线上，所以借用 speakerId 这个字段，
+         * 用一个不可能和角色卡 uid 撞车的保留字。
+         */
+        const val SPEAKER_NARRATOR = "narrator"
+
+        /** 旁白在正文里的前缀名。 */
+        const val NARRATOR_NAME = "旁白"
+
         fun parse(o: JSONObject?): GroupRef? {
             if (o == null) return null
             val id = o.optString("groupId", "")

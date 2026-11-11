@@ -161,13 +161,14 @@ export function assemblePrompt(opts: AssemblyOptions): AssemblyResult {
    */
   const withCharacter = injectCharacterCardIfMissing(afterVars, characterCard);
   const withPersona = injectUserPersonaIfMissing(withCharacter, userPersona);
+  const withNarrator = injectNarratorIfAny(withPersona, opts.narrator);
 
   // ---- 阶段 3b：正则 ----
   //
   // placement 说明：这些开关决定"这类消息要不要被处理"。
   // 推理过程和斜杠命令也打开 —— 否则标了这两种作用的规则会被整条跳过，
   // 用户看到的现象就是"有的正则没生效"。
-  const { messages: afterRegex, hits: regexApplied } = runRegex(withPersona, regexScripts, {
+  const { messages: afterRegex, hits: regexApplied } = runRegex(withNarrator, regexScripts, {
     dryRun: false,
     placement: {
       user: true,
@@ -330,6 +331,51 @@ function injectUserPersonaIfMissing(
     content: block,
     _origin: 'preset',
     _name: '用户角色（自动注入）',
+  } as ChatMessage);
+  return out;
+}
+
+/**
+ * 旁白设定注入（群聊）。
+ *
+ * 旁白要的是"叙述视角"，不是"某个人物"，所以它不走角色卡：
+ * 没有头像、不进频道栏、不参与发言轮转，只在轮到旁白时补一条 system。
+ *
+ * 放在用户角色之后、正则之前：这样用户自定义的旁白文风同样能吃到
+ * 显示/提示词正则，而不需要另开一条注入通道。
+ *
+ * 预设已经引用过这段文字（极端情况：用户把旁白设定写进预设）就不重复注入。
+ */
+function injectNarratorIfAny(messages: ChatMessage[], narrator?: string): ChatMessage[] {
+  const text = String(narrator || '').trim();
+  if (!text) return messages;
+
+  const probe = text.slice(0, 24);
+  if (probe && messages.some((m) => String(m.content || '').includes(probe))) return messages;
+
+  const block =
+    '本轮你以【旁白】的身份发言，不是其中任何一个人物。\n' +
+    '只写环境、氛围、动作的结果与事件推进；不要替角色说台词，不要替用户做决定，' +
+    '不要把已经发生的对话复述一遍。\n\n' +
+    '旁白设定：\n' +
+    text;
+
+  const out = [...messages];
+  // 排在用户角色之后；没有用户角色时排在第一条历史之前
+  const personaAt = out.findIndex((m) => m._name === '用户角色（自动注入）');
+  let insertAt = out.length;
+  if (personaAt >= 0) {
+    insertAt = personaAt + 1;
+  } else {
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (out[i]._origin === 'history') insertAt = i;
+    }
+  }
+  out.splice(insertAt, 0, {
+    role: 'system',
+    content: block,
+    _origin: 'preset',
+    _name: '旁白（自动注入）',
   } as ChatMessage);
   return out;
 }
