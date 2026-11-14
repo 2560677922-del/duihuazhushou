@@ -169,6 +169,15 @@
      * 这里把这几样按 ST 的形状搭出来，指向原生桥。于是「任何遵守 ST 契约的
      * 预设」都能点选项 —— 不需要为某个预设写适配，也不需要它知道我们存在。
      *
+     * ★ 另外加了**通用 intent 出口**（这次新增，为后续插件留口）：
+     *   - JS：SillyTavern.getContext().intent(action, payload)
+     *         或 window.dhpIntent(action, payload)
+     *   - 声明式：任意元素写 data-dhp-intent="动作名"，其余 data-dhp-* 自动
+     *     收成 payload（值像 JSON 就 parse），点一下即上报。
+     *   原生侧不列 action 白名单、不校验 payload：未知动作记一条 trace 后忽略，
+     *   以后插件想弹浮窗 / 调工具 / 改变量，注册一个 handler 就行，这里不用改。
+     *   例：<button data-dhp-intent="openPanel" data-dhp-title="属性面板">
+     *
      * 注意：它同时跑在父壳（markdown 段落的按钮）和 iframe（整页卡片）里，
      * 所以取 DOM 必须走 parent.document；父壳里 parent === window，等价。
      */
@@ -178,6 +187,13 @@
         'function B(){try{return P.DHPBridge||window.DHPBridge||null}catch(e){return null}}',
         'function D(){try{return (P&&P.document)||document}catch(e){return document}}',
         'function box(){try{return D().getElementById("send_textarea")}catch(e){return null}}',
+        /* 通用 intent 出口：动作名和 payload 都不预设，原生侧注册式分发 */
+        'function emit(a,p){try{var b=B();if(b&&b.intent)b.intent(JSON.stringify({action:String(a||""),payload:p||{}}))}catch(e){}}',
+        'function attrs(el){var o={},as=el.attributes||[];for(var i=0;i<as.length;i++){',
+        'var n=as[i].name;if(n.indexOf("data-dhp-")!==0||n==="data-dhp-intent")continue;',
+        'var k=n.slice(9).replace(/-([a-z])/g,function(m,c){return c.toUpperCase()});',
+        'var v=as[i].value;try{if(v&&(v.charAt(0)==="{"||v.charAt(0)==="["))v=JSON.parse(v)}catch(e){}',
+        'o[k]=v}return o}',
         'var settings={};',
         'try{var b0=B();if(b0&&b0.getSettings)settings=JSON.parse(b0.getSettings()||"{}")||{}}catch(e){settings={}}',
         'function save(){try{var b=B();if(b&&b.saveSettings)b.saveSettings(JSON.stringify(settings))}catch(e){}}',
@@ -186,14 +202,19 @@
         'var es={on:function(){},once:function(){},off:function(){},emit:function(){},removeListener:function(){}};',
         'function ctx(){return {extensionSettings:settings,chat:[],characters:[],character:{},name1:"",name2:"",',
         'generate:fire,',
+        'intent:emit,',
         'sendMessage:function(t){var e=box();if(e&&t!=null)e.value=String(t);fire()},',
         'saveSettings:save,saveSettingsDebounced:save,',
         'eventSource:es,eventTypes:{},event_types:{}}}',
         'var ST=window.SillyTavern||{};',
         'ST.getContext=ctx;ST.saveSettings=save;ST.saveSettingsDebounced=save;',
+        'ST.intent=emit;window.dhpIntent=emit;',
         'ST.eventSource=es;ST.event_types={};ST.libs=ST.libs||{};window.SillyTavern=ST;',
         'document.addEventListener("click",function(e){var n=e.target;while(n&&n!==document){',
-        'if(n.id==="send_but"){e.preventDefault();fire();return}n=n.parentNode}},true);',
+        'if(n.id==="send_but"){e.preventDefault();fire();return}',
+        'if(n.getAttribute){var a=n.getAttribute("data-dhp-intent");',
+        'if(a){try{emit(a,attrs(n))}catch(err){}return}}',
+        'n=n.parentNode}},true);',
         '})();'
     ].join('');
 

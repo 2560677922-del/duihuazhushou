@@ -53,6 +53,10 @@ class SettingsHomeActivity : Activity() {
         findViewById<View>(R.id.shome_plugins).setOnClickListener {
             startActivity(Intent(this, PluginSettingsActivity::class.java))
         }
+        // 智能体基础链路：开关 / 能力 flag / 过程浮窗
+        findViewById<View>(R.id.shome_agent).setOnClickListener {
+            startActivity(Intent(this, AgentSettingsActivity::class.java))
+        }
         findViewById<View>(R.id.shome_gallery).setOnClickListener {
             startActivity(
                 Intent(this, com.dbpg.duihuazhushou.gallery.GalleryActivity::class.java),

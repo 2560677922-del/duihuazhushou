@@ -26,18 +26,25 @@ public final class DhpApp extends Application {
     public void onCreate() {
         super.onCreate();
         instance = this;
+        // 智能体注册表在这里装配一次（幂等）。放 Application 而不是页面，
+        // 是为了 intent / trace 在任意页面都能用，且不与某个 Activity 绑死。
+        com.dbpg.duihuazhushou.agent.AgentRuntime.INSTANCE.init(this);
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
             @Override public void onActivityStarted(Activity a) {
                 MainActivity.attachEngineTo(a);
                 // 界面背景（图/底色/装饰）+ 主题色统一铺设，各页面零改动。
                 // 聊天页/看图器内部自行处理背景，这里会自动跳过。
                 com.dbpg.duihuazhushou.appearance.UiBackdrop.INSTANCE.apply(a);
+                // 迷你浮窗：同一份 view 在界面之间搬家，过程记录不丢
+                com.dbpg.duihuazhushou.agent.AgentOverlay.attach(a);
             }
 
             @Override public void onActivityResumed(Activity a) {
                 MainActivity.attachEngineTo(a);
                 // onResume 再铺一次：从设置页换完主题回来立刻生效
                 com.dbpg.duihuazhushou.appearance.UiBackdrop.INSTANCE.apply(a);
+                // 设置页关掉浮窗再回来，这里立刻撤掉
+                com.dbpg.duihuazhushou.agent.AgentOverlay.attach(a);
             }
 
             @Override public void onActivityCreated(Activity a, Bundle b) { }

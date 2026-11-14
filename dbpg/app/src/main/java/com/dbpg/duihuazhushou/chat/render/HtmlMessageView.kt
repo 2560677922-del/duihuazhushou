@@ -300,13 +300,48 @@ class HtmlMessageView(context: Context) : WebView(context) {
             }
         }
 
-        /** 卡片点了选项且模式为「直接发送」。 */
+        /** 卡片点了选项且模式为「直接发送」（ST 契约，保留兼容）。 */
         @JavascriptInterface
         fun send(text: String?) {
             val v = text?.trim()?.take(MAX_INPUT) ?: return
             if (v.isEmpty()) return
             main.post {
                 if (!destroyed) hostListener?.onSend(v)
+            }
+        }
+
+        /**
+         * ★ 通用 intent 通道：卡片 / 插件往原生发「任意动作」。
+         *
+         * 这里**不列 action 白名单**，也不校验 payload 结构 —— 未知动作由
+         * IntentBus 记一条 trace 后忽略，不报错、不弹窗。以后插件想弹浮窗、
+         * 想触发工具、想改变量，只要往 AgentRuntime.intents 注册一个 handler，
+         * 这一行桥不用再改。
+         *
+         * 格式：{"action":"openPanel","payload":{...}}；payload 缺省为空对象。
+         * 长度只做上限保护（卡片来自模型输出），不做内容校验。
+         */
+        @JavascriptInterface
+        fun intent(json: String?) {
+            val raw = json?.take(MAX_SETTINGS) ?: return
+            val obj = runCatching { org.json.JSONObject(raw) }.getOrNull() ?: return
+            val action = obj.optString("action").trim()
+            if (action.isEmpty()) return
+            val payload = runCatching {
+                val p = obj.optJSONObject("payload")
+                if (p != null) com.dbpg.duihuazhushou.agent.AgentRuntime.toMap(p)
+                else emptyMap()
+            }.getOrDefault(emptyMap())
+            main.post {
+                if (destroyed) return@post
+                com.dbpg.duihuazhushou.agent.AgentRuntime.init(context.applicationContext)
+                com.dbpg.duihuazhushou.agent.AgentRuntime.intents.dispatch(action, payload)
+                // generate 是唯一需要真正落到输入框的动作：沿用既有 onSend 语义，
+                // 避免存量卡选项失效；其它动作完全交给注册表。
+                if (action == "generate") {
+                    val text = payload["text"]?.toString()?.trim()?.take(MAX_INPUT).orEmpty()
+                    if (text.isNotEmpty()) hostListener?.onSend(text)
+                }
             }
         }
 

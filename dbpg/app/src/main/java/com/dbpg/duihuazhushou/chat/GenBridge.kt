@@ -4,8 +4,12 @@ import android.os.Handler
 import android.os.Looper
 import android.webkit.WebView
 import com.dbpg.duihuazhushou.MainActivity
+import com.dbpg.duihuazhushou.agent.AgentRuntime
 import com.dbpg.duihuazhushou.settings.ConnectionStore
 import com.dbpg.duihuazhushou.settings.EngineBridge
+import com.dbpg.stcore.agent.GenRequest
+import com.dbpg.stcore.agent.TraceBus
+import com.dbpg.stcore.agent.TraceEvent
 import com.dbpg.stcore.session.PromptMessage
 import org.json.JSONArray
 import org.json.JSONObject
@@ -39,6 +43,9 @@ object GenBridge {
     private class Holder(val sink: Sink) {
         @Volatile
         var latest: String = ""
+        /** 流式首字只记一条 trace，别把浮窗刷爆。 */
+        @Volatile
+        var deltaTraced: Boolean = false
     }
 
     private val entries = ConcurrentHashMap<String, Holder>()
@@ -95,6 +102,26 @@ object GenBridge {
         val id = "g" + System.nanoTime().toString(36)
         entries[id] = Holder(sink)
 
+        // ---- 智能体编排挂钩（基础链路）----
+        // 编排只算 GenPlan：确定性后端与 Agent 后端产出同一结构，关掉开关时
+        // 返回空 plan、req 与改动前逐字节一致。plan.extras 作为**开放字段**
+        // 合并进请求，前端不认识的自然忽略 —— 以后加能力不用改这里。
+        AgentRuntime.init(MainActivity.getWebView()?.context ?: com.dbpg.duihuazhushou.DhpApp.instance)
+        val genReq = GenRequest(
+            requestId = id,
+            sessionId = sessionId,
+            userInput = userInput,
+            messageCount = messages.size,
+            presetId = presetId,
+            characterId = characterId,
+            configId = configId,
+            extras = mutableMapOf(
+                // 给工具用的原始历史（只在编排层内部读，不并入 req）
+                "messages" to messages.map { "${it.role}: ${it.content.take(200)}" },
+            ),
+        )
+        val plan = AgentRuntime.plan(genReq)
+
         val arr = JSONArray()
         for (m in messages) {
             arr.put(JSONObject().put("role", m.role).put("content", m.content))
@@ -108,6 +135,11 @@ object GenBridge {
             .put("imageInstruction", imageInstruction ?: JSONObject.NULL)
             .put("imageInstructionMax", imageMax)
             .put("config", ConnectionStore.llmRuntime(configId))
+        // 开放扩展位：编排层想传什么就传什么，不在这里列白名单。
+        // 前端不认识的多余字段会自然忽略，所以先加字段不会造成不兼容。
+        for ((k, v) in plan.extras) {
+            runCatching { req.put(k, AgentRuntime.toJsonValue(v)) }
+        }
         // 顶层再带一份：web 侧 buildMessages 优先采用它，避免 assetBinding
         // 缺 presetId 时回退到「引擎当前预设」猜错（重新生成拒答的常见原因）
         if (presetId.isNotBlank()) req.put("presetId", presetId)
@@ -137,6 +169,7 @@ object GenBridge {
      *   找回到哪个界面的回调。提前删掉的话，界面就会永远卡在"生成中"。
      */
     fun stop(requestId: String) {
+        TraceBus.emit(TraceEvent.of(TraceEvent.GEN_STOP, detail = "用户停止"))
         sendStop(requestId)
     }
 
@@ -170,22 +203,29 @@ object GenBridge {
     fun onGenDelta(requestId: String, text: String) {
         val h = entries[requestId] ?: return
         h.latest = text
+        if (!h.deltaTraced) {
+            h.deltaTraced = true
+            TraceBus.emit(TraceEvent.of(TraceEvent.GEN_DELTA, detail = "正文开始输出"))
+        }
         main.post { h.sink.onGenDelta(text) }
     }
 
     fun onGenDone(requestId: String, full: String) {
         val h = entries.remove(requestId) ?: return
+        TraceBus.emit(TraceEvent.of(TraceEvent.GEN_DONE, detail = "${full.length} 字"))
         main.post { h.sink.onGenDone(full) }
     }
 
     fun onGenError(requestId: String, message: String) {
         val h = entries.remove(requestId) ?: return
+        TraceBus.emit(TraceEvent.of(TraceEvent.GEN_ERROR, detail = message.take(200)))
         main.post { h.sink.onGenError(message) }
     }
 
     fun onGenStopped(requestId: String) {
         val h = entries.remove(requestId) ?: return
         val partial = h.latest
+        TraceBus.emit(TraceEvent.of(TraceEvent.GEN_STOP, detail = "${partial.length} 字（部分）"))
         main.post { h.sink.onGenStopped(partial) }
     }
 
