@@ -195,8 +195,8 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             adapter.updateConfig(latest)
         }
         controller.applyAppearance(latest)
-        // 离屏卡片渲染器要挂在当前窗口上（部分机型不 attach 就不 layout，画出来是白图）
-        com.dbpg.duihuazhushou.chat.render.CardRenderer.attach(this)
+        // 位图卡片已是降级路径，离屏 WebView 不再在 onResume 常驻挂载：
+        // 改成首次真正需要画卡片时（onCardNeeded）才 attach，省掉一个常驻 WebView
         applyBackground()
         // 网页设置里可能换了预设 / 正则 / 生图接口，回来跟上
         controller.refreshConfig()
@@ -327,6 +327,8 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         }
 
         override fun onCardNeeded(item: ChatItem, widthPx: Int) {
+            // 降级路径按需挂载离屏 WebView：首次真要画卡片时才 attach，省掉常驻实例
+            com.dbpg.duihuazhushou.chat.render.CardRenderer.attach(this@NativeChatActivity)
             controller.ensureCard(item.actionId, widthPx)
         }
 

@@ -5,10 +5,10 @@ import android.content.Context
 /**
  * 插件的「运行时挂载状态」。
  *
- * ★★ 只存两件事：哪些插件被**安装**了、哪些被**启用**了。
- *    这里**没有删除插件的 API** —— 插件本体在 [PluginCatalog]，随 APK 打包，
- *    删不掉也不需要删。用户点「卸载」只是把 id 从 installed 里移走，
- *    插件仍在库里，随时能再点「安装」挂回来。
+ * ★★ 双清单：出厂清单 [PluginCatalog.BUILTIN_IDS] 随 APK 编译、恒在且只读；
+ *    这里只存**用户可写的两份状态** —— 哪些被挂载（installed）、哪些被启用（enabled）。
+ *    没有删除插件本体的 API：点「卸载」只是把 id 从 installed 移走，随时能装回。
+ *    测试期没有云端库 / 发布页，[restoreBuiltins] 是兜底，保证怎么卸都下得回来。
  *
  * 状态放独立的 SharedPreferences：不动 Appearance、不动会话、不动网页
  * IndexedDB，也不往现有的配置文件里塞字段。
@@ -64,7 +64,7 @@ object PluginStore {
             .apply()
     }
 
-    /** 卸载 = 从运行时移出（★ 不是删除插件本体，之后可再安装）。 */
+    /** 卸载 = 从运行时移出（★ 不是删除插件本体，之后可再安装 / 一键恢复出厂）。 */
     fun uninstall(ctx: Context, id: String) {
         val i = installed(ctx) - id
         val e = enabled(ctx) - id
@@ -82,6 +82,29 @@ object PluginStore {
         enabledCache = e
         prefs(ctx).edit().putString(K_ENABLED, encode(e)).apply()
     }
+
+    /**
+     * 恢复出厂：把所有内置插件重新挂载并启用。
+     *
+     * ★ 为什么需要：测试期没有云端插件库、没有发布页，插件本体编译进 APK，
+     *   「卸载」本身只是移出运行时、随时能单个装回；但用户可能连续卸完、
+     *   或状态文件被清后找不到入口。这个一键恢复以 [PluginCatalog.BUILTIN_IDS]
+     *   为准，保证怎么点都下得回来。幂等，且不会动将来的外部插件。
+     */
+    fun restoreBuiltins(ctx: Context) {
+        val builtins = PluginCatalog.BUILTIN_IDS
+        val i = installed(ctx) + builtins
+        val e = enabled(ctx) + builtins
+        installedCache = i
+        enabledCache = e
+        prefs(ctx).edit()
+            .putString(K_INSTALLED, encode(i))
+            .putString(K_ENABLED, encode(e))
+            .apply()
+    }
+
+    /** 内置插件恒在、不可删除；外部插件将来才可能有真正的删除语义。 */
+    fun isBuiltin(id: String): Boolean = PluginCatalog.isBuiltin(id)
 
     /** 状态被外部改动后调用（设置页 / 跨进程），丢掉内存缓存。 */
     fun invalidate() {

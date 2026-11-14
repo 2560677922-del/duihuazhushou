@@ -63,6 +63,24 @@ class PluginCatalogTest {
             PluginCatalog.ALL.all { it.descriptor.scope == PluginScope.Global })
     }
 
+    /**
+     * 双清单契约：出厂清单来自代码、恒在、只读；卸载只移出运行时、可恢复。
+     * 恢复出厂以 BUILTIN_IDS 为准，因此这份清单必须与 ALL 严格一致，
+     * 且内置插件必须标记为 BUILTIN（将来外部包才谈得上「删除」）。
+     */
+    @Test
+    fun builtinCatalogIsRecoverableAndMarkedAsBuiltin() {
+        val builtins = PluginCatalog.BUILTIN_IDS
+        assertEquals("出厂清单必须与目录一一对应",
+            PluginCatalog.ALL.map { it.descriptor.id }.toSet(), builtins)
+        assertTrue("内置 id 必须能被 isBuiltin 认出", builtins.all { PluginCatalog.isBuiltin(it) })
+        assertFalse("未知 id 不能算内置", PluginCatalog.isBuiltin("not_a_plugin"))
+        assertTrue("内置插件必须标记来源为 BUILTIN",
+            PluginCatalog.ALL.all { it.descriptor.source == PluginSource.BUILTIN })
+        assertTrue("设置页首屏需要一句话摘要，不能留空",
+            PluginCatalog.ALL.all { it.descriptor.summary.isNotBlank() })
+    }
+
     @Test
     fun nonHtmlFenceIsRelabeledAndHardened() {
         // 预设把卡片标成 ```ui / ``` 或文档前带注释时，内置判定会失败并显示源码

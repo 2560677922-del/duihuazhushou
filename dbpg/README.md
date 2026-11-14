@@ -3,8 +3,8 @@
 一个**原生 Android 聊天 App**，兼容 SillyTavern 生态：导入 ST 预设即可用它的提示词顺序、正则、变量和前端卡片，不需要改预设、也不需要为某个预设写适配。
 
 - 包名 `com.dbpg.duihuazhushou` · `versionName 1.1.1` / `versionCode 8`
-- `minSdk 24`（Android 7.0+）· `compileSdk 37` · **无第三方依赖**（不引 androidx / material）
-- APK ≈ 5.5 MB
+- `minSdk 24`（Android 7.0+）· `compileSdk 37` · 仅 `androidx.recyclerview` + `okhttp` 两个运行时依赖，`stcore` 引擎纯 Kotlin 零依赖
+- 体积以实际构建产物为准（不同构建配置差出 1MB+，写死数字会过期；构建版本矩阵见 `docs/避坑清单.md`）
 
 ---
 
@@ -61,7 +61,7 @@
 **外观**
 
 - 主题 / 明暗 / 底板不透明度 / 强调色 / 字号 / 行距 / 字体型号 / 字体颜色 / 气泡宽度 / 背景图
-- 列表里卡片是**离屏位图**（`CardRenderer` + LRU），不是每条一个 WebView
+- 富消息默认走复用的 WebView 壳（`HtmlMessageView` + iframe `srcdoc`，回收池上限 2）；离屏位图（`CardRenderer`）保留为降级路径，判定见 `ChatAdapter.useWeb`
 
 ---
 
@@ -193,7 +193,7 @@ App 内还有两个自查入口：
 
 ## 7. 最容易踩的 8 个坑（完整版见 `docs/避坑清单.md`）
 
-1. **列表里不要塞 WebView**。滚出屏幕再回来就重载，必卡。现在是离屏画 WebP + LRU 复用，WebView 只给可见的富消息且池上限 2。
+1. **不要每条消息各塞一个独立 WebView**。现在只有可见的富消息走复用的 WebView 壳（池上限 2），换内容用 `evaluateJavascript` 而非重新 `loadUrl`；离屏位图是降级路径，不是主方案。判定见 `ChatAdapter.useWeb`。
 2. **`htmlifyNewlines` 会把 `\n` 变 `<br>`**，于是 `---` 变成 `<hr>`。任何按行/按分隔线定位的逻辑都要先归一化。
 3. **整页 HTML 不能过 `htmlifyNewlines`**，否则 `<head>`/`<div>` 之间被插 `<br>`，卡片被撑出一串空行。
 4. **正则双标志不是互斥**。显示侧跳过 `promptOnly`，提示词侧只跳过「纯显示」脚本 —— 详见 `docs/预设兼容性.md`，别照 ST 源码改回去。

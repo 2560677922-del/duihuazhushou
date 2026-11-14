@@ -20,6 +20,19 @@ package com.dbpg.duihuazhushou.chat.render.plugin
  */
 const val PLUGIN_API_VERSION = 1
 
+/**
+ * 插件来源。
+ *
+ * - [BUILTIN]：随 APK 出厂、编译进 dex，永远存在、不可删除；「卸载」只是移出运行时。
+ * - [EXTERNAL]：为将来的外部插件包预留（manifest + 脚本 + 资源），目前尚未启用。
+ *
+ * 有了这个字段，设置页才能区分「能删」和「不能删」，恢复出厂也只认 BUILTIN。
+ */
+enum class PluginSource(val label: String) {
+    BUILTIN("内置"),
+    EXTERNAL("外部"),
+}
+
 /** 一条消息交给插件时的上下文，只读。 */
 data class PluginRenderMeta(
     val messageId: String,
@@ -56,15 +69,19 @@ sealed class PluginScope {
 data class PluginDescriptor(
     val id: String,
     val name: String,
-    /** 一句话说明它认领什么写法，设置页主标题下面那行。 */
+    /** 一句话摘要：设置页首屏只露这一行，抓住「它是干嘛的」。 */
+    val summary: String = "",
+    /** 一句话说明它认领什么写法，收进「详情」里。 */
     val convention: String,
-    /** 详细解释：为什么需要它、装了会怎样、卸了会怎样。 */
+    /** 详细解释：为什么需要它、装了会怎样、卸了会怎样。收进「详情」里。 */
     val description: String,
     val version: String,
     val apiVersion: Int = PLUGIN_API_VERSION,
     /** 数字大者优先；多个插件认领同一条消息时只有最高的生效。 */
     val priority: Int,
     val scope: PluginScope = PluginScope.Global,
+    /** 来源：内置恒在、可恢复；外部为将来预留。设置页据此决定是否显示「不可删除」。 */
+    val source: PluginSource = PluginSource.BUILTIN,
 )
 
 interface RenderPlugin {

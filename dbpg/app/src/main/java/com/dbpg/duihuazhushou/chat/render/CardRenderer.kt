@@ -21,7 +21,13 @@ import java.util.ArrayDeque
 /**
  * 卡片渲染器：把一条"美化 HTML"画成位图，列表里只放 ImageView。
  *
- * ★ 为什么不再用"每条消息一个 WebView"：
+ * ★ 现在是一条**降级路径**，不是主渲染（判定见 `ChatAdapter.useWeb`）：
+ *   富消息默认走 `HtmlMessageView` 的复用 WebView 壳 + iframe `srcdoc`；
+ *   只有 `useWeb == false`（关掉富渲染 / 超长降级 / WebView 壳为空）时，
+ *   `ChatAdapter` 的 else 分支才请求位图。§18.9 曾写「不再主动触发」，
+ *   与代码不符，已勘误。
+ *
+ * ★ 为什么不用"每条消息一个 WebView"：
  *   列表每个 item 都 inflate 一个 WebView，同屏 10 个 ViewHolder 就是 10 个
  *   独立渲染上下文（每个 15~40MB），滚动时还要重新 loadData + 量高度。
  *   实测这是聊天页掉帧和内存飙高的头号原因。
@@ -29,6 +35,10 @@ import java.util.ArrayDeque
  * 做法：全局只留 **1 个** 离屏 WebView，串行把待渲染的卡片画成位图落盘；
  * 列表侧显示位图。代价是卡片内文字不能直接选中 —— 长按菜单提供
  * 「复制原文」和「查看卡片」（全屏单例 WebView）来解决。
+ *
+ * ★ 懒初始化：既然只是降级路径，就不在 `Activity.onResume` 常驻挂载了，
+ *   改为首次真正需要画卡片时（`onCardNeeded`）才 `attach`，省掉一个常驻
+ *   WebView。`attach` 幂等，`detach` 与 Activity 生命周期配对。
  *
  * ★ 为什么要挂到窗口：部分机型对未 attach 的 WebView 不做 layout，
  *   draw 出来是白图。这里复刻引擎 WebView 的做法，挂 1x1 到 decor 上，
@@ -101,7 +111,11 @@ object CardRenderer {
     private val queue = ArrayDeque<Job>()
     private val queuedKeys = HashSet<String>()
 
-    /** 在 Activity.onResume 调用：确保离屏 WebView 挂在当前窗口上。 */
+    /**
+     * 按需挂载：在 `onCardNeeded`（首次真要画卡片）时调用，确保离屏 WebView
+     * 挂在当前窗口上。幂等 —— 同一 Activity 重复调用直接返回。
+     * 不再由 `onResume` 主动调用，避免降级路径占着一个常驻 WebView。
+     */
     fun attach(activity: Activity) {
         if (activity.isFinishing) return
         if (owner === activity && web != null) return

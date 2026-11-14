@@ -25,7 +25,19 @@ object PluginCatalog {
 
     val ALL: List<RenderPlugin> = listOf(FrontendCardPlugin)
 
+    /**
+     * 出厂清单：随 APK 内置、永远存在、不可删除（只读）。
+     *
+     * 「卸载」只把 id 从 [PluginStore] 的已挂载集合移走，本体仍在这里；测试期
+     * 没有云端库 / 发布页，[PluginStore.restoreBuiltins] 以这份清单为准一键装回，
+     * 保证用户怎么点都下得回来。将来接外部插件包时，这类 id 不属于此集合。
+     */
+    val BUILTIN_IDS: Set<String> = ALL.map { it.descriptor.id }.toSet()
+
     fun byId(id: String): RenderPlugin? = ALL.firstOrNull { it.descriptor.id == id }
+
+    /** 是否出厂内置（内置项恒在，不提供删除）。 */
+    fun isBuiltin(id: String): Boolean = id in BUILTIN_IDS
 }
 
 // ---------------------------------------------------------------- 卡片识别
@@ -181,6 +193,7 @@ private object FrontendCardPlugin : RenderPlugin {
         // id 沿用最早那个，老用户的安装 / 启用状态直接继续有效，不用重装
         id = "panel_data_adapter",
         name = "通用前端卡渲染器",
+        summary = "让依赖「小白X / 酒馆助手」写法的预设，卡片能正常显示",
         convention = "``` 围栏里的 HTML：完整网页或片段（非 html 的围栏标注也认）",
         description = "只做一件事：把围栏里的 HTML 补好 viewport / reset / 高度约束，交给 iframe 沙箱渲染，页面里的脚本、折叠窗、选项按钮照常运行；顺手把非 html 的围栏标注统一成 html，避免被当成源码显示。不解析剧情、不生成面板、不认任何预设专有标签 —— 面板长什么样、有没有折叠，由预设自己的显示正则与模板决定。不改正则、不改请求体、不动正文；装上才生效，卸载立即回退。",
         version = "3.0.0",

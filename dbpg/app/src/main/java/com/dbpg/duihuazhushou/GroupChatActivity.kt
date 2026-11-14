@@ -186,6 +186,8 @@ class GroupChatActivity : Activity() {
         controllers.values.forEach { runCatching { it.shutdown() } }
         controllers.clear()
         com.dbpg.duihuazhushou.chat.render.HtmlMessageView.releaseAll()
+        // 离屏 WebView 属于本 Activity 的 context，attach 过就得在这里销毁
+        com.dbpg.duihuazhushou.chat.render.CardRenderer.detach(this)
     }
 
     // ------------------------------------------------------------ 频道栏
@@ -1325,6 +1327,9 @@ class GroupChatActivity : Activity() {
         }
 
         override fun onCardNeeded(item: ChatItem, widthPx: Int) {
+            // 群聊也走位图降级路径，之前漏了 attach 导致这里静默降级成纯文本；
+            // 按需挂载（首次真要画卡片才建），与 onDestroy 的 detach 配对
+            com.dbpg.duihuazhushou.chat.render.CardRenderer.attach(this@GroupChatActivity)
             controllerFor(activeSessionId).ensureCard(item.actionId, widthPx)
         }
 

@@ -11,7 +11,7 @@
 
 **一句话定位：把 SillyTavern 的「组装提示词 + 渲染输出」搬到了手机上，并且只留你觉得需要的那部分。**
 
-- **轻**：Android 7.0+ 即可运行；APK 约 4.3 MB（debug 构建，未含原生库，纯 WebView + 原生 UI）；界面全部原生自绘，不依赖 androidx / material
+- **轻**：Android 7.0+ 即可运行；界面全部原生自绘，聊天列表用 RecyclerView 复用，只有富消息才启用 WebView。APK 体积以实际构建产物为准（写死数字会过期）
 - **本地优先**：会话、角色卡、图片、世界书、正则都存在你本机，卸载即清；API 密钥不外传
 - **兼容傻酒馆部分生态**：导入 SillyTavern 的预设、角色卡、世界书、正则就能直接用，不用为某个预设写适配
 
@@ -63,7 +63,9 @@ cd dbpg
 ```
 
 只改原生代码时可跳过 `npm run build`，但 `dist/` 必须已经存在。
-`local.properties` 里的 `sdk.dir` 用正斜杠（`C:/Users/...`）；`compileSdk 37`，需 JDK 17+ 与匹配的 Gradle / AGP。
+`local.properties` 里的 `sdk.dir` 用正斜杠（`C:/Users/...`）。构建版本矩阵（JDK 25 / Gradle 9.8.0 / AGP 9.4.1 / compileSdk 37 / buildTools 36.0.0）见 `dbpg/docs/避坑清单.md`，升级时一起动。
+
+> **实现状态以代码为准**：富消息渲染形态见 `ChatAdapter.useWeb` —— WebView 壳是主路径，离屏位图是降级路径。文档若与代码冲突，以代码为准，并跑一次 `python3 scripts/check_docs_drift.py` 拦住过时断言。
 
 ## 目录
 
