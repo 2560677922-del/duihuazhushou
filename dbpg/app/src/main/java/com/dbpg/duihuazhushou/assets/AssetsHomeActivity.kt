@@ -157,8 +157,9 @@ class AssetsHomeActivity : Activity() {
 
         when (tab) {
             TAB_CHARACTER -> {
-                status.text = "角色卡与用户角色：角色卡是 AI 要演的人，用户角色是「你」"
-                box.addView(actionCard("🎭  打开角色卡库", "导入 .png / .json 卡 · 分段浏览设定 · 换当前角色") {
+                status.text = "角色卡是 AI 要演的人，用户角色是「你」。建好卡只是进库，" +
+                    "聊天里要选它：聊天页 ⋯ →「本对话角色」，或点顶部那条提示"
+                box.addView(actionCard("🎭  打开角色卡库", "导入 .png / .json 卡 · 分段浏览设定 · 建好卡后在聊天里选它") {
                     startActivity(
                         Intent(this, com.dbpg.duihuazhushou.character.CharacterListActivity::class.java),
                     )

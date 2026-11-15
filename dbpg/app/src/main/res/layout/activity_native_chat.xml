@@ -107,7 +107,7 @@
         android:paddingEnd="14dp"
         android:paddingTop="9dp"
         android:paddingBottom="9dp"
-        android:text="还没选角色卡 · 点这里决定 AI 演谁 ›"
+        android:text="还没选角色卡 · 点这里从卡库选 ›"
         android:textColor="#8A6A26"
         android:textSize="12sp"
         android:visibility="gone"

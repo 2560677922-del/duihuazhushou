@@ -30,6 +30,8 @@ import com.dbpg.duihuazhushou.chat.GenBridge
 import com.dbpg.duihuazhushou.chat.ImageFileCache
 import com.dbpg.duihuazhushou.chat.QuickImage
 import com.dbpg.duihuazhushou.character.CharacterAvatar
+import com.dbpg.duihuazhushou.character.CharacterJson
+import com.dbpg.duihuazhushou.character.CharacterRepository
 import com.dbpg.duihuazhushou.gallery.ImageViewerActivity
 import com.dbpg.duihuazhushou.session.GroupStore
 import com.dbpg.duihuazhushou.session.SessionBindingStore
@@ -1054,7 +1056,36 @@ class GroupChatActivity : Activity() {
             .show()
     }
 
+    /**
+     * 邀请成员。
+     *
+     * 先把**角色卡库（本地文件）**同步进网页 assets，再拉清单 ——
+     * 两份存储平时靠「用它开聊」合并，用户建好卡直接来这里邀请，
+     * 清单里是空的，会以为卡没建上。
+     */
     private fun inviteMembers() {
+        syncLibraryThen { showInviteDialog() }
+    }
+
+    private fun syncLibraryThen(then: () -> Unit) {
+        val local = runCatching {
+            CharacterRepository(this).list().filter { it.card != null }
+        }.getOrDefault(emptyList())
+        if (local.isEmpty()) {
+            loadCatalog(then)
+            return
+        }
+        var pending = local.size
+        for (f in local) {
+            val json = CharacterJson.toV2(f.card!!)
+            GenBridge.ensureCharacter(json) {
+                pending--
+                if (pending == 0) loadCatalog(then)
+            }
+        }
+    }
+
+    private fun showInviteDialog() {
         val chars = catalog?.optJSONArray("characters") ?: run {
             toast("引擎还没就绪，稍后再试")
             return
@@ -1068,7 +1099,7 @@ class GroupChatActivity : Activity() {
             if (id.isNotBlank() && id !in have) candidates.add(id to name)
         }
         if (candidates.isEmpty()) {
-            toast("角色库里没有可邀请的角色")
+            toast("没有可邀请的卡：先去「资产 → 角色 → 打开角色卡库」建一张")
             return
         }
         val names = candidates.map { it.second }.toTypedArray()
@@ -1098,10 +1129,12 @@ class GroupChatActivity : Activity() {
         controllers.values.forEach { it.refreshConfig() }
     }
 
-    private fun loadCatalog() {
+    private fun loadCatalog(then: (() -> Unit)? = null) {
         GenBridge.fetchAssetCatalog { json ->
-            if (json.isNullOrBlank()) return@fetchAssetCatalog
-            catalog = runCatching { JSONObject(json) }.getOrNull()
+            if (!json.isNullOrBlank()) {
+                catalog = runCatching { JSONObject(json) }.getOrNull()
+            }
+            then?.invoke()
         }
     }
 

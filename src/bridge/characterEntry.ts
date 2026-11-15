@@ -16,6 +16,29 @@ function cardName(raw: any): string {
 }
 
 /**
+ * 把一张角色卡「只导入不进对话」——给原生选卡列表用。
+ *
+ * 背景：原生角色库（文件）与网页 assets（IndexedDB）是两份存储，平时只在
+ * 「用它开聊」时合并一次。用户在卡库里建好卡，选卡列表却还是空的，
+ * 根因就是卡没进 assets。这里补一个纯导入入口：
+ *
+ * - 同名复用，不覆盖（用户改过的卡不能被旧文件顶掉）；
+ * - 不设当前角色、不建会话、不跳页面 —— 选哪个由原生写会话绑定；
+ * - 同步返回 `{"ok":true,"uid":…,"name":…}`，因为原生要立刻拿 uid。
+ *   落盘本身是异步的（`void save()`），不影响这次会话的生成。
+ */
+export function ensureCharacterToLibrary(rawJson: string): string {
+  try {
+    const raw = JSON.parse(rawJson || '{}');
+    const obj = useAssetsStore().ensureCharacter(raw);
+    return JSON.stringify({ ok: true, uid: obj?._uid || '', name: obj?.name || '' });
+  } catch (e: any) {
+    console.warn('[角色卡] 导入资产库失败', e);
+    return JSON.stringify({ ok: false, error: e?.message || String(e) });
+  }
+}
+
+/**
  * 用一张角色卡开新对话。
  *
  * @param rawJson 标准 V2 JSON 字符串（原生只负责读文件与解析，建档归 web store）

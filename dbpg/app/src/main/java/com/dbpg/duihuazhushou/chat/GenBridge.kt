@@ -219,6 +219,22 @@ object GenBridge {
     }
 
     /**
+     * 把一张角色卡（V2 JSON）导进网页资产库，回调 `{"ok":true,"uid":…,"name":…}`。
+     *
+     * 为什么要这条：原生角色卡库是文件，网页 assets 是 IndexedDB，两份存储。
+     * 用户在建卡之后直接来选卡，卡还没进 assets，列表就是空的。
+     * 这里只导入、不开聊、不改当前角色；uid 由网页生成并立刻返回。
+     */
+    fun ensureCharacter(v2Json: String, onResult: (JSONObject?) -> Unit) {
+        evalJson(
+            "window.__dhpGen && window.__dhpGen.ensureCharacter ? " +
+                "window.__dhpGen.ensureCharacter(${JSONObject.quote(v2Json)}) : null",
+        ) { raw ->
+            onResult(raw?.let { runCatching { JSONObject(it) }.getOrNull() })
+        }
+    }
+
+    /**
      * 把「会话 → 角色卡」绑定到引擎（会话级映射，不动全局当前角色）。
      *
      * 打开会话时调一次：显示侧的 `{{char}}` 宏、生成侧取角色卡都按它走。

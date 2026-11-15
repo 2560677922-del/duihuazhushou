@@ -141,6 +141,42 @@ export const useAssetsStore = defineStore('assets', {
     },
 
     // --- 导入：parsecard 解析 → 标记 _uid → 存库 ---
+
+    /**
+     * 确保一张卡在库里，**同步**返回条目（落盘异步）。
+     *
+     * 为什么单独有这么一个：原生角色卡库是文件（`filesDir/characters`），
+     * 网页的 assets 是 IndexedDB，两份存储平时靠「用它开聊」这一次动作合并。
+     * 结果就是用户在原生卡库里建了卡，单人聊天/群聊的选卡列表里却看不到 ——
+     * 因为那份清单来自 assets，卡根本还没进来。
+     *
+     * 这里给原生一个「只导入、不开聊、不改当前角色」的入口：
+     * 同名卡直接复用（用户改过的卡不被旧文件顶掉），没有就建档。
+     * 必须同步返回 `_uid`：原生要拿它写会话绑定，await 一次就错过点击了。
+     */
+    ensureCharacter(raw: any): any {
+      const card = CharacterCard.fromJSON(raw);
+      const json = card.toJSON();
+      const name = String(json?.name ?? '').trim();
+      const hit = name ? (this.characters as any[]).find((c: any) => c?.name === name) : undefined;
+      if (hit) {
+        /*
+         * 同名不是「丢弃」，是「以文件为准刷新」：
+         * 原生卡库才是用户编辑卡的地方，同一张卡改了设定后回来选，
+         * 生成必须用新内容。保留 _uid（会话绑定存的是它），其余字段覆盖。
+         */
+        Object.assign(hit, json, { _uid: hit._uid, _kind: 'character' });
+        void this.save();
+        return hit;
+      }
+      const obj = mark(json, 'character');
+      this.characters.push(obj);
+      // 与 importCharacter 一致：第一张卡自动成为当前角色
+      if (!this.currentCharacterId) this.currentCharacterId = obj._uid;
+      void this.save();
+      return obj;
+    },
+
     async importCharacter(raw: any): Promise<any> {
       const card = CharacterCard.fromJSON(raw);
       const obj = mark(card.toJSON(), 'character');

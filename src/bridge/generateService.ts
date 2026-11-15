@@ -34,6 +34,7 @@ import { loadSpresetRuntime, stripPrivateDirectives } from '../engine/spresetRun
 import { imageMarkerInstruction } from '../engine/imageMarker';
 import { flattenForEngine } from '../engine/regexGroups';
 import { entriesListOf } from '../engine/stImport';
+import { ensureCharacterToLibrary } from './characterEntry';
 import {
   activatePromptInOrder,
   getActivePromptOrder,
@@ -1837,10 +1838,23 @@ function assetsDetail(): string {
       idx: i,
     })),
   }));
+  /*
+   * 角色卡清单。以前这里只给 characterId，原生「本对话角色」于是永远读到空列表，
+   * 选卡时弹出的是「资产页里还没有启用的条目」—— 用户明明建好了卡，
+   * 却被告知去「启用」，因为这份数据根本没传过去。
+   */
+  const characters = (a.characters || []).map((c: any) => ({
+    id: c._uid || c.id || '',
+    name: c.name || c.data?.name || '未命名角色',
+    // 角色卡没有「启用」开关：在库里就是可选。带 enabled 只为与预设/世界书同形。
+    enabled: true,
+    current: c._uid === a.currentCharacterId,
+  }));
   return JSON.stringify({
     presets,
     worldBooks: books,
     regexGroups,
+    characters,
     characterId: a.currentCharacterId || '',
   });
 }
@@ -1988,6 +2002,8 @@ export function installGenerateService(): void {
     displayConfig,
     assetCatalog,
     bindSession,
+    // 原生「本对话角色」：把卡库里的卡导进 assets，返回 uid（见 ensureCharacterToLibrary）
+    ensureCharacter: ensureCharacterToLibrary,
     setActive: (json: string) => {
       void setActive(json);
     },

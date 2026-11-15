@@ -2,6 +2,11 @@ package com.dbpg.duihuazhushou.chat
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
+import com.dbpg.duihuazhushou.character.CharacterFile
+import com.dbpg.duihuazhushou.character.CharacterJson
+import com.dbpg.duihuazhushou.character.CharacterListActivity
+import com.dbpg.duihuazhushou.character.CharacterRepository
 import com.dbpg.duihuazhushou.character.PersonaStore
 import com.dbpg.duihuazhushou.settings.ConnectionStore
 import com.dbpg.duihuazhushou.settings.EngineBridge
@@ -64,6 +69,10 @@ object ChatAssetsDialog {
         val dnaCount = ConnectionStore.snapshot("getImageStyle")?.optJSONArray("dnaList")?.length() ?: 0
         fun mark(configured: Boolean) = if (configured) "✓" else "·"
         val charName = b.characterName?.takeIf { it.isNotBlank() }
+        // 卡库里的卡数量：用户「建好了卡却看不到」时，这一行是唯一的解释入口
+        val localCards = runCatching {
+            CharacterRepository(activity).list().count { it.card != null }
+        }.getOrDefault(0)
         val personaName = b.personaId?.let { id ->
             PersonaStore.list(activity).firstOrNull { it.id == id }?.name
         }
@@ -71,7 +80,7 @@ object ChatAssetsDialog {
             "${mark(b.worldBookIds != null)} 世界书（可多选，共 $wbCount 本启用）",
             "${mark(b.presetId != null)} 预设（单选）",
             "${mark(b.regexGroupIds != null)} 正则组（可多选，共 $rxCount 组启用）",
-            "${mark(b.characterId != null)} 角色卡（AI 扮演谁${if (charName != null) "：$charName" else ""}）",
+            "${mark(b.characterId != null)} 角色卡（${charName ?: "未指定"} · 卡库 $localCards 张）",
             "${mark(b.personaId != null)} 用户角色（我在这故事里是谁${if (personaName != null) "：$personaName" else ""}）",
             "${mark(b.dnaIds != null)} 角色 DNA（可多选，共 $dnaCount 条启用）",
         )
@@ -202,42 +211,121 @@ object ChatAssetsDialog {
         }
     }
 
-    /** 角色卡单选。空会话不再自动套全局卡，这里选谁就是谁。 */
+    /**
+     * 角色卡单选。列表来自**角色卡库（本地文件）**，不是网页资产清单。
+     *
+     * 之前这里读 `getAssets.characters`，而那份清单由网页 assets 提供 ——
+     * 用户在原生卡库里建的卡还没走「用它开聊」，根本没进 assets，
+     * 于是列表为空，弹的是「资产页里还没有启用的条目」。用户看到的
+     * 就是「卡都建好了，却让我去启用，可哪来的启用按钮」。
+     *
+     * 现在：卡库里的卡直接可选；选中时用 `ensureCharacter` 把卡导进 assets
+     * 并拿回 uid（同名复用、内容以文件为准），再写会话绑定。
+     */
     private fun pickCharacter(
         activity: Activity,
         sessionId: String,
         a: JSONObject,
         onSaved: () -> Unit,
     ) {
-        val chars = ArrayList<Pair<String, String>>()
-        a.optJSONArray("characters")?.let { arr ->
-            for (i in 0 until arr.length()) {
-                val o = arr.optJSONObject(i) ?: continue
-                val id = o.optString("id")
-                if (id.isNotBlank()) {
-                    chars.add(id to o.optString("name").ifBlank { "未命名角色" })
+        val local = CharacterRepository(activity).list().filter { it.card != null }
+        val b = SessionBindingStore.load(activity, sessionId)
+
+        // 卡库为空时才退回网页清单 —— 网页版建过卡、但没导出到本机的老用户
+        if (local.isEmpty()) {
+            val remote = ArrayList<Pair<String, String>>()
+            a.optJSONArray("characters")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val id = o.optString("id")
+                    if (id.isNotBlank()) {
+                        remote.add(id to o.optString("name").ifBlank { "未命名角色" })
+                    }
                 }
             }
-        }
-        if (chars.isEmpty()) {
-            warnEmpty(activity)
+            if (remote.isEmpty()) {
+                promptOpenLibrary(activity)
+                return
+            }
+            showCharacterChoice(
+                activity, sessionId, remote.map { Triple(it.first, it.second, null) }, b, onSaved,
+            )
             return
         }
-        val labels = arrayOf("不指定（只按预设 / 世界书演）") + chars.map { it.second }
-        val b = SessionBindingStore.load(activity, sessionId)
-        val current = (b.characterId?.let { id -> chars.indexOfFirst { it.first == id } } ?: -1) + 1
-        AlertDialog.Builder(activity)
+
+        showCharacterChoice(
+            activity, sessionId, local.map { Triple("", it.displayName, it) }, b, onSaved,
+        )
+    }
+
+    /** 选项：name + 已有 uid（网页卡）/ 本地文件（待导入）。 */
+    private fun showCharacterChoice(
+        activity: Activity,
+        sessionId: String,
+        options: List<Triple<String, String, CharacterFile?>>,
+        binding: SessionBindingStore.Binding,
+        onSaved: () -> Unit,
+    ) {
+        if (options.isEmpty()) return
+        val labels = arrayOf("不指定（只按预设 / 世界书演）") + options.map { it.second }
+        // 当前项：先按 uid 认，再按名字认（从文件导入时 uid 还没生成）
+        val current = options.indexOfFirst {
+            (binding.characterId != null && it.first == binding.characterId) ||
+                (binding.characterName != null && it.second == binding.characterName)
+        } + 1
+
+        val dialog = AlertDialog.Builder(activity)
             .setTitle("这个对话由谁扮演？")
-            .setSingleChoiceItems(labels, current) { dialog, which ->
-                val old = SessionBindingStore.load(activity, sessionId)
-                val next = if (which == 0) {
-                    old.copy(characterId = null, characterName = null)
-                } else {
-                    old.copy(characterId = chars[which - 1].first, characterName = chars[which - 1].second)
+            .setSingleChoiceItems(labels, current) { d, which ->
+                d.dismiss()
+                if (which == 0) {
+                    val old = SessionBindingStore.load(activity, sessionId)
+                    SessionBindingStore.save(
+                        activity, sessionId, old.copy(characterId = null, characterName = null),
+                    )
+                    onSaved()
+                    return@setSingleChoiceItems
                 }
-                SessionBindingStore.save(activity, sessionId, next)
-                dialog.dismiss()
-                onSaved()
+                val (uid, name, file) = options[which - 1]
+                if (uid.isNotBlank()) {
+                    val old = SessionBindingStore.load(activity, sessionId)
+                    SessionBindingStore.save(
+                        activity, sessionId, old.copy(characterId = uid, characterName = name),
+                    )
+                    onSaved()
+                    return@setSingleChoiceItems
+                }
+                val json = file?.card?.let { CharacterJson.toV2(it) } ?: return@setSingleChoiceItems
+                // 导入要跨一次 WebView：回调回来再落绑定，别在异步前先写半截
+                GenBridge.ensureCharacter(json) { res ->
+                    if (activity.isFinishing || activity.isDestroyed) return@ensureCharacter
+                    val id = res?.optString("uid").orEmpty()
+                    if (id.isBlank()) {
+                        AlertDialog.Builder(activity)
+                            .setMessage("这张卡没能导入引擎（${res?.optString("error").orEmpty()}）。再试一次，或去角色卡库重新保存。")
+                            .setPositiveButton("知道了", null)
+                            .show()
+                        return@ensureCharacter
+                    }
+                    val old = SessionBindingStore.load(activity, sessionId)
+                    SessionBindingStore.save(
+                        activity, sessionId, old.copy(characterId = id, characterName = name),
+                    )
+                    onSaved()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+        dialog.setCanceledOnTouchOutside(true)
+    }
+
+    /** 卡库是空的：直接给一条去建卡的路，而不是让他自己猜「启用」在哪。 */
+    private fun promptOpenLibrary(activity: Activity) {
+        AlertDialog.Builder(activity)
+            .setTitle("还没有角色卡")
+            .setMessage("角色卡库里还没有卡。去「资产 → 角色 → 打开角色卡库」新建或导入一张，再回来选。")
+            .setPositiveButton("去角色卡库") { _, _ ->
+                activity.startActivity(Intent(activity, CharacterListActivity::class.java))
             }
             .setNegativeButton("取消", null)
             .show()
@@ -330,7 +418,7 @@ object ChatAssetsDialog {
 
     private fun warnEmpty(activity: Activity) {
         AlertDialog.Builder(activity)
-            .setMessage("资产页里还没有启用的条目，先去资产页启用再来配置。")
+            .setMessage("资产页里还没有可用的条目，先去资产页添加或启用，再回来配置。")
             .setPositiveButton("知道了", null)
             .show()
     }
