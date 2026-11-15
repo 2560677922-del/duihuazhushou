@@ -97,6 +97,14 @@ class ChatController(
 
         /** 摘要有变化（新增/编辑/删除）。默认不关心。 */
         fun onSummaryChanged() {}
+
+        /**
+         * 本对话绑定的角色变了（含"打开会话时读到的"）。
+         *
+         * 单人聊天用它在没选卡时显示一条提示条 —— 空会话不再自动套全局卡之后，
+         * 用户需要知道"现在还没指定 AI 演谁"。
+         */
+        fun onBindingChanged(characterName: String, inGroup: Boolean) {}
     }
 
     var doc: SessionDoc? = null
@@ -202,8 +210,15 @@ class ChatController(
      *
      * @param sessionId 会话 id；为空时才去快照里找（兼容老入口）
      * @param snapshot  兜底用：本地还没有这份会话时，从网页快照构造一份再落盘
+     * @param adoptGlobalCharacter 空会话没有绑定时，是否把「网页当前角色卡」固化进来。
+     *        只有网页的「用它开聊」入口该传 true；原生首页/会话列表进来的一律 false，
+     *        否则用户新建冒险会被自动套上一张没选过的卡。
      */
-    fun open(sessionId: String, snapshot: String? = null) {
+    fun open(
+        sessionId: String,
+        snapshot: String? = null,
+        adoptGlobalCharacter: Boolean = false,
+    ) {
         SessionRepo.init(appContext)
         io.execute {
             val snap = snapshot?.takeIf { it.isNotBlank() }
@@ -215,13 +230,13 @@ class ChatController(
                 SessionRepo.saveSync(made)
                 made
             }
-            main.post { bind(d) }
+            main.post { bind(d, adoptGlobalCharacter) }
         }
     }
 
-    private fun bind(d: SessionDoc) {
+    private fun bind(d: SessionDoc, adoptGlobalCharacter: Boolean = false) {
         doc = d
-        bindAssets(d)
+        bindAssets(d, adoptGlobalCharacter)
         sink.onTitle(d.title.ifBlank { "冒险" })
         render(true)
         refreshDisplayConfig()
@@ -235,15 +250,18 @@ class ChatController(
      * 这一步是修"换个角色再回来就串卡"的关键：会话自己记着跟谁聊，
      * 打开时把这张卡绑上去，显示宏 `{{char}}` 用的就是它，不靠全局单例。
      */
-    private fun bindAssets(d: SessionDoc) {
+    private fun bindAssets(d: SessionDoc, adoptGlobalCharacter: Boolean = false) {
         val b = SessionBindingStore.load(appContext, d.id)
         summaryPresetId = b.presetId
         characterId = b.characterId
         characterName = b.characterName
-        persona = com.dbpg.duihuazhushou.character.PersonaStore.active(appContext)
+        // 用户角色：对话里单独选过就用它，否则跟随全局当前项
+        persona = b.personaId?.let { com.dbpg.duihuazhushou.character.PersonaStore.get(appContext, it) }
+            ?: com.dbpg.duihuazhushou.character.PersonaStore.active(appContext)
         group = d.group?.let { GroupStore.get(appContext, it.groupId) }
         GenBridge.bindSession(d.id, b.characterId.orEmpty())
-        if (b.characterId == null && d.actions.isEmpty()) {
+        sink.onBindingChanged(characterName.orEmpty(), group != null)
+        if (adoptGlobalCharacter && b.characterId == null && d.actions.isEmpty()) {
             adoptCurrentCharacter(d, b)
         } else if (b.characterId != null && b.characterName == null) {
             fillCharacterName(d, b)
@@ -266,6 +284,7 @@ class ChatController(
 
             SessionBindingStore.save(appContext, d.id, b.copy(characterName = name))
             characterName = name
+            sink.onBindingChanged(name, group != null)
             render(true)
         }
     }
@@ -305,6 +324,7 @@ class ChatController(
             characterId = cid
             characterName = name
             GenBridge.bindSession(d.id, cid)
+            sink.onBindingChanged(name, false)
             render(true)
         }
     }
@@ -1038,7 +1058,10 @@ class ChatController(
                 ?: characterId.orEmpty()
         }
         // 公共区里用户自己说话 / 旁白：都不注入角色卡（否则会套用成员或上次选中的卡）
+        // roleId 为空也表示"这个对话没有指定角色"：不能再让 web 回退到
+        // assets.getCurrentCharacter()，否则用户没选过卡也会被自动套一张。
         val noCharacter = isNarrator ||
+            roleId.isBlank() ||
             (d.group?.kind == GroupRef.KIND_PUBLIC && speakerId.isEmpty())
         val narratorText = if (isNarrator) group?.narratorPrompt.orEmpty() else ""
 

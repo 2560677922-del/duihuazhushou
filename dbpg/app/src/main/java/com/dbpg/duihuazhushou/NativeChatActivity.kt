@@ -66,6 +66,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     private lateinit var titleView: TextView
     private lateinit var quickImgBtn: View
     private lateinit var modelChip: TextView
+    private lateinit var roleHint: TextView
     private lateinit var jumpBottomBtn: TextView
     private lateinit var summaryBtn: View
 
@@ -118,6 +119,16 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         modelChip = findViewById(R.id.chat_model_chip)
         modelChip.setOnClickListener { showModelPicker() }
         refreshModelChip()
+
+        // 没选角色卡时的提示条：点一下就能选，不用先翻 ⋯ 菜单
+        roleHint = findViewById(R.id.chat_role_hint)
+        roleHint.setOnClickListener {
+            val sid = controller?.doc?.id.orEmpty()
+            if (sid.isBlank()) return@setOnClickListener
+            com.dbpg.duihuazhushou.chat.ChatAssetsDialog.showCharacter(this, sid) {
+                controller?.refreshConfig()
+            }
+        }
 
         /*
          * 「回到最新」：往上翻历史后出现，点一下回底部。
@@ -178,7 +189,9 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             finish()
             return
         }
-        controller.open(sessionId, snapshot)
+        // 带快照 = 网页的「用它开聊」入口，空会话沿用当前角色卡；
+        // 原生首页/会话列表进来的一律不自动套卡，让用户自己选。
+        controller.open(sessionId, snapshot, adoptGlobalCharacter = snapshot.isNotBlank())
 
         close.setOnClickListener { finish() }
         more.setOnClickListener { showMoreMenu() }
@@ -257,6 +270,12 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         if (viewingLog) return
         adapter.patchStreaming(actionId, text)
         if (stickToBottom) scrollToBottom()
+    }
+
+    override fun onBindingChanged(characterName: String, inGroup: Boolean) {
+        if (!::roleHint.isInitialized) return
+        // 群聊频道由成员表决定角色；单人没卡才提示
+        roleHint.visibility = if (!inGroup && characterName.isBlank()) View.VISIBLE else View.GONE
     }
 
     override fun onTitle(title: String) {
@@ -545,8 +564,18 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         val sessionItems = mutableListOf(
             MenuEntry("✏️", "重命名会话", "给这次冒险起个好记的名字") { promptRename() },
             MenuEntry("🔍", "搜索消息", "搜关键词定位剧情，方便改写") { showSearch() },
-            MenuEntry("📚", "本对话资产", "世界书 / 预设 / 正则 / DNA，按对话单独配置") {
-                com.dbpg.duihuazhushou.chat.ChatAssetsDialog.show(this, controller?.doc?.id.orEmpty())
+            MenuEntry("🎭", "本对话角色", "AI 扮演谁、我在这故事里是谁，按对话单独选") {
+                com.dbpg.duihuazhushou.chat.ChatAssetsDialog.showCharacter(
+                    this,
+                    controller?.doc?.id.orEmpty(),
+                ) { controller?.refreshConfig() }
+            },
+            MenuEntry("📚", "本对话资产", "世界书 / 预设 / 正则 / 角色 / 用户角色") {
+                // onSaved 必须回调：选完立刻重读绑定，不用退出重进才生效
+                com.dbpg.duihuazhushou.chat.ChatAssetsDialog.show(
+                    this,
+                    controller?.doc?.id.orEmpty(),
+                ) { controller?.refreshConfig() }
             },
             MenuEntry("🎨", "出图参考图", "发给生图模型锁人物形象，随时换（跟风格参考图是两回事）") {
                 showGenRefDialog()

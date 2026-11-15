@@ -45,6 +45,13 @@ object SessionBindingStore {
         val worldBookIds: List<String>? = null,
         /** 引用的预设 id；null = 跟随全局 */
         val presetId: String? = null,
+        /**
+         * 这个对话里「我」是谁（[com.dbpg.duihuazhushou.character.PersonaStore] 的 id）。
+         *
+         * null = 跟随全局当前用户角色。用户角色只影响 `{{user}}` 名字与人设块，
+         * 不注入角色卡，所以按对话分开存不会和「扮演谁」打架。
+         */
+        val personaId: String? = null,
         /** 引用的正则组 id */
         val regexGroupIds: List<String>? = null,
         /** 引用的角色 DNA id */
@@ -59,7 +66,7 @@ object SessionBindingStore {
     ) {
         val isDefault: Boolean
             get() = characterId == null && characterName == null && worldBookIds == null && presetId == null &&
-                regexGroupIds == null && dnaIds == null && apiConfigId == null
+                personaId == null && regexGroupIds == null && dnaIds == null && apiConfigId == null
     }
 
     private val lock = Any()
@@ -73,6 +80,7 @@ object SessionBindingStore {
             characterName = if (o.has("characterName")) o.optString("characterName").ifEmpty { null } else null,
             worldBookIds = o.optJSONArray("worldBookIds")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } },
             presetId = if (o.has("presetId")) o.optString("presetId") else null,
+            personaId = if (o.has("personaId")) o.optString("personaId").ifEmpty { null } else null,
             regexGroupIds = o.optJSONArray("regexGroupIds")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } },
             dnaIds = o.optJSONArray("dnaIds")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } },
             apiConfigId = if (o.has("apiConfigId")) o.optString("apiConfigId").ifEmpty { null } else null,
@@ -87,6 +95,7 @@ object SessionBindingStore {
         b.characterName?.let { o.put("characterName", it) }
         b.worldBookIds?.let { o.put("worldBookIds", JSONArray(it)) }
         b.presetId?.let { o.put("presetId", it) }
+        b.personaId?.let { o.put("personaId", it) }
         b.regexGroupIds?.let { o.put("regexGroupIds", JSONArray(it)) }
         b.dnaIds?.let { o.put("dnaIds", JSONArray(it)) }
         b.apiConfigId?.let { o.put("apiConfigId", it) }

@@ -197,7 +197,11 @@ function characterOf(sessionId: string, explicit?: string): any {
   const assets = useAssetsStore();
   const id = String(explicit || sessionCharacters.get(sessionId) || '');
   if (id) {
-    const hit = (assets.characters as any[]).find((c: any) => c?._uid === id);
+    // 同时认 _uid / id：导入的角色卡不一定有 _uid，只按 _uid 找会把
+    // "选好的卡"当成没选，最后静默回退到全局当前角色。
+    const hit = (assets.characters as any[]).find(
+      (c: any) => c?._uid === id || c?.id === id,
+    );
     if (hit) return hit;
   }
   return assets.getCurrentCharacter();
@@ -283,11 +287,20 @@ function buildMessages(
   const enabledBookIds: string[] = assets.getCurrentWorldBooks().map((w: any) => w._uid);
   let presetRaw: any;
   if (assetBinding?.presetId) {
+    // 对话里显式选过的预设优先：**不看 enabled**。
+    // 以前这里带 `enabled !== false`，资产页一停用就静默换成全局预设 ——
+    // 用户看到的是"我选了 A，出来的却是 B"，这就是「预设失效」的来源。
+    // 匹配同时认 _uid / id：导入的预设不一定有 _uid。
+    const want = assetBinding.presetId;
     presetRaw = (assets.presets as any[]).find(
-      (p) => p._uid === assetBinding!.presetId && p.enabled !== false,
+      (p) => (p?._uid === want || p?.id === want),
     );
   }
-  presetRaw = presetRaw ?? assets.getCurrentPreset();
+  // 没绑定 / 绑定的预设已被删除：退回全局当前；当前指向的对象也没了就退到
+  // 第一个启用项，别让整次生成因为一个悬空 id 直接失败。
+  presetRaw = presetRaw
+    ?? assets.getCurrentPreset()
+    ?? (assets.presets as any[]).find((p: any) => p?.enabled !== false);
   if (!presetRaw) return null;
 
   const preset = OpenAIPreset.fromJSON(presetRaw);
@@ -681,10 +694,13 @@ function displayConfig(sessionId: string): string {
 function assetCatalog(): string {
   try {
     const a = useAssetsStore();
+    // enabled 必须带上：原生「本对话资产」据此过滤停用项。
+    // 以前只给 id/name，原生把停用预设也列出来，选了还被生成链路静默换掉。
     const brief = (list: any[]) =>
       (list || []).map((x: any) => ({
         id: x._uid || x.id || '',
         name: x.name || x.data?.name || x._uid || '未命名',
+        enabled: x.enabled !== false,
       }));
     return JSON.stringify({
       presets: brief(a.presets),
@@ -756,8 +772,14 @@ async function setActive(json: string): Promise<void> {
   // 预设「启用」＝对话里可不可选（可见性），与"使用中"（默认预设）解耦。
   if (Array.isArray(req.presetsEnabled)) {
     for (const pe of req.presetsEnabled) {
-      const p = (a.presets as any[]).find((x) => x._uid === pe.id);
+      const p = (a.presets as any[]).find((x) => x._uid === pe.id || x.id === pe.id);
       if (p) p.enabled = pe.enabled !== false;
+    }
+    // 停用的是「当前默认预设」时把 currentPresetId 清掉：
+    // 否则 getCurrentPreset() 还返回它，资产页显示已停用、生成却继续用它。
+    const cur = (a.presets as any[]).find((x) => x._uid === a.currentPresetId);
+    if (cur && cur.enabled === false) {
+      a.currentPresetId = (a.presets as any[]).find((x) => x.enabled !== false)?._uid;
     }
     await a.save();
   }

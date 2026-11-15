@@ -93,6 +93,26 @@
             android:contentDescription="更多" />
     </LinearLayout>
 
+    <!--
+      「还没选角色卡」提示条。
+      单人聊天不再自动套全局卡之后，空会话需要一个显眼的入口；
+      群聊频道由成员表决定角色，永远不显示（onBindingChanged 的 inGroup）。
+    -->
+    <TextView
+        android:id="@+id/chat_role_hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#FFF7E8"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="9dp"
+        android:paddingBottom="9dp"
+        android:text="还没选角色卡 · 点这里决定 AI 演谁 ›"
+        android:textColor="#8A6A26"
+        android:textSize="12sp"
+        android:visibility="gone"
+        android:contentDescription="选择本对话的角色卡" />
+
     <!-- 消息列表：RecyclerView，气泡由 ChatAdapter 原生渲染，永不横向溢出。
          外面套 FrameLayout 是为了放「回到底部」浮动按钮。 -->
     <FrameLayout
