@@ -59,8 +59,37 @@ class ImageStyleActivity : Activity() {
     /** 待保存的参考图 dataURL；null = 不改动，"" = 清除。 */
     private var pendingThumb: String? = null
 
+    /**
+     * 已经发出去、还没回来的 thumb。保存失败时用它把图还回 [pendingThumb]，
+     * 否则用户辛苦选的参考图会因为一次网络失败白丢。
+     */
+    private var inFlightThumb: String? = null
+
     /** 模板库快照（getImageStyle 里带下来），套用/删除弹窗用。 */
     private var tplList: List<Triple<String, String, String>> = emptyList() // (uid, name, text)
+
+    // ------------------------------------------------------------ 自动保存
+    //
+    // 风格列表一长，编辑区就被推到下面，「保存到当前风格」在整页最底部；
+    // 用户改完常常忘了翻下去点，切走就丢。现在改动停下 600ms 自动落盘，
+    // 手动按钮保留（当作"立刻保存"和可见反馈），两者走同一条 save()。
+
+    /** 编辑区是否有未落盘的改动。 */
+    private var dirty = false
+
+    /** load() 期间 setText 也会触发 watcher，用它挡掉，避免一进页面就保存一轮。 */
+    private var suppressWatch = false
+
+    /** 已发出、未回来的静默保存条数：>0 时回调不再 toast、不再 reload。 */
+    private var autoSavePending = 0
+
+    /** 上次落盘的尺寸，用来判断要不要多发一条 imgSaveParams（它写的是"当前风格"）。 */
+    private var loadedWidth = 832
+    private var loadedHeight = 1216
+
+    private lateinit var saveState: TextView
+
+    private val autoSaveTask = Runnable { save(silent = true) }
 
     private val apiListener = NativeBridge.ApiResultListener { json ->
         try {
@@ -68,6 +97,13 @@ class ImageStyleActivity : Activity() {
             val kind = obj.optString("kind")
             val ok = obj.optBoolean("ok")
             if (!ok) {
+                // 自动保存失败也要说一声：静默吞掉等于用户以为存上了。
+                if (kind == "imgSaveStyle" && autoSavePending > 0) {
+                    autoSavePending--
+                    dirty = true
+                    if (pendingThumb == null) pendingThumb = inFlightThumb
+                }
+                saveState.text = "保存失败：${obj.optString("error")}"
                 toast("${kind} 失败：${obj.optString("error")}")
                 return@ApiResultListener
             }
@@ -94,6 +130,14 @@ class ImageStyleActivity : Activity() {
                 }
                 "imgRenameStyle" -> load()
                 "imgSaveStyle" -> {
+                    if (autoSavePending > 0) {
+                        // 自动保存：不 toast、不 load。load 会把输入框重置，
+                        // 正在打字的光标会跳走，比不保存还烦。
+                        autoSavePending--
+                        dirty = false
+                        saveState.text = "已自动保存 · ${clock()}"
+                        return@ApiResultListener
+                    }
                     toast("已保存")
                     load()
                 }
@@ -125,6 +169,7 @@ class ImageStyleActivity : Activity() {
         thumbView = findViewById(R.id.style_thumb)
         sizeChips = findViewById(R.id.style_size_chips)
         engineHint = findViewById(R.id.style_engine_hint)
+        saveState = findViewById(R.id.style_save_state)
 
         findViewById<TextView>(R.id.style_back).setOnClickListener { finish() }
         findViewById<TextView>(R.id.style_reload).setOnClickListener { load() }
@@ -136,10 +181,40 @@ class ImageStyleActivity : Activity() {
             pendingThumb = ""
             if (currentUid.isNotBlank()) StyleThumbStore.clear(this, currentUid)
             thumbView.setImageBitmap(null)
-            toast("已清除，点「保存到当前风格」生效")
+            save(silent = true)
         }
+        // 手动按钮保留：自动保存之后它就是个"我确定存上了"的动作，
+        // 点了也不会重复写坏（save 是幂等的）。
         findViewById<TextView>(R.id.style_save).setOnClickListener { save() }
+
+        installAutoSave()
     }
+
+    /** 编辑区改动 → 停 600ms → 静默落盘。 */
+    private fun installAutoSave() {
+        val watcher = object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (suppressWatch) return
+                dirty = true
+                saveState.text = "有改动 · 正在自动保存…"
+                saveState.removeCallbacks(autoSaveTask)
+                saveState.postDelayed(autoSaveTask, 600)
+            }
+        }
+        listOf(artist, quality, negative, template, width, height)
+            .forEach { it.addTextChangedListener(watcher) }
+    }
+
+    /** 切走 / 切风格前把没落盘的改动冲一下，避免"改完直接点别的"丢内容。 */
+    private fun flushPendingSave() {
+        saveState.removeCallbacks(autoSaveTask)
+        if (dirty) save(silent = true)
+    }
+
+    private fun clock(): String =
+        java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
 
     override fun onResume() {
         super.onResume()
@@ -148,6 +223,9 @@ class ImageStyleActivity : Activity() {
     }
 
     override fun onPause() {
+        // 返回、切页面、拉起图片选择器都会走到这里：先把改动落盘再放开回调。
+        // command 本身是 fire-and-forget，回调丢了不影响已写入的存储。
+        flushPendingSave()
         super.onPause()
         NativeBridge.setApiResultListener(null)
     }
@@ -164,6 +242,9 @@ class ImageStyleActivity : Activity() {
             pendingThumb = null
             findViewById<TextView>(R.id.style_title).text =
                 "生图风格 · ${obj.optString("styleName").ifBlank { "默认" }}"
+            // setText 会依次触发 watcher，这一轮是"从存储读出来的"，
+            // 不是用户改的，必须挡住，否则一进页面就自动保存一次。
+            suppressWatch = true
             artist.setText(obj.optString("artistTags"))
             quality.setText(obj.optString("qualityTags"))
             negative.setText(obj.optString("negativePrompt"))
@@ -172,6 +253,11 @@ class ImageStyleActivity : Activity() {
             curHeight = obj.optInt("height", 1216)
             width.setText(curWidth.toString())
             height.setText(curHeight.toString())
+            suppressWatch = false
+            loadedWidth = curWidth
+            loadedHeight = curHeight
+            dirty = false
+            saveState.text = "改动自动保存，不用再翻到底部"
             // 模板库快照：套用/删除弹窗直接用，不再多发一条命令
             tplList = obj.optJSONArray("promptTemplates")?.let { arr ->
                 (0 until arr.length()).mapNotNull { i ->
@@ -240,6 +326,9 @@ class ImageStyleActivity : Activity() {
                 }
                 setOnClickListener {
                     if (current) return@setOnClickListener
+                    // 先冲掉当前风格的未保存改动。imgSaveStyle 带的是旧 uid，
+                    // 即使 imgUseStyle 先回来也不会写到新风格上。
+                    flushPendingSave()
                     EngineBridge.command(JSONObject().put("cmd", "imgUseStyle").put("uid", uid))
                 }
                 setOnLongClickListener {
@@ -394,7 +483,7 @@ class ImageStyleActivity : Activity() {
             .setItems(names) { _, which ->
                 val (_, name, text) = tplList[which]
                 template.setText(text)
-                toast("已套用「$name」，点保存生效")
+                toast("已套用「$name」，自动保存")
             }
             .setNeutralButton("删除模板…") { _, _ -> promptDeleteTemplate() }
             .setNegativeButton("取消", null)
@@ -448,7 +537,9 @@ class ImageStyleActivity : Activity() {
             pendingThumb = "data:image/jpeg;base64," +
                 Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
             thumbView.setImageBitmap(scaled)
-            toast("已选择，点「保存到当前风格」生效")
+            // 选图这一步最容易被忘掉后半句（"点保存"），直接存。
+            save(silent = true)
+            toast("已换参考图，自动保存")
         } catch (t: Throwable) {
             toast("读取图片失败：${t.message}")
         }
@@ -497,9 +588,15 @@ class ImageStyleActivity : Activity() {
 
     // ------------------------------------------------------------ 保存
 
-    private fun save() {
+    /**
+     * 保存当前风格。
+     *
+     * [silent] = true 时不弹 toast、回调也不 reload（自动保存用）。两种调用
+     * 写的是同一份数据，手动按钮只是给用户一个"我确定存上了"的动作。
+     */
+    private fun save(silent: Boolean = false) {
         if (currentUid.isBlank()) {
-            toast("当前没有选中的风格")
+            if (!silent) toast("当前没有选中的风格")
             return
         }
         val style = JSONObject()
@@ -509,19 +606,29 @@ class ImageStyleActivity : Activity() {
             .put("promptTemplate", template.text?.toString() ?: "")
         // thumb 只作展示（给用户看风格感觉）；发给模型的「出图参考图」
         // 在生图入口处单独设置（genRefs），不跟风格走。
+        inFlightThumb = pendingThumb
         pendingThumb?.let { style.put("thumb", it) }
+        pendingThumb = null
+        if (silent) autoSavePending++
+        saveState.text = "保存中…"
         EngineBridge.command(
             JSONObject().put("cmd", "imgSaveStyle").put("uid", currentUid).put("style", style),
         )
-        // 尺寸挂在接口上（与 web 的职责划分一致）
-        EngineBridge.command(
-            JSONObject().put("cmd", "imgSaveParams").put(
-                "params",
-                JSONObject()
-                    .put("width", width.text?.toString()?.toIntOrNull() ?: 832)
-                    .put("height", height.text?.toString()?.toIntOrNull() ?: 1216),
-            ),
-        )
+        // 尺寸挂在接口上（与 web 的职责划分一致）。imgSaveParams 写的是
+        // "当前风格"，切风格时可能已经变人，所以只在真的改过尺寸时发。
+        val w = width.text?.toString()?.toIntOrNull() ?: 832
+        val h = height.text?.toString()?.toIntOrNull() ?: 1216
+        if (w != loadedWidth || h != loadedHeight) {
+            loadedWidth = w
+            loadedHeight = h
+            EngineBridge.command(
+                JSONObject().put("cmd", "imgSaveParams").put(
+                    "params",
+                    JSONObject().put("width", w).put("height", h),
+                ),
+            )
+        }
+        dirty = false
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()

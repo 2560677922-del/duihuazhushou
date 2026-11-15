@@ -353,15 +353,29 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
+            <!--
+              自动保存状态行：改动停下 600ms 就落盘，这行告诉用户"存上了"，
+              不用再翻到页面最底部找保存按钮。
+            -->
+            <TextView
+                android:id="@+id/style_save_state"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center"
+                android:text="改动自动保存，不用再翻到底部"
+                android:textColor="#8A94A6"
+                android:textSize="11sp" />
+
             <TextView
                 android:id="@+id/style_save"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
+                android:layout_marginTop="6dp"
                 android:background="@drawable/bg_btn_accent"
                 android:gravity="center"
                 android:padding="13dp"
-                android:text="保存到当前风格"
+                android:text="立即保存"
                 android:textColor="#2F66D8"
                 android:textSize="14sp"
                 android:textStyle="bold" />

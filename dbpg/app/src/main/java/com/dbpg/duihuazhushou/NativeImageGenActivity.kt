@@ -75,8 +75,14 @@ class NativeImageGenActivity : Activity() {
     /**
      * 已选标签：界面只显示中文（zh），发请求时只取英文 tag。
      * 用户之前记不住自己选过什么，就是因为没有这份「看得懂」的清单。
+     *
+     * 这份清单是**持久化**的：roll 图的常见节奏是「出一张 → 退出去看图 →
+     * 回来改两个标签再出」，每次重选一遍 2 万条标签库不现实。
+     * 只有用户自己点「清空」才会清掉，出图成功也不动它。
      */
     private val selectedTags = mutableListOf<TagLibrary.Tag>()
+
+    private val tagPrefs by lazy { getSharedPreferences("tag_image_selected", MODE_PRIVATE) }
 
     /** 标签结果分页：默认铺开 30 条，点「加载更多」再加 60 条。 */
     private var tagLimit = 30
@@ -190,6 +196,7 @@ class NativeImageGenActivity : Activity() {
         })
         buildGroupTabs()
         loadSelectors()
+        restoreSelectedTags()
         renderSelectedTags()
         renderTags(tagBox, tagStatus, "")
     }
@@ -269,22 +276,44 @@ class NativeImageGenActivity : Activity() {
             return
         }
         selectedTags.add(t)
+        persistSelectedTags()
         renderSelectedTags()
     }
 
-    /** 已选清单：中文 chip + × 移除 + 一键清空。 */
+    /**
+     * 已选清单：中文 chip + × 单个移除；右上角「复制英文」「清空」。
+     *
+     * 「复制英文」是给外部用的：roll 图时经常要把同一串 tag 贴到别处试
+     * （别人的客户端、在线的 NovelAI、自己收藏的提示词表），没有它只能
+     * 一个个抄。复制的是纯英文、逗号分隔，和请求体里发出去的完全同源。
+     */
     private fun renderSelectedTags() {
         selectedBox.removeAllViews()
-        selectedBox.addView(TextView(this).apply {
+
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+        head.addView(TextView(this).apply {
             text = if (selectedTags.isEmpty()) {
                 "已选标签：还没选（点下方标签，界面显示中文，出图只发英文）"
             } else {
-                "已选 ${selectedTags.size} 个标签 · 显示中文，出图只发英文 tag"
+                "已选 ${selectedTags.size} 个 · 退出重进也会保留"
             }
             textSize = 11f
             setTextColor(0xFF5A6B85.toInt())
-            setPadding(dp(2), dp(2), 0, dp(4))
+            setPadding(dp(2), dp(2), dp(6), dp(4))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
+        if (selectedTags.isNotEmpty()) {
+            head.addView(smallAction("复制英文") { copySelectedTags() })
+            head.addView(smallAction("清空") {
+                selectedTags.clear()
+                persistSelectedTags()
+                renderSelectedTags()
+            })
+        }
+        selectedBox.addView(head)
         if (selectedTags.isEmpty()) return
 
         var row: LinearLayout? = null
@@ -305,21 +334,59 @@ class NativeImageGenActivity : Activity() {
                 }
                 setOnClickListener {
                     selectedTags.remove(t)
+                    persistSelectedTags()
                     renderSelectedTags()
                 }
             })
         }
-        selectedBox.addView(TextView(this).apply {
-            text = "清空已选"
-            textSize = 11f
-            gravity = android.view.Gravity.CENTER
-            setTextColor(0xFF8A94A6.toInt())
-            setPadding(0, dp(8), 0, dp(2))
-            setOnClickListener {
-                selectedTags.clear()
-                renderSelectedTags()
+    }
+
+    /** 已选区右上角的小按钮（复制 / 清空）。 */
+    private fun smallAction(label: String, onClick: () -> Unit): TextView = TextView(this).apply {
+        text = label
+        textSize = 11.5f
+        setTextColor(0xFF2F66D8.toInt())
+        background = getDrawable(R.drawable.bg_btn_soft)
+        setPadding(dp(9), dp(5), dp(9), dp(5))
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { marginStart = dp(6) }
+        setOnClickListener { onClick() }
+    }
+
+    /** 把已选标签按请求体里的顺序拼成英文串放进剪贴板。 */
+    private fun copySelectedTags() {
+        if (selectedTags.isEmpty()) return
+        val text = selectedTags.joinToString(", ") { it.tag }
+        val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("NovelAI tags", text))
+        toast("已复制 ${selectedTags.size} 个英文标签")
+    }
+
+    /** 落盘：只存英文 tag（中文/分类都能从库里重新查出来，不用冗余存）。 */
+    private fun persistSelectedTags() {
+        val arr = JSONArray()
+        selectedTags.forEach { arr.put(it.tag) }
+        tagPrefs.edit().putString(KEY_SELECTED_TAGS, arr.toString()).apply()
+    }
+
+    /**
+     * 恢复上次的已选标签。找不到的 tag（库换代被删了）保留英文原文，
+     * 而不是悄悄丢掉 —— 丢一个用户选过的词比显示一个没中文名的更容易发现。
+     */
+    private fun restoreSelectedTags() {
+        val raw = tagPrefs.getString(KEY_SELECTED_TAGS, null) ?: return
+        if (raw.isBlank()) return
+        runCatching {
+            val arr = JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                val tag = arr.optString(i).trim()
+                if (tag.isEmpty() || selectedTags.any { it.tag == tag }) continue
+                selectedTags.add(TagLibrary.byTag(tag) ?: TagLibrary.Tag(tag, tag, ""))
             }
-        })
+        }
     }
 
     /** 出图：按选定渲染器构造参数，端点候选逐个试。 */
@@ -757,5 +824,8 @@ class NativeImageGenActivity : Activity() {
     private companion object {
         /** onActivityResult：选出图参考图。 */
         const val REQ_GEN_REF = 3101
+
+        /** 已选标签（英文 tag 的 JSON 数组）。 */
+        const val KEY_SELECTED_TAGS = "selectedTags"
     }
 }

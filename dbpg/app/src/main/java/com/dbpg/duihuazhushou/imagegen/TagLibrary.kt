@@ -43,6 +43,16 @@ object TagLibrary {
 
     fun size(): Int = tags.size
 
+    /**
+     * 按英文 tag 反查（恢复"上次选过的标签"用）。
+     * 找不到就返回 null —— 标签库换了版本、某个 tag 被删掉是正常的，
+     * 调用方自己决定要不要用一个只有英文的占位对象。
+     */
+    fun byTag(tag: String): Tag? {
+        if (tag.isBlank()) return null
+        return tags.firstOrNull { it.tag == tag }
+    }
+
     /** 一级分类（按固定顺序，附库里实际有的其它分组）。 */
     fun groups(): List<String> {
         if (tags.isEmpty()) return TagCategories.order
