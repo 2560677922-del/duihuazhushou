@@ -232,7 +232,35 @@ object AutoImageSupport {
     fun negativePrompt(config: NativeImageConfig): String =
         config.negativePrompt.ifBlank { DEFAULT_NEGATIVE_PROMPT }
 
-    /** 把模板里的占位符换成实际内容，返回 system / user 两条。 */
+    /**
+     * 把模板里的占位符换成实际内容，返回 system / user 两条。
+     *
+     * ## 两个真机专属的坑，都在这一个函数里
+     *
+     * **一、`}}` 必须写成 `\}\}`。**
+     * Android 的正则引擎（ART 里那套来自 Harmony 的实现）遇到**未转义的 `}`**
+     * 会直接抛 `PatternSyntaxException: Syntax error in regexp pattern near index N`；
+     * 桌面 JVM 却把它当普通字符，单测全绿也发现不了。真机上的表现是
+     * 「点生图 → 出图出错：Syntax error in regexp pattern near index 23」——
+     * index 23 正好是 `\{\{\s*contextLabel\s*}}` 里第二个 `}`，
+     * 也就是**只要模板带 `{{…}}` 就必然抛**，一次都出不来图。
+     *
+     * **二、替换内容不能直接当 replacement 传。**
+     * `replace(regex, "…")` 会把替换串里的 `$` 当成 `$1` 这样的分组引用、
+     * `\` 当成转义，剧情里出现「$100」就是 `Illegal group reference` 崩掉。
+     * 所以三处都用 lambda（`replace(re) { value }`）交字面值 —— 文本原样进去，
+     * 一个字符都不被解释。
+     */
+    /**
+     * 模板占位符。
+     *
+     * 抽成常量只为一件事：让 `RegexPortabilityTest` 能逐条检查它们没有裸花括号
+     * （JVM 不报错、Android 报错的那种写法）。散在函数里就只能靠肉眼。
+     */
+    internal val RE_PH_LABEL = Regex("\\{\\{\\s*contextLabel\\s*\\}\\}")
+    internal val RE_PH_TEXT = Regex("\\{\\{\\s*contextText\\s*\\}\\}")
+    internal val RE_PH_ARTIST = Regex("\\{\\{\\s*artistTags\\s*\\}\\}")
+
     fun renderTemplate(
         template: String,
         contextText: String,
@@ -241,9 +269,9 @@ object AutoImageSupport {
     ): Pair<String, String> {
         val tpl = template.ifBlank { DEFAULT_PROMPT_TEMPLATE }
         val system = tpl
-            .replace(Regex("\\{\\{\\s*contextLabel\\s*}}"), contextLabel)
-            .replace(Regex("\\{\\{\\s*contextText\\s*}}"), contextText)
-            .replace(Regex("\\{\\{\\s*artistTags\\s*}}"), artistTags)
+            .replace(RE_PH_LABEL) { contextLabel }
+            .replace(RE_PH_TEXT) { contextText }
+            .replace(RE_PH_ARTIST) { artistTags }
         val user = "以下是${contextLabel}内容：\n\n$contextText\n\n请提炼视觉要素并输出提示词（严格 JSON）。"
         return system to user
     }

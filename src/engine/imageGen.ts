@@ -342,10 +342,18 @@ export function renderPromptTemplate(
   template: string,
   vars: { contextText: string; contextLabel: string; artistTags?: string },
 ): { system: string; user: string } {
+  /*
+   * 三处都用函数形式 `() => value`，不给字符串。
+   *
+   * 字符串替换串会被当成**替换模板**解析：`$&`（整个匹配）、`$'`、`` $` ``、
+   * `$1` 全都有特殊含义。剧情里出现「价格 $& 元」这种写法时，正文会被替换成
+   * 占位符本身 —— 表现是 system 里莫名多出一段 `{{contextText}}`。
+   * 原生侧（AutoImageSupport.renderTemplate）是同一类坑，那边会直接抛异常。
+   */
   const system = (template || DEFAULT_PROMPT_TEMPLATE)
-    .replace(/\{\{\s*contextLabel\s*\}\}/g, vars.contextLabel)
-    .replace(/\{\{\s*contextText\s*\}\}/g, vars.contextText)
-    .replace(/\{\{\s*artistTags\s*\}\}/g, vars.artistTags || '');
+    .replace(/\{\{\s*contextLabel\s*\}\}/g, () => vars.contextLabel)
+    .replace(/\{\{\s*contextText\s*\}\}/g, () => vars.contextText)
+    .replace(/\{\{\s*artistTags\s*\}\}/g, () => vars.artistTags || '');
 
   const user = `以下是${vars.contextLabel}内容：
 

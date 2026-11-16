@@ -133,23 +133,46 @@ object PresetBlocks {
      * 不用正则一次扫完，是因为写宏带 `::` 参数、可能跨行；按类型分开删更可读，
      * 也避免一条坏正则把整段正文吃掉（这个坑在导入器里踩过）。
      */
+    /*
+     * 洗宏用的正则，集中在这里有两个原因：
+     *   1. `}}` 必须写成 `\}\}` —— Android 的正则引擎遇到裸 `}` 会抛
+     *      "Syntax error in regexp pattern near index N"，而桌面 JVM 当普通字符，
+     *      单测发现不了（`AutoImageSupport.renderTemplate` 就是这么炸的）；
+     *   2. 抽成常量后 `RegexPortabilityTest` 能逐条检查写法，不用靠肉眼。
+     */
+    internal val RE_MACRO_VAR = Regex("\\{\\{\\s*(set|get|add|inc|dec)(global)?var[：:]?[\\s\\S]*?\\}\\}")
+    internal val RE_MACRO_COMMENT = Regex("\\{\\{\\s*//[\\s\\S]*?\\}\\}")
+    internal val RE_HTML_COMMENT = Regex("<!--[\\s\\S]*?-->")
+    internal val RE_MACRO_CHAR = Regex("\\{\\{\\s*char\\s*\\}\\}", RegexOption.IGNORE_CASE)
+    internal val RE_MACRO_USER = Regex("\\{\\{\\s*user\\s*\\}\\}", RegexOption.IGNORE_CASE)
+    internal val RE_MACRO_ANY = Regex("\\{\\{[\\s\\S]{0,120}?\\}\\}")
+    internal val RE_TOKEN_PIPE = Regex("<[|｜][\\s\\S]{0,40}?[|｜]>")
+    internal val RE_TOKEN_ROLE = Regex("</?(start|end|sys|user|assistant)>", RegexOption.IGNORE_CASE)
+
+    /** 所有内置宏正则 —— 测试拿它逐条检查。 */
+    internal val MACRO_PATTERNS: List<Regex> = listOf(
+        RE_MACRO_VAR, RE_MACRO_COMMENT, RE_HTML_COMMENT,
+        RE_MACRO_CHAR, RE_MACRO_USER, RE_MACRO_ANY,
+        RE_TOKEN_PIPE, RE_TOKEN_ROLE,
+    )
+
     fun sanitize(raw: String?): String {
         if (raw.isNullOrBlank()) return ""
         var s = raw
 
         // 1. 写变量 / 读变量：内容整段丢（我们没有 session/global 表可查）
-        s = s.replace(Regex("\\{\\{\\s*(set|get|add|inc|dec)(global)?var[：:]?[\\s\\S]*?}}"), "")
+        s = s.replace(RE_MACRO_VAR, "")
         // 2. 注释 / 条件块
-        s = s.replace(Regex("\\{\\{\\s*//[\\s\\S]*?}}"), "")
-        s = s.replace(Regex("<!--[\\s\\S]*?-->"), "")
+        s = s.replace(RE_MACRO_COMMENT, "")
+        s = s.replace(RE_HTML_COMMENT, "")
         // 3. 角色名占位
-        s = s.replace(Regex("\\{\\{\\s*char\\s*}}", RegexOption.IGNORE_CASE), "角色")
-        s = s.replace(Regex("\\{\\{\\s*user\\s*}}", RegexOption.IGNORE_CASE), "用户")
+        s = s.replace(RE_MACRO_CHAR, "角色")
+        s = s.replace(RE_MACRO_USER, "用户")
         // 4. 其余未知宏（scenario / persona / original / random …）：没有对应值，删
-        s = s.replace(Regex("\\{\\{[\\s\\S]{0,120}?}}"), "")
+        s = s.replace(RE_MACRO_ANY, "")
         // 5. 特殊 token：<|no-trans|> / <｜end▁of▁instance｜> / <start>
-        s = s.replace(Regex("<[|｜][\\s\\S]{0,40}?[|｜]>"), "")
-        s = s.replace(Regex("</?(start|end|sys|user|assistant)>", RegexOption.IGNORE_CASE), "")
+        s = s.replace(RE_TOKEN_PIPE, "")
+        s = s.replace(RE_TOKEN_ROLE, "")
 
         // 6. 收尾：行尾空白、三连以上空行压成两行
         s = s.lines().joinToString("\n") { it.trimEnd() }
