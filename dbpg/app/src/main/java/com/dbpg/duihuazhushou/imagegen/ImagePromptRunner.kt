@@ -45,7 +45,8 @@ object ImagePromptRunner {
 
     /** 一次「文字 → 标签」的结果。失败时调用方**不要再出图**。 */
     sealed interface Outcome {
-        data class Ok(val tags: String) : Outcome
+        /** [warning] 非空表示"能画，但有瑕疵"（标签混中文之类），调用方顺手显示即可。 */
+        data class Ok(val tags: String, val warning: String = "") : Outcome
         data class Failed(val reason: String) : Outcome
     }
 
@@ -116,8 +117,16 @@ object ImagePromptRunner {
         return Messages(
             system = system,
             user = user,
-            // 写作预设爱用 1.0~1.3 的温度，那对"打标签"只有跑题的份
-            temperature = llm.temperature.coerceIn(0.0, 0.9),
+            /*
+             * 打标签是**收敛型**任务，温度越高越容易跑偏：模型会开始"解说画面"、
+             * 写中文句子、把标签写成短句。写作那边常用的 0.8~1.0 直接搬过来，
+             * 表现就是"标签不对"。
+             *
+             * 上限压到 0.5：配置页里那套连接参数是给聊天写作调的，生图这条支线
+             * 只借用它的地址与密钥，采样温度按自己的需要收敛 —— 不改用户的配置，
+             * 只在这一步限一下。
+             */
+            temperature = llm.temperature.coerceIn(0.0, 0.5),
             maxTokens = llm.maxTokens.coerceIn(MAX_TOKENS_FLOOR, MAX_TOKENS_CAP),
             note = plan.note,
         )
@@ -143,17 +152,25 @@ object ImagePromptRunner {
         )
         var answered = false
         var lastReason = ""
+        var lastError = ""
         for (url in AutoImageSupport.chatEndpoints(llm.baseUrl)) {
-            val json = postJson(url, llm.apiKey, body) ?: continue
+            val reply = postJson(url, llm.apiKey, body)
+            if (reply.text == null) {
+                // 状态码 / 报错体要留下来 —— 只说"没有响应"的话，密钥错、
+                // 模型名错、地址错三种情况在界面上长得一模一样
+                if (reply.error.isNotBlank()) lastError = reply.error
+                continue
+            }
             answered = true
             val check = AutoImageSupport.judgeOptimized(
-                AutoImageSupport.extractCompletionText(json),
+                AutoImageSupport.extractCompletionText(reply.text),
             )
-            if (check.ok) return Outcome.Ok(check.tags)
+            if (check.ok) return Outcome.Ok(check.tags, check.warning)
             lastReason = check.reason
         }
         return Outcome.Failed(
             when {
+                !answered && lastError.isNotBlank() -> "提示词模型没有响应（$lastError）"
                 !answered -> "提示词模型没有响应"
                 lastReason.isNotBlank() -> lastReason
                 else -> "模型没给出可用标签"
@@ -183,14 +200,30 @@ object ImagePromptRunner {
     fun compose(config: NativeImageConfig, optimized: String, rawText: String, dnaTags: String): String =
         AutoImageSupport.finalPrompt(config, optimized, rawText, dnaTags)
 
-    private fun postJson(url: String, apiKey: String, json: String): String? = runCatching {
+    /**
+     * 一次 chat/completions。
+     *
+     * 失败时**必须留下原因**：[text] 为 null，[error] 里带状态码与响应体片段。
+     * 早期版本这里直接 `return null`，上层只能报"提示词模型没有响应"，
+     * 于是 401（密钥错）、404（地址错）、400（模型名错）在界面上无法区分。
+     */
+    private class LlmReply(val text: String?, val error: String = "")
+
+    private fun postJson(url: String, apiKey: String, json: String): LlmReply = runCatching {
         val builder = Request.Builder()
             .url(url)
             .post(json.toRequestBody("application/json; charset=utf-8".toMediaType()))
         if (apiKey.isNotBlank()) builder.header("Authorization", "Bearer $apiKey")
         http.newCall(builder.build()).execute().use { resp ->
-            if (!resp.isSuccessful) return null
-            resp.body?.string()
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                LlmReply(null, "HTTP ${resp.code} · ${text.take(160).replace(Regex("[ \\t\\r\\n]+"), " ")}")
+            } else {
+                LlmReply(text)
+            }
         }
-    }.getOrNull()
+    }.getOrElse { e ->
+        val host = runCatching { java.net.URI(url).host }.getOrNull() ?: url
+        LlmReply(null, "连不上 $host（${e.javaClass.simpleName}）")
+    }
 }

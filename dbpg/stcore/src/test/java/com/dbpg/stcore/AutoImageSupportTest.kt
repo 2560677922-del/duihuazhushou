@@ -296,4 +296,57 @@ class AutoImageSupportTest {
         )
         assertTrue(r.ok)
     }
+
+    @Test
+    fun `全角逗号不算中文`() {
+        // 中文输入法打出的逗号只是标点，不代表内容语言。
+        // 以前 isCjk 把 U+FF0C 也数进去，这条会被判成"写成中文句子"而不出图。
+        val r = AutoImageSupport.judgeOptimized(
+            """{"prompt":"1girl，silver hair，red eyes，rain，street，night"}""",
+        )
+        assertTrue(r.ok)
+        assertEquals("", r.warning)
+    }
+
+    @Test
+    fun `汉字过半仍然出图，只给警告`() {
+        // 主体是英文、夹了几个中文词：图能画，细节可能偏 —— 提示但不拦。
+        val r = AutoImageSupport.judgeOptimized(
+            """{"prompt":"1girl, 银色长发, 红眼睛, 白色连衣裙, 雨夜, 街道, night"}""",
+        )
+        assertTrue(r.ok)
+        assertTrue(r.tags.isNotEmpty())
+        assertTrue("应当提示汉字占比，实际为空", r.warning.contains("汉字"))
+    }
+
+    @Test
+    fun `prompt 写了中文而 tags 是英文时取 tags`() {
+        // 模型很常见的一种输出：prompt 当"描述"用中文写，真标签放在 tags 里。
+        // 早先固定优先取 prompt，于是这种情况直接不出图。
+        val r = AutoImageSupport.judgeOptimized(
+            """{"prompt":"一位银发少女站在雨夜的街道上","tags":["1girl","silver hair","rainy street","night"]}""",
+        )
+        assertTrue(r.ok)
+        assertTrue(r.tags.contains("1girl"))
+        assertTrue(r.tags.contains("silver hair"))
+        assertEquals("", r.warning)
+    }
+
+    @Test
+    fun `标签太少出图但提示画面会空`() {
+        val r = AutoImageSupport.judgeOptimized("""{"prompt":"1girl, solo"}""")
+        assertTrue(r.ok)
+        assertTrue(r.warning.contains("2 个标签"))
+    }
+
+    @Test
+    fun `默认模板要求把中文换成英文标签`() {
+        // 判据再怎么放宽，源头也得让模型别吐中文 —— 否则每次都只能靠警告兜底
+        val tpl = AutoImageSupport.DEFAULT_PROMPT_TEMPLATE
+        assertTrue(tpl.contains("中文概念请换成"))
+        assertTrue(tpl.contains("Danbooru"))
+        // 模板里不该出现画师串 / 质量词：提了反而会把它们引出来
+        assertFalse(tpl.contains("masterpiece"))
+        assertFalse(tpl.contains("artist:"))
+    }
 }

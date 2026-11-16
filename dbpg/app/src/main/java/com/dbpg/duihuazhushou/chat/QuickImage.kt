@@ -91,6 +91,14 @@ class QuickImage(
     /** 本次按什么预设走，给 toast 用（不使用 / 跟随资产页 / 具体某套）。 */
     private var presetNote = ""
 
+    /**
+     * 这次标签的瑕疵说明（混了中文、标签太少…）。
+     *
+     * 判定不再因为这种"不够好"就不出图，改成画完顺带提一句 ——
+     * 用户至少能看到图，并且知道"画面偏"是标签的锅，不是模型坏了。
+     */
+    private var tagWarning = ""
+
     fun isBusy(): Boolean = busy
 
     private val watchdog = Runnable {
@@ -179,7 +187,10 @@ class QuickImage(
                     return@execute
                 }
                 when (outcome) {
-                    is ImagePromptRunner.Outcome.Ok -> main.post { draw(outcome.tags) }
+                    is ImagePromptRunner.Outcome.Ok -> main.post {
+                        tagWarning = outcome.warning
+                        draw(outcome.tags)
+                    }
                     // 模型拒答 / 只回了中文 / 一个词都没给：这次不画。
                     // 硬画出来的是废图，还得用户自己去删。
                     is ImagePromptRunner.Outcome.Failed -> main.post {
@@ -407,7 +418,10 @@ class QuickImage(
                 main.post {
                     // 期间可能已经切走频道：图只落到发起时那个会话上
                     target?.attachImage(actionId, first.path, full)
-                    finish("已生成 1 张")
+                    finish(
+                        if (tagWarning.isBlank()) "已生成 1 张"
+                        else "已生成 1 张（$tagWarning）",
+                    )
                 }
             }
 
@@ -419,6 +433,7 @@ class QuickImage(
     }
 
     private fun setBusy(v: Boolean) {
+        if (v) tagWarning = ""
         busy = v
         if (!v) main.removeCallbacks(watchdog)
         onBusy(v)

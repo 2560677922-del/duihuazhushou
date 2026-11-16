@@ -83,9 +83,16 @@ data class OptimizeCheck(
     val ok: Boolean,
     val tags: String,
     val reason: String,
+    /**
+     * 能出图、但有瑕疵的一句话（标签里混了中文、只有一两个标签…）。
+     *
+     * 空 = 一切正常。非空时**照样出图**，只是界面顺带提一句 ——
+     * 「能画出来但细节可能跑偏」远好过「什么都不出」。
+     */
+    val warning: String = "",
 ) {
     companion object {
-        fun pass(tags: String) = OptimizeCheck(true, tags, "")
+        fun pass(tags: String, warning: String = "") = OptimizeCheck(true, tags, "", warning)
         fun fail(reason: String) = OptimizeCheck(false, "", reason)
     }
 }
@@ -157,7 +164,8 @@ object AutoImageSupport {
     const val DEFAULT_PROMPT_TEMPLATE: String = """把下面的{{contextLabel}}转成英文 Danbooru 画面标签。
 
 规则：
-1. 英文标签，逗号分隔，重要的放前面。
+1. 每个标签都写成英文，逗号分隔，重要的放前面；
+   中文概念请换成 Danbooru 上对应的英文标签。
 2. 描述角色（人数、发色发型、瞳色、服装、表情）与环境（背景、时间、天气、光线、镜头）。
 3. 只写场景里真实存在或能自然推断的内容，不要臆造。
 4. **动作与互动要写具体**：谁在做什么、和谁或什么东西互动、
@@ -387,18 +395,49 @@ object AutoImageSupport {
         if (text.isEmpty()) return OptimizeCheck.fail("模型返回空内容")
         if (looksLikeRefusal(text)) return OptimizeCheck.fail("模型拒答")
 
-        val tags = tagsOf(text).replace(Regex("\\s+"), " ").trim()
+        /*
+         * 全角逗号 / 顿号统一成半角。
+         *
+         * 中文输入法打出来的是「，」，模型跟着抄的时候下游全乱：标签数按半角
+         * 逗号统计，一串 `1girl，silver hair，rain` 会被算成"1 个标签"；
+         * 画风词剔除（stripStyleTags）也只按半角切分，等于整串都没过筛。
+         * 在这里规范一次，后面所有环节只认半角。
+         */
+        val tags = tagsOf(text)
+            .replace(Regex("[ \t\r\n]+"), " ")
+            .replace('，', ',')
+            .replace('、', ',')
+            .replace(Regex("\\s*,\\s*"), ", ")
+            .trim()
         if (tags.isEmpty()) return OptimizeCheck.fail("模型没给出提示词")
         if (looksLikeRefusal(tags)) return OptimizeCheck.fail("模型拒答")
 
+        /*
+         * 判据只留三条硬拦截：空回复、拒答、一个英文字母都没有。
+         *
+         * 其余的"不够好"一律降级成警告、照常出图 —— 这是 v1.8.2 的取舍。
+         * 之前把"汉字占三成"也当失败，结果是模型只要在英文标签里混几个中文词，
+         * 整次生图就没了；用户看到的只有"一直生图错误"，既不知道错在哪，
+         * 也没法自己绕过。而一张"主体对、细节偏"的图至少能看出问题出在标签，
+         * 不满意还能点重新生成。
+         */
         val visible = tags.count { !it.isWhitespace() }
         val latin = tags.count { it in 'a'..'z' || it in 'A'..'Z' }
-        if (latin < 2) return OptimizeCheck.fail("输出里没有英文标签")
+        if (latin < 2) {
+            return OptimizeCheck.fail("输出里没有英文标签（生图模型只认英文 tag）")
+        }
 
-        // 中文占三成以上：说明模型在"翻译/复述剧情"，不是在打标签
-        val cjk = tags.count { it.isCjk() }
-        if (visible > 0 && cjk * 10 > visible * 3) {
-            return OptimizeCheck.fail("模型写成了中文句子，不是标签")
+        val hanzi = tags.count { it.isHanzi() }
+        if (visible > 0 && hanzi * 10 > visible * 3) {
+            val pct = hanzi * 100 / visible
+            return OptimizeCheck.pass(
+                tags,
+                "标签里汉字占 $pct%，生图模型只认英文，画面可能跑偏",
+            )
+        }
+        val count = tags.split(',').count { it.isNotBlank() }
+        if (count <= 2) {
+            return OptimizeCheck.pass(tags, "只出了 $count 个标签，画面会比较空")
         }
         return OptimizeCheck.pass(tags)
     }
@@ -413,17 +452,34 @@ object AutoImageSupport {
      */
     private fun tagsOf(reply: String): String {
         val obj = runCatching { JSONObject(reply) }.getOrNull() ?: return parseOptimizedPrompt(reply)
-        val p = obj.optString("prompt", "").trim()
-        if (p.isNotEmpty()) return p
+        val prompt = obj.optString("prompt", "").trim()
         val arr = obj.optJSONArray("tags")
-        if (arr != null) {
-            val joined = (0 until arr.length())
+        val list = if (arr == null) {
+            ""
+        } else {
+            (0 until arr.length())
                 .map { arr.optString(it, "").trim() }
                 .filter { it.isNotEmpty() }
-            if (joined.isNotEmpty()) return joined.joinToString(", ")
+                .joinToString(", ")
         }
-        return ""
+        /*
+         * 两个字段都给了的时候，取**英文更多**的那个。
+         *
+         * 模型很常见的写法是 `{"prompt": "一位银发少女站在雨里", "tags": ["1girl", "silver hair"]}`
+         * —— prompt 被它当成"描述"用中文写了，真正能出图的是 tags。早先固定优先
+         * 取 prompt，于是这种情况被判成"写成中文句子"直接不出图；反过来固定优先
+         * tags，又会在 tags 只放三五个"主要标签"时丢掉细节。
+         */
+        return when {
+            prompt.isEmpty() -> list
+            list.isEmpty() -> prompt
+            latinOf(list) > latinOf(prompt) -> list
+            else -> prompt
+        }
     }
+
+    /** 数一串里有多少个拉丁字母 —— 只用来在两个候选里挑"更像标签"的那个。 */
+    private fun latinOf(s: String): Int = s.count { it in 'a'..'z' || it in 'A'..'Z' }
 
     /** 模型在"拒绝"而不是在"描述"——中英两种口吻都认。 */
     private fun looksLikeRefusal(text: String): Boolean {
@@ -431,10 +487,9 @@ object AutoImageSupport {
         return REFUSAL_MARKERS.any { t.contains(it) }
     }
 
-    private fun Char.isCjk(): Boolean = this in '\u4e00'..'\u9fff' ||
-        this in '\u3400'..'\u4dbf' ||
-        this in '\u3000'..'\u303f' ||
-        this in '\uff00'..'\uffef'
+    /** 只认汉字（含扩展 A）。标点、全角符号不算 —— 判"是不是中文"时它们只会添乱。 */
+    private fun Char.isHanzi(): Boolean = this in '\u4e00'..'\u9fff' ||
+        this in '\u3400'..'\u4dbf'
 
     /**
      * 从模型回复里抠出 `prompt`。
