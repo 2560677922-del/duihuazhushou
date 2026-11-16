@@ -207,4 +207,93 @@ class AutoImageSupportTest {
         assertEquals("b64_json", body.getString("response_format"))
         assertEquals(1, body.getInt("n"))
     }
+
+    // ------------------------------------------------------------ 提示词预设的 system 拼装
+
+    @Test
+    fun `system 按破甲 模板 预设 DNA 约束的顺序拼`() {
+        val sys = AutoImageSupport.composeSystem(
+            jailbreak = "J",
+            task = "T",
+            presetBlock = "P",
+            dnaBlock = "D",
+            suffix = "S",
+        )
+        assertEquals("J\n\nT\n\nP\n\nD\n\nS", sys)
+    }
+
+    @Test
+    fun `system 丢掉空段 不留空行`() {
+        // 「不带预设」就是这种形态：只剩任务模板
+        assertEquals(
+            "T",
+            AutoImageSupport.composeSystem(jailbreak = "", task = "T ", presetBlock = "", dnaBlock = "", suffix = "  "),
+        )
+        // 「跟随当前对话」：模板 + 对话预设片段
+        assertEquals(
+            "T\n\nP",
+            AutoImageSupport.composeSystem(task = "T", presetBlock = "P"),
+        )
+    }
+
+    @Test
+    fun `system 全空时返回空串`() {
+        assertEquals("", AutoImageSupport.composeSystem())
+    }
+
+    // ------------------------------------------------------------ 出图前的兜底
+
+    @Test
+    fun `正常 JSON 标签判为可用`() {
+        val r = AutoImageSupport.judgeOptimized("""{"prompt":"1girl, solo, long hair, rain"}""")
+        assertTrue(r.ok)
+        assertEquals("1girl, solo, long hair, rain", r.tags)
+    }
+
+    @Test
+    fun `模型直接甩标签串也算可用`() {
+        val r = AutoImageSupport.judgeOptimized("  1girl, solo, night, wet street  ")
+        assertTrue(r.ok)
+        assertEquals("1girl, solo, night, wet street", r.tags)
+    }
+
+    @Test
+    fun `中文拒答不出图`() {
+        val r = AutoImageSupport.judgeOptimized("抱歉，我无法协助生成这类内容。")
+        assertFalse(r.ok)
+        assertTrue(r.reason.contains("拒答"))
+        assertEquals("", r.tags)
+    }
+
+    @Test
+    fun `英文拒答也不出图`() {
+        assertFalse(AutoImageSupport.judgeOptimized("I'm sorry, but I can't help with that.").ok)
+        assertFalse(AutoImageSupport.judgeOptimized("As an AI language model, I cannot create such images.").ok)
+    }
+
+    @Test
+    fun `空回复不出图`() {
+        assertFalse(AutoImageSupport.judgeOptimized("").ok)
+        assertFalse(AutoImageSupport.judgeOptimized("   \n  ").ok)
+        // 回了 JSON 但 prompt 是空的：同样是空
+        assertFalse(AutoImageSupport.judgeOptimized("""{"prompt":""}""").ok)
+    }
+
+    @Test
+    fun `模型写成中文长句时不出图`() {
+        val r = AutoImageSupport.judgeOptimized(
+            "画面中是一位长发少女站在雨夜的街道上，她穿着白色连衣裙，神情有些落寞。",
+        )
+        assertFalse(r.ok)
+        assertTrue(r.reason.contains("标签"))
+    }
+
+    @Test
+    fun `中英混排但以标签为主仍然可用`() {
+        // 模型偶尔会补一句中文注解；只要主体是英文标签就不该拦
+        val r = AutoImageSupport.judgeOptimized(
+            """{"prompt":"1girl, solo, school uniform, rain, night, 街道"}""",
+        )
+        assertTrue(r.ok)
+    }
 }

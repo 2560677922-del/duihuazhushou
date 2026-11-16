@@ -97,6 +97,9 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     /** 导入 jsonl 后进入只读预览：此时不显示会话操作条。 */
     private var viewingLog = false
 
+    /** 当前会话 id（顶栏的资产面板、模型切换都要用）。 */
+    private var sessionId: String = ""
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_native_chat)
@@ -158,6 +161,20 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         summaryBtn = findViewById(R.id.chat_summary)
         summaryBtn.setOnClickListener { showSummaryDialog() }
 
+        /*
+         * 本对话资产：一页式面板，勾完一次保存。
+         * 用 doc?.id 而不是 intent 里的 sessionId —— 从网页「用它开聊」进来时
+         * 会话是新建的，id 要等 controller.open 之后才有。
+         */
+        findViewById<View>(R.id.chat_assets).setOnClickListener {
+            val sid = controller?.doc?.id?.takeIf { it.isNotBlank() } ?: sessionId
+            if (sid.isBlank()) return@setOnClickListener
+            com.dbpg.duihuazhushou.chat.ChatAssetsSheet.show(this, sid) {
+                controller?.refreshConfig()
+                Toast.makeText(this, "本对话资产已更新", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         appearance = Appearance.load(this)
         adapter = ChatAdapter(appearance, resources.displayMetrics.widthPixels, adapterListener)
         list.layoutManager = LinearLayoutManager(this)
@@ -183,6 +200,7 @@ class NativeChatActivity : Activity(), ChatController.Sink {
          * （黑屏卡死的直接原因）。解析交给 ChatController 的后台线程做。
          */
         val sessionId = intent.getStringExtra(EXTRA_SESSION_ID).orEmpty().trim()
+        this.sessionId = sessionId
         val snapshot = intent.getStringExtra(EXTRA_SNAPSHOT).orEmpty()
         if (sessionId.isBlank() && snapshot.isBlank()) {
             Toast.makeText(this, "没有指定会话", Toast.LENGTH_SHORT).show()
@@ -331,6 +349,10 @@ class NativeChatActivity : Activity(), ChatController.Sink {
                     .putExtra(ImageViewerActivity.EXTRA_PATH, path),
                 REQ_VIEW_IMG,
             )
+        }
+
+        override fun onImageLongPress(item: ChatItem, image: com.dbpg.duihuazhushou.chat.ChatImageRef) {
+            showImageMenu(item, image)
         }
 
         override fun onVariantSwitch(item: ChatItem, delta: Int) {
@@ -505,6 +527,12 @@ class NativeChatActivity : Activity(), ChatController.Sink {
     @Deprecated("Activity#onActivityResult 仍可用；避免为单一入口再引入 ActivityResult 依赖")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        // 提示词预设「从文件导入」：请求码归它管就直接返回，别往下走到 bg/jsonl 分支
+        if (com.dbpg.duihuazhushou.imagegen.PromptPresetImportUi
+                .onActivityResult(this, requestCode, resultCode, data)
+        ) {
+            return
+        }
         if (resultCode != RESULT_OK) return
         if (requestCode == REQ_BG) {
             handleBackgroundResult(data)
@@ -570,9 +598,9 @@ class NativeChatActivity : Activity(), ChatController.Sink {
                     controller?.doc?.id.orEmpty(),
                 ) { controller?.refreshConfig() }
             },
-            MenuEntry("📚", "本对话资产", "世界书 / 预设 / 正则 / 角色 / 用户角色") {
+            MenuEntry("📚", "本对话资产", "世界书 / 预设 / 正则 / 角色 / 用户角色，一页勾完") {
                 // onSaved 必须回调：选完立刻重读绑定，不用退出重进才生效
-                com.dbpg.duihuazhushou.chat.ChatAssetsDialog.show(
+                com.dbpg.duihuazhushou.chat.ChatAssetsSheet.show(
                     this,
                     controller?.doc?.id.orEmpty(),
                 ) { controller?.refreshConfig() }
@@ -1213,6 +1241,78 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             .setTitle("给这条消息配图")
             .setItems(options) { _, which ->
                 quickImage.generate(anchorActionId = item.actionId, beforeCount = counts[which])
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    // ------------------------------------------------------------ 配图操作
+
+    /**
+     * 长按某张配图。
+     *
+     * 四个动作刻意分开：
+     *   - 移除占位符：正文里的 `[[IMG: 描述]]` 一起删，图片留在图库
+     *     （"图好看但不符合剧情"选它 —— 标记留着，下一轮模型还会看见，等于没删）；
+     *   - 只隐藏：只摘引用，标记保留（"图放错位置了、待会儿要重新对位"）；
+     *   - 重新生成：沿用原提示词再 roll 一张，旧图不删，横滑能翻回来；
+     *   - 删除：真删文件，图库里也不再有。
+     *
+     * 以前只有"点开大图→删除"，等于把这几件事压成了一件。
+     */
+    private fun showImageMenu(item: ChatItem, image: com.dbpg.duihuazhushou.chat.ChatImageRef) {
+        ActionSheet.show(
+            this,
+            appearance,
+            title = "这张配图",
+            subtitle = "只影响这条消息里的这一张",
+            sections = listOf(
+                ActionSheet.Section(
+                    items = listOf(
+                        ActionSheet.Item("🧹", "移除占位符", "正文里的 [[IMG: 描述]] 一并删掉，图片仍在图库") {
+                            controller.detachImage(item.actionId, image.id, image.path, stripMarker = true)
+                            toast("已移除占位符（图库还在）")
+                        },
+                        ActionSheet.Item("🖼️", "只隐藏这张图", "气泡里不显示，正文标记留着，方便重新对位") {
+                            controller.detachImage(item.actionId, image.id, image.path, stripMarker = false)
+                            toast("已隐藏（正文标记保留）")
+                        },
+                        ActionSheet.Item("🔄", "重新生成这张", "沿用原提示词再出一张，旧图可横滑回看") {
+                            regenerateImage(item, image)
+                        },
+                        ActionSheet.Item("🗑️", "删除这张图", "连本地文件一起删，图库里也没有了", danger = true) {
+                            confirmDeleteImage(item, image)
+                        },
+                    ),
+                ),
+            ),
+        )
+    }
+
+    private fun regenerateImage(item: ChatItem, image: com.dbpg.duihuazhushou.chat.ChatImageRef) {
+        if (quickImage.isBusy()) {
+            toast("还在出图，稍等一下")
+            return
+        }
+        val prompt = controller.imagePromptOf(item.actionId, image.id, image.path)
+        quickImage.regenerate(item.actionId, prompt)
+    }
+
+    private fun confirmDeleteImage(item: ChatItem, image: com.dbpg.duihuazhushou.chat.ChatImageRef) {
+        AlertDialog.Builder(this)
+            .setMessage(
+                "删除后本地文件就没了，图库和这条消息里都不会再有。\n" +
+                    "只想让它别显示在对话里，请选「从这条消息移除」。",
+            )
+            .setPositiveButton("删除") { _, _ ->
+                val ok = com.dbpg.duihuazhushou.gallery.GalleryRepository(this)
+                    .delete(java.io.File(image.path))
+                if (ok) {
+                    controller.detachImage(item.actionId, image.id, image.path, stripMarker = true)
+                    toast("已删除")
+                } else {
+                    toast("删除失败")
+                }
             }
             .setNegativeButton("取消", null)
             .show()

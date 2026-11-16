@@ -33,6 +33,7 @@ import com.dbpg.stcore.session.SessionHistory
 import com.dbpg.stcore.session.SummaryBlock
 import com.dbpg.stcore.session.SummaryPlanner
 import com.dbpg.stcore.stripHtmlNoise
+import com.dbpg.stcore.stripImageMarker
 import com.dbpg.stcore.stripImageMarkers
 import com.dbpg.stcore.transformForDisplayRich
 import org.json.JSONObject
@@ -570,6 +571,11 @@ class ChatController(
                 renderedHtml.remove(a.id)
             }
             val card = if (webHtml != null) cardRefs[a.id] else null
+            // 图片明细：按生成顺序，只留文件还在的（用户在查看器/图库里删过的直接跳过）
+            val imageRefs = a.images.mapNotNull { img ->
+                val p = img.localPath ?: img.dataUrl?.let { imageCache.pathFor(it) }
+                if (p != null && java.io.File(p).exists()) ChatImageRef(img.id, p) else null
+            }
             out.add(
                 ChatItem(
                     id = "a:${a.id}",
@@ -578,6 +584,7 @@ class ChatController(
                     speakerName = speakerNameOf(d, a),
                     avatarKey = avatarKeyOf(d, a),
                     imagePaths = rendered.paths,
+                    images = imageRefs,
                     streaming = generating,
                     actionId = a.id,
                     variantIndex = a.variantIndex,
@@ -1411,6 +1418,12 @@ class ChatController(
         val genRef = ConnectionStore.snapshot("getImageStyle")
             ?.optJSONObject("genRefs")?.optJSONObject("chat") ?: JSONObject()
 
+        /*
+         * 画风 / 质量 / 负面 / 采样 一律来自「风格」，这里不再覆盖：
+         * 提示词预设管的是"送给标签模型的那段 system"（破甲），
+         * 由 AutoImageService → ImagePromptRunner 在优化那一步生效，
+         * 与出图参数是两层东西，不能混在一处改。
+         */
         AutoImageService.run(
             context = appContext,
             text = text,
@@ -1418,6 +1431,8 @@ class ChatController(
             refImage = genRef.optString("image").takeIf { it.isNotBlank() },
             refStrength = genRef.optDouble("strength", 0.6),
             refInfoExtracted = genRef.optDouble("info", 0.7),
+            // 标签生成失败就不画了：画出来也是废图，还不如直接说一声
+            onSkip = { reason -> sink.onToast(reason) },
             onImage = { att ->
                 // 会话可能已经切走/这条被删了：找不到就不写，避免往别的会话里塞图
                 val d = doc ?: return@run
@@ -1599,12 +1614,83 @@ class ChatController(
      * 图片不存在"的空壳 —— 用户看到的就是"删了还显示"。
      * 只动 images，不动正文；摘完落盘并重绘。
      */
+    /**
+     * 把某张图从消息上**摘掉**，但不删文件。
+     *
+     * 用户的原话：「有的时候图片好看但是不符合剧情」—— 他要的是这条消息里
+     * 别再显示这张，图还留在图库。以前只有「删除」一条路，删的是文件本身，
+     * 好看也白瞎了。
+     *
+     * [stripMarker] 决定正文里那枚 `[[IMG: 描述]]` 要不要一起删：
+     *
+     * - `true`（默认）—— 连占位符一起清掉。这是用户实际想要的效果：
+     *   图都移走了，正文里还留着一句「[[IMG: 银发少女站在雨里]]」，
+     *   下一轮送给模型时它照样看得见，等于"删了个寂寞"；
+     * - `false` —— 只摘引用，标记留着。给"这张放错位置了，重新生成时
+     *   还想让它对回原位"的情况。
+     *
+     * 早期版本一律不动正文（理由是"改正文等于改 AI 说过的话"），但正文本来
+     * 就允许编辑（重新生成 / 手工改字都走同一条路），这条理由站不住脚。
+     */
+    fun detachImage(
+        actionId: String,
+        imageId: String,
+        path: String = "",
+        stripMarker: Boolean = true,
+    ) {
+        val d = doc ?: return
+        val act = d.actions.find { it.id == actionId } ?: return
+        val target = act.images.firstOrNull { img ->
+            if (imageId.isNotBlank()) img.id == imageId else img.localPath == path
+        } ?: return
+        val keep = act.images.filterNot { it === target }
+        val next = act.copy(
+            images = keep,
+            ai = if (stripMarker) stripMarkerOf(act.ai, act.images, target) else act.ai,
+        )
+        val doc2 = d.copy(
+            actions = d.actions.map { if (it.id == actionId) next else it },
+            updatedAt = System.currentTimeMillis(),
+        )
+        doc = doc2
+        SessionRepo.save(doc2)
+        render(false)
+    }
+
+    /**
+     * 删掉正文里与 [target] 对应的那一枚 `[[IMG: 描述]]`。
+     *
+     * 配对交给引擎层的 [stripImageMarker]（纯函数、可单测）：按描述筛，
+     * 再取"这张在同名里排第几"。用户手动配的图本来就没有标记，筛不到
+     * 就原样返回 —— 不猜、不误删别的图。
+     */
+    private fun stripMarkerOf(
+        text: String,
+        all: List<ActionImage>,
+        target: ActionImage,
+    ): String {
+        val desc = target.description.trim()
+        if (desc.isEmpty()) return text
+        val ordinal = all.takeWhile { it !== target && it != target }
+            .count { it.description.trim() == desc }
+        return stripImageMarker(text, desc, ordinal)
+    }
+
+    /** 这张图当初的完整提示词（「重新生成」原样重用，别拿截断的 description 代替）。 */
+    fun imagePromptOf(actionId: String, imageId: String, path: String = ""): String {
+        val act = doc?.actions?.find { it.id == actionId } ?: return ""
+        val img = act.images.firstOrNull {
+            if (imageId.isNotBlank()) it.id == imageId else it.localPath == path
+        } ?: return ""
+        return img.prompt.orEmpty()
+    }
+
     fun removeImageByPath(path: String) {
         val d = doc ?: return
         val stem = java.io.File(path).nameWithoutExtension
         var changed = false
         val actions = d.actions.map { a ->
-            val kept = a.images.filterNot { img ->
+            val hits = a.images.filter { img ->
                 val p = img.localPath ?: img.dataUrl
                 when {
                     p.isNullOrBlank() -> false
@@ -1614,10 +1700,16 @@ class ChatController(
                     else -> false
                 }
             }
-            if (kept.size != a.images.size) {
+            if (hits.isEmpty()) {
+                a
+            } else {
                 changed = true
-                a.copy(images = kept)
-            } else a
+                // 查看器里删图 = 真删文件，正文里的占位符也一起清 ——
+                // 留着的话下次渲染会在这里留一个"图片不存在"的空位
+                var text = a.ai
+                hits.forEach { h -> text = stripMarkerOf(text, a.images, h) }
+                a.copy(images = a.images.filterNot { it in hits }, ai = text)
+            }
         }
         if (!changed) return
         val next = d.copy(actions = actions, updatedAt = System.currentTimeMillis())

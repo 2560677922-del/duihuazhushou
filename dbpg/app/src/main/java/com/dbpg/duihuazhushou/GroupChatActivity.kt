@@ -25,6 +25,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.dbpg.duihuazhushou.appearance.Appearance
 import com.dbpg.duihuazhushou.chat.ChatAdapter
 import com.dbpg.duihuazhushou.chat.ChatController
+import com.dbpg.duihuazhushou.chat.ChatImageRef
 import com.dbpg.duihuazhushou.chat.ChatItem
 import com.dbpg.duihuazhushou.chat.GenBridge
 import com.dbpg.duihuazhushou.chat.ImageFileCache
@@ -1328,6 +1329,50 @@ class GroupChatActivity : Activity() {
                 Intent(this@GroupChatActivity, ImageViewerActivity::class.java)
                     .putExtra(ImageViewerActivity.EXTRA_PATH, path),
             )
+        }
+
+        override fun onImageLongPress(item: ChatItem, image: ChatImageRef) {
+            val c = controllerFor(activeSessionId)
+            AlertDialog.Builder(this@GroupChatActivity)
+                .setTitle("这张配图")
+                .setItems(
+                    arrayOf(
+                        "移除占位符（不删图片）",
+                        "只隐藏这张图",
+                        "重新生成这张",
+                        "删除这张图",
+                    ),
+                ) { _, which ->
+                    when (which) {
+                        0 -> {
+                            // 正文里的 [[IMG: 描述]] 一起删 —— 留着标记的话，
+                            // 下一轮送给模型时它仍然看得见，等于没移除
+                            c.detachImage(item.actionId, image.id, image.path, stripMarker = true)
+                            toast("已移除占位符（图库还在）")
+                        }
+                        1 -> {
+                            c.detachImage(item.actionId, image.id, image.path, stripMarker = false)
+                            toast("已隐藏（正文标记保留）")
+                        }
+                        2 -> {
+                            if (quickImage.isBusy()) toast("还在出图，稍等一下")
+                            else quickImage.regenerate(
+                                item.actionId,
+                                c.imagePromptOf(item.actionId, image.id, image.path),
+                            )
+                        }
+                        else -> {
+                            val ok = com.dbpg.duihuazhushou.gallery.GalleryRepository(this@GroupChatActivity)
+                                .delete(java.io.File(image.path))
+                            if (ok) {
+                                c.detachImage(item.actionId, image.id, image.path, stripMarker = true)
+                                toast("已删除")
+                            } else toast("删除失败")
+                        }
+                    }
+                }
+                .setNegativeButton("取消", null)
+                .show()
         }
 
         override fun onVariantSwitch(item: ChatItem, delta: Int) {

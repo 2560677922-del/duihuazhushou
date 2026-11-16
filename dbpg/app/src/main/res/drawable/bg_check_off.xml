@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图片库多选：未选中的空心圈 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="#33000000" />
+    <stroke android:width="2dp" android:color="#E6FFFFFF" />
+</shape>

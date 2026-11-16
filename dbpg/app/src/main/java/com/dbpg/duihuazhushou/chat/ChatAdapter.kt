@@ -9,6 +9,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -50,6 +51,13 @@ class ChatAdapter(
     /** 一张/一组配图被点击 */
     interface Listener {
         fun onImageClick(item: ChatItem, path: String)
+        /**
+         * 长按某一张配图：从气泡移除（不删文件）/ 重新生成 / 删除文件。
+         *
+         * 以前只有"点开大图再删"，删的又是文件本身 —— 图好看但不符合剧情时，
+         * 用户想要的是"这张别显示在对话里"，不是"把图弄没"。
+         */
+        fun onImageLongPress(item: ChatItem, image: ChatImageRef)
         fun onVariantSwitch(item: ChatItem, delta: Int)
         fun onActionMenu(item: ChatItem, anchor: View)
         /** 单条消息生图：把这条 + 前 N 条当上下文出图，挂回这条消息 */
@@ -165,6 +173,8 @@ class ChatAdapter(
         val webHost: FrameLayout,
         val card: ImageView,
         val images: LinearLayout,
+        /** 图片的横向滚动容器：多图时左右滑，默认停在最新那张 */
+        val imagesScroll: HorizontalScrollView,
         val meta: LinearLayout,
         val verOlder: TextView,
         val verNo: TextView,
@@ -175,6 +185,8 @@ class ChatAdapter(
         var web: HtmlMessageView? = null,
         /** 当前绑定的消息 id：延迟回调要靠它判断"这个 holder 还是不是同一条" */
         var boundId: String = "",
+        /** 上次把图片滚到最右时是哪条消息；同一条反复 bind 不再重置滑动位置 */
+        var lastImageScrollId: String = "",
     ) : RecyclerView.ViewHolder(root)
 
     /**
@@ -212,6 +224,7 @@ class ChatAdapter(
             v.findViewById(R.id.msg_web),
             v.findViewById(R.id.msg_card),
             v.findViewById(R.id.msg_images),
+            v.findViewById(R.id.msg_images_scroll),
             v.findViewById(R.id.msg_meta),
             v.findViewById(R.id.msg_ver_older),
             v.findViewById(R.id.msg_ver_no),
@@ -473,26 +486,55 @@ class ChatAdapter(
             }
         }
 
-        // 3) 图片：复用前先清空，再按本地路径加载（LruCache 命中秒开）。
+        // 3) 图片：一条消息可能挂多张，横向滑动；默认停在"当前那张"（最新生成的在最右）。
         //    文件已被删掉的（图库/查看器里删过）直接跳过 —— 否则留个空壳
         //    ImageView，看着像"缩略图还在"，点开又是"图片不存在"。
         holder.images.removeAllViews()
-        val livePaths = item.imagePaths.filter { java.io.File(it).exists() }
-        if (livePaths.isEmpty()) {
-            holder.images.visibility = View.GONE
+        val refs = if (item.images.isNotEmpty()) {
+            item.images
         } else {
-            holder.images.visibility = View.VISIBLE
-            for (path in livePaths) {
+            // 老数据 / jsonl 预览只有路径
+            item.imagePaths.map { ChatImageRef("", it) }
+        }
+        val live = refs.filter { java.io.File(it.path).exists() }
+        val imgScroll = holder.imagesScroll
+        if (live.isEmpty()) {
+            imgScroll.visibility = View.GONE
+        } else {
+            imgScroll.visibility = View.VISIBLE
+            val single = live.size == 1
+            // 单图：横滑容器收到图宽（气泡不被撑满）；多图：固定成气泡宽，才有得滑
+            (imgScroll.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+                lp.width = if (single) LinearLayout.LayoutParams.WRAP_CONTENT else bubbleMaxWidthPx
+                imgScroll.layoutParams = lp
+            }
+            // 多图时每张留 8% 露出下一张，用户一眼看出"右边还有"
+            val cellW = if (single) bubbleMaxWidthPx else (bubbleMaxWidthPx * 0.92f).toInt()
+            for (ref in live) {
                 val iv = ImageView(ctx)
-                val lpp = LinearLayout.LayoutParams(bubbleMaxWidthPx, LinearLayout.LayoutParams.WRAP_CONTENT)
-                lpp.topMargin = (4 * density).toInt()
+                val lpp = LinearLayout.LayoutParams(cellW, LinearLayout.LayoutParams.WRAP_CONTENT)
+                lpp.marginEnd = if (single) 0 else (6 * density).toInt()
                 iv.layoutParams = lpp
                 iv.scaleType = ImageView.ScaleType.FIT_CENTER
                 iv.adjustViewBounds = true
-                ImageLoader.load(path, bubbleMaxWidthPx)?.let { iv.setImageBitmap(it) }
+                ImageLoader.load(ref.path, cellW)?.let { iv.setImageBitmap(it) }
                 // 点图放大：以前这里没有监听，图片只能"看着"，点不动
-                iv.setOnClickListener { listener.onImageClick(item, path) }
+                iv.setOnClickListener { listener.onImageClick(item, ref.path) }
+                // 长按：移除这张（不删文件）/ 重新生成 / 删文件
+                iv.setOnLongClickListener {
+                    listener.onImageLongPress(item, ref)
+                    true
+                }
                 holder.images.addView(iv)
+            }
+            // 默认停在"当前那张"（最新生成的在最右）。
+            // 只在"换了一条消息"时归位：同一条反复 bind（流式刷新、滚动复用）
+            // 会把用户手动滑到的位置弹回去，那比不归位更烦人。
+            if (holder.lastImageScrollId != item.id) {
+                holder.lastImageScrollId = item.id
+                imgScroll.post {
+                    if (holder.boundId == item.id) imgScroll.fullScroll(View.FOCUS_RIGHT)
+                }
             }
         }
 

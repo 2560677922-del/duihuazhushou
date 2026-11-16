@@ -169,11 +169,23 @@
                 android:layout_marginTop="10dp"
                 android:background="@drawable/bg_input"
                 android:padding="11dp"
-                android:text="提示词模型：跟随当前模型"
-                android:textColor="#1A2230"
-                android:textSize="13sp"
-                android:maxLines="1"
-                android:ellipsize="end" />
+                    android:text="提示词模型：跟随当前模型"
+                    android:textColor="#1A2230"
+                    android:textSize="13sp"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
+
+            <!--
+              提示词预设（破甲 / 输出约束）：整条由 PromptPresetBar 用代码建。
+              放在「提示词模型」下面，因为这两件事是配套的 ——
+              换了模型最容易出现"拒答"，拒答就该来这里切预设。
+              插件没挂载时整条 GONE。
+            -->
+            <LinearLayout
+                android:id="@+id/cimg_preset_host"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
         </LinearLayout>
 
         <TextView

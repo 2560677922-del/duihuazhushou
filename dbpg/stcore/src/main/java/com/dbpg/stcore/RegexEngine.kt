@@ -207,6 +207,37 @@ fun buildScript(map: Map<String, Any?>): RawScript {
     )
 }
 
+/**
+ * 把一条脚本套到一段**纯文本**上。
+ *
+ * 聊天侧走 [runRegex]（有消息、有 depth、有 placement）；生图的 system 是一整段
+ * 裸文本，没有消息上下文，所以单开这个入口 —— 但**执行语义共用同一套**
+ * （`$0` / `{{match}}` / trimStrings / 变长后顾放宽 都在 [JsRegex] 与
+ * [buildReplacement] 里），不另写一份替换实现。
+ *
+ * @return 改写后的文本；正则编译失败返回 null（调用方跳过这一条）。
+ */
+fun applyScriptToText(
+    text: String,
+    script: RawScript,
+    ctx: MacroContext? = null,
+    vars: VariableTables? = null,
+): String? {
+    val find = resolveFindPattern(script.findRegex, script.substituteRegex, ctx)
+    val regex = runCatching { JsRegex.compile(find) }.getOrNull() ?: return null
+    val trims = trimList(script).map { substituteKnownMacros(it, ctx) }
+    regex.lastIndex = 0
+    if (regex.firstMatch(text) == null) return text
+    regex.lastIndex = 0
+    return regex.replace(text) { jm ->
+        buildReplacement(
+            script.replaceString,
+            MatchParts(jm.whole, jm.groups, jm.named),
+            trims, ctx, vars,
+        )
+    }
+}
+
 fun runRegex(
     messages: List<ChatMessage>,
     scripts: List<RawScript>,

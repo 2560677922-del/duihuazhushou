@@ -1,6 +1,18 @@
 package com.dbpg.duihuazhushou.chat
 
 /**
+ * 一条消息里的一张配图。
+ *
+ * 单独带 [id] 是因为气泡上的操作（移除 / 重新生成）必须精确落到某个
+ * [com.dbpg.stcore.session.ActionImage] 上：光有路径只能比对文件名，
+ * 同一张图挂在两条消息上时就会改错地方。
+ */
+data class ChatImageRef(
+    val id: String,
+    val path: String,
+)
+
+/**
  * 聊天列表里的一条（UI 层模型）。
  *
  * 刻意与「数据来源」解耦：
@@ -30,6 +42,13 @@ data class ChatItem(
      */
     val avatarKey: String = "",
     val imagePaths: List<String> = emptyList(),
+    /**
+     * 配图明细（id + 路径），顺序＝生成顺序。
+     *
+     * 气泡里多图改成横向滑动后，需要知道"哪一张"被长按 / 要重生成，
+     * 所以不能只留一串路径。
+     */
+    val images: List<ChatImageRef> = emptyList(),
     val streaming: Boolean = false,
     /** 对应会话里的哪一轮；空串 = 不是会话消息（只读预览） */
     val actionId: String = "",

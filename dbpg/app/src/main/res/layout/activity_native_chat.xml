@@ -52,6 +52,19 @@
             android:textStyle="bold" />
 
         <!--
+          本对话资产：点一下弹出一页式面板（角色卡 / 我 / 预设 / 世界书 / 正则 / DNA）。
+          以前这些埋在 ⋯ → 资产 → 二级菜单里，配置一次要点十几次。
+        -->
+        <ImageView
+            android:id="@+id/chat_assets"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="9dp"
+            android:src="@drawable/ic_nav_assets"
+            android:tint="#3A4353"
+            android:contentDescription="本对话资产" />
+
+        <!--
           快捷换对话模型：点一下弹运营商，再点运营商弹该家保存的模型。
           只显示模型名（右侧▸提示可展开），不露地址/密钥；宽度封顶防挤掉标题。
         -->

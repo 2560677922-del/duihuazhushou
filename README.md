@@ -5,6 +5,18 @@
 <a href="https://github.com/2560677922-del/duihuazhushou/releases/download/apk-v1.1.1/app-debug.apk"><img alt="下载 APK" src="https://img.shields.io/badge/下载-APK%20v1.1.1-blue?logo=android"></a>
 &nbsp; **[⬇️ 下载 APK（v1.1.1，debug 签名）](https://github.com/2560677922-del/duihuazhushou/releases/download/apk-v1.1.1/app-debug.apk)**
 
+> **⚠️ 已知问题：「提示词预设」插件已临时封印（v1.8.1）**
+>
+> 把社区酒馆预设挂到「剧情 → 标签」这一步的功能**暂时下架**，入口已隐藏，
+> 代码保留但不启用。原因：社区预设的导入链路要兼容各家千奇百怪的 JSON 结构和
+> 作者自带的正则，适配成本远大于收益，且改动一直贴着生图主流程，出问题的表现
+> 就是"点一下生图直接失败"。
+>
+> **这个功能目前可能还有 bug，不建议在正式使用中依赖。** 封印后生图走最初那套
+> 流程（任务模板 + 风格参数），不读任何预设。
+> 复活的开关在 `PromptPresetPlugin.SEALED`，细节见
+> [`dbpg/docs/改动记录.md`](dbpg/docs/改动记录.md) §53。
+
 ---
 
 # 一、它能做什么（给「用」的人看）
@@ -32,6 +44,7 @@ Markdown / 裸 HTML / 整页 HTML 前端卡自动分流；卡片在沙箱 `ifram
 **生图**
 
 接口与画风分离配置；Danbooru 标签库带中文；对话里快捷配图、自动配图、图库与查看器一应俱全。
+长按配图可以「移除占位符」（正文里的 `[[IMG: 描述]]` 一起清掉、图片留在图库）、「只隐藏这张图」或「删除这张图」，三件事分开做，不会误删文件。
 
 ---
 

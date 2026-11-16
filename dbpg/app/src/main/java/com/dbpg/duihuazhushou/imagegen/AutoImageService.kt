@@ -8,12 +8,7 @@ import com.dbpg.stcore.imagegen.AutoImageSupport
 import com.dbpg.stcore.imagegen.ImageEngine
 import com.dbpg.stcore.imagegen.ImageParams
 import com.dbpg.stcore.session.ActionImage
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 /**
  * 原生自动配图：把 AI 正文里的 `[[IMG: 描述]]` 一个个画出来。
@@ -30,6 +25,9 @@ import java.util.concurrent.TimeUnit
  *
  * 失败处理：某个端点 404/401 就换下一个候选（与网页 candidateImageEndpoints 一致），
  * 单张失败不影响其他张；全部失败时 [onDone] 仍会回调，界面只需要"停止转圈"。
+ *
+ * ★ 标签那一步失败（模型拒答 / 返回中文长句 / 空回复）**直接跳过这张**，
+ *   并通过 [onSkip] 报一句原因：拿原文去画必然是废图，不如不画。
  */
 object AutoImageService {
 
@@ -41,18 +39,11 @@ object AutoImageService {
     private val io = Executors.newSingleThreadExecutor { r -> Thread(r, "dhp-autoimage") }
     private val main = Handler(Looper.getMainLooper())
 
-    private val http: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(150, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
-            .build()
-    }
-
     /**
      * 跑一次自动配图。
      *
      * @param text    这一轮 AI 的完整正文（**含** `[[IMG:]]` 标记）
+     * @param onSkip  某张因为"标签生成失败"被跳过时回调一次（主线程），带原因
      * @param onImage 每出好一张调一次，调用方负责写进会话并刷新列表
      * @param onDone  全部结束（成功几张算几张，不会因为某张失败就中断）
      */
@@ -64,6 +55,7 @@ object AutoImageService {
         refImage: String? = null,
         refStrength: Double = 0.6,
         refInfoExtracted: Double = 0.7,
+        onSkip: (String) -> Unit = {},
         onImage: ImageCallback,
         onDone: () -> Unit,
     ) {
@@ -83,8 +75,9 @@ object AutoImageService {
                 for (t in targets) {
                     val image = runCatching {
                         drawOne(
-                            service, env, t.description,
+                            context, service, env, t.description,
                             refImage, refStrength, refInfoExtracted,
+                            onSkip = { reason -> main.post { onSkip(reason) } },
                         )
                     }.getOrNull()
                     if (image != null) {
@@ -109,19 +102,40 @@ object AutoImageService {
     private data class Drawn(val path: String, val prompt: String)
 
     private fun drawOne(
+        context: Context,
         service: ImageGenService,
         env: AutoImageEnv,
         description: String,
         refImage: String?,
         refStrength: Double,
         refInfoExtracted: Double,
+        onSkip: (String) -> Unit,
     ): Drawn? {
-        val optimized = if (env.settings.skipOptimization) {
-            description
+        // 「文字 → 标签」走独立支线：破甲/输出约束在这里生效。
+        // 这一步失败就不出图 —— 原文是中文剧情，直接当 prompt 只会画出废图。
+        val optimized: String
+        if (env.settings.skipOptimization) {
+            // 用户明确关掉了优化：原文就是他要的提示词，照画
+            optimized = description
         } else {
-            optimize(env, description).ifBlank { description }
+            when (
+                val r = ImagePromptRunner.optimizeOrFail(
+                    context = context,
+                    config = env.config,
+                    llm = env.llm,
+                    dnaTags = env.dnaTags,
+                    description = description,
+                    contextLabel = "画面描述",
+                )
+            ) {
+                is ImagePromptRunner.Outcome.Ok -> optimized = r.tags
+                is ImagePromptRunner.Outcome.Failed -> {
+                    onSkip("跳过一张配图：${r.reason}")
+                    return null
+                }
+            }
         }
-        val prompt = AutoImageSupport.finalPrompt(env.config, optimized, description, env.dnaTags)
+        val prompt = ImagePromptRunner.compose(env.config, optimized, description, env.dnaTags)
         if (prompt.isBlank()) return null
 
         val c = env.config
@@ -162,55 +176,5 @@ object AutoImageService {
             if (first != null) return Drawn(first.path, prompt)
         }
         return null
-    }
-
-    /**
-     * 用对话模型把画面描述转成 Danbooru 标签。
-     *
-     * 失败一律退回原始描述 —— 宁可出得糙一点，也不能因为优化失败就不出图。
-     */
-    private fun optimize(env: AutoImageEnv, description: String): String {
-        val llm = env.llm
-        if (!llm.usable) return description
-
-        val (system, user) = AutoImageSupport.renderTemplate(
-            template = env.config.promptTemplate,
-            contextText = buildString {
-                if (env.presetBlock.isNotBlank()) append(env.presetBlock).append("\n\n")
-                if (env.dnaTags.isNotBlank()) append(env.dnaTags).append("\n\n")
-                append(description)
-            },
-            contextLabel = "画面描述",
-            artistTags = env.config.artistTags,
-        )
-        val body = AutoImageSupport.buildOptimizeBody(
-            model = llm.model,
-            system = system,
-            user = user,
-            temperature = llm.temperature,
-            maxTokens = llm.maxTokens,
-        )
-
-        for (url in AutoImageSupport.chatEndpoints(llm.baseUrl)) {
-            val json = postJson(url, llm.apiKey, body) ?: continue
-            val reply = AutoImageSupport.extractCompletionText(json)
-            val prompt = AutoImageSupport.parseOptimizedPrompt(reply)
-            if (prompt.isNotBlank()) return prompt
-        }
-        return description
-    }
-
-    /** 发一次 POST，返回响应正文；非 2xx 或网络异常返回 null。 */
-    private fun postJson(url: String, apiKey: String, json: String): String? {
-        return runCatching {
-            val builder = Request.Builder()
-                .url(url)
-                .post(json.toRequestBody("application/json; charset=utf-8".toMediaType()))
-            if (apiKey.isNotBlank()) builder.header("Authorization", "Bearer $apiKey")
-            http.newCall(builder.build()).execute().use { resp ->
-                if (!resp.isSuccessful) return null
-                resp.body?.string()
-            }
-        }.getOrNull()
     }
 }

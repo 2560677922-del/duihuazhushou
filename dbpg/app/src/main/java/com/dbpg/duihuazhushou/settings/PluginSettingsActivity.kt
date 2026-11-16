@@ -20,6 +20,7 @@ import com.dbpg.duihuazhushou.chat.render.HtmlMessageView
 import com.dbpg.duihuazhushou.chat.render.plugin.PLUGIN_API_VERSION
 import com.dbpg.duihuazhushou.chat.render.plugin.PluginCatalog
 import com.dbpg.duihuazhushou.chat.render.plugin.PluginDescriptor
+import com.dbpg.duihuazhushou.chat.render.plugin.PluginKind
 import com.dbpg.duihuazhushou.chat.render.plugin.PluginRegistry
 import com.dbpg.duihuazhushou.chat.render.plugin.PluginStore
 
@@ -140,7 +141,7 @@ class PluginSettingsActivity : Activity() {
             setOnClickListener { finish() }
         })
         addView(TextView(this@PluginSettingsActivity).apply {
-            text = "渲染插件"
+            text = "插件"
             textSize = 18f
             setTextColor(Color.parseColor("#1A2230"))
             typeface = Typeface.DEFAULT_BOLD
@@ -173,12 +174,31 @@ class PluginSettingsActivity : Activity() {
         listBox.removeAllViews()
         val installed = PluginStore.installed(this)
         val enabled = PluginStore.enabled(this)
+
+        // 两类插件共用同一份「已挂载 / 已启用」状态，但作用点完全不同：
+        // 渲染插件管消息怎么显示，生图插件管出图带什么参数。分组展示，
+        // 免得用户以为「卸载生图预设」也会影响卡片渲染。
+        listBox.addView(groupTitle("渲染 · 聊天消息"), cardParams())
         for (plugin in PluginCatalog.ALL) {
             listBox.addView(
                 pluginCard(plugin.descriptor, plugin.descriptor.id in installed, plugin.descriptor.id in enabled),
                 cardParams(),
             )
         }
+
+        /*
+         * 「生图 · 提示词预设」整组已下架（[PromptPresetPlugin.SEALED]）。
+         * 出厂清单为空时这里连标题都不出现 —— 空标题比"点了没反应"更让人困惑。
+         */
+        val imagePlugins = com.dbpg.duihuazhushou.imagegen.PromptPresetCatalog.ALL
+        if (imagePlugins.isNotEmpty()) {
+            listBox.addView(groupTitle("生图 · 提示词预设"), cardParams())
+            for (d in imagePlugins) {
+                listBox.addView(pluginCard(d, d.id in installed, d.id in enabled), cardParams())
+            }
+        }
+
+        // 仲裁信息只对渲染插件有意义（一条消息最多一个渲染器生效）
         val candidates = PluginRegistry.activeCandidates(this, "")
         arbText.text = if (candidates.isEmpty()) {
             "当前无生效插件 → 内置渲染按原样工作"
@@ -186,6 +206,15 @@ class PluginSettingsActivity : Activity() {
             "已生效：" + candidates.joinToString(" → ") { it.name }
         }
         refreshDiagnostic()
+    }
+
+    /** 分组小标题：两类插件之间只隔这一行，不占卡片。 */
+    private fun groupTitle(text: String): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 11.5f
+        setTextColor(Color.parseColor("#8A94A6"))
+        typeface = Typeface.DEFAULT_BOLD
+        setPadding(dp(18), dp(14), dp(18), dp(0))
     }
 
     /** 折叠区里的说明：为什么存在、认领什么、契约细节。默认收起，不抢首屏。 */
@@ -449,10 +478,15 @@ class PluginSettingsActivity : Activity() {
         // 第二行：一句话作用（首屏的重点）
         card.addView(textView(d.summary.ifBlank { d.convention }, 13f, "#3A4353", dp(10)))
 
-        // 第三行：兼容来源 + 内置标记（小字，一眼知道它为什么存在）
+        // 第三行：来源 + 内置标记（小字，一眼知道它为什么存在）
+        // 两类插件的来源说明不一样：渲染插件是兼容社区写法，生图插件是本机支线能力。
         card.addView(
             textView(
-                "兼容 小白X / 酒馆助手 写法 · ${d.source.label}不可删除 · 契约 v${d.apiVersion}",
+                if (d.kind == PluginKind.IMAGE_GEN) {
+                    "生图支线 · ${d.source.label}不可删除 · 契约 v${d.apiVersion}"
+                } else {
+                    "兼容 小白X / 酒馆助手 写法 · ${d.source.label}不可删除 · 契约 v${d.apiVersion}"
+                },
                 11f, "#8A94A6", dp(6),
             ),
         )

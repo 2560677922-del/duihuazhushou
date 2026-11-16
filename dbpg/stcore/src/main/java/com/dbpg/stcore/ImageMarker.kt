@@ -18,8 +18,17 @@ data class NativeImage(
     val markdownIndex: Int? = null,
 )
 
-/** 匹配 [[IMG: 描述]] / ［［IMG: 描述］］（含全角方括号）。 */
-val IMAGE_MARKER_RE: Regex = Regex("\\[\\[\\s*IMG\\s*[:：]\\s*([^\\]]+?)\\s*\\]\\]", RegexOption.IGNORE_CASE)
+/**
+ * 匹配 [[IMG: 描述]] / ［［IMG: 描述］］（含全角方括号）。
+ *
+ * ★ 方括号必须两种都认：模型偶尔吐全角（中文语境下很常见），以前注释写着
+ *   "含全角"但正则只写了半角，那些消息里的标记既不会被剥掉、也配不上图，
+ *   表现为"AI 说完话后面多一行 [[IMG: …]] 原文"。
+ */
+val IMAGE_MARKER_RE: Regex = Regex(
+    "[\\[［]{2}\\s*IMG\\s*[:：]\\s*([^\\]］]+?)\\s*[\\]］]{2}",
+    RegexOption.IGNORE_CASE,
+)
 
 data class ParsedMarker(val description: String, val markdownIndex: Int, val index: Int)
 
@@ -55,6 +64,33 @@ fun parseImageMarkers(text: String): List<ParsedMarker> {
         out.add(ParsedMarker(m.groupValues[1].trim(), maxOf(0, idx), m.range.first))
     }
     return out
+}
+
+/**
+ * 只删掉**其中一枚**标记，其余原样保留。
+ *
+ * 场景：用户把某张配图从消息里移除，正文里那句 `[[IMG: 银发少女站在雨里]]`
+ * 也得跟着走 —— 否则下一轮送给模型时它照样看得见，等于没删。
+ *
+ * 配对方式：先按描述文字精确匹配（同一段话可能挂了好几张图），再取同名里的
+ * 第 [ordinal] 个。描述对不上（用户手动配的图压根没有标记）就原样返回，
+ * 不猜、不误删别的图。
+ *
+ * 删完顺手收敛空白，别在气泡里留一块莫名的空行。
+ */
+fun stripImageMarker(text: String, description: String, ordinal: Int = 0): String {
+    if (text.isEmpty()) return text
+    val desc = description.trim()
+    if (desc.isEmpty()) return text
+    val same = IMAGE_MARKER_RE.findAll(text)
+        .filter { it.groupValues[1].trim() == desc }
+        .toList()
+    if (same.isEmpty()) return text
+    val hit = if (ordinal in same.indices) same[ordinal] else same.last()
+    return text.removeRange(hit.range.first, hit.range.last + 1)
+        .replace(Regex("[ \t]+\n"), "\n")
+        .replace(Regex("\n{3,}"), "\n\n")
+        .trim()
 }
 
 /** 剥掉所有插图标记（必须用于要送给大模型 / 统计 token 的文本）。 */

@@ -89,10 +89,12 @@ class NativeImageGenActivity : Activity() {
     private var tagQuery = ""
 
     /** 当前风格提示词（出图时拼进提示词/负面）。 */
+    private var styleName = ""
     private var styleArtist = ""
     private var styleQuality = ""
     private var styleNegative = ""
     private var styleUid = ""
+
     /**
      * 出图参考图（NAI 参考图 / Vibe Transfer）：**发给生图模型**的那张，
      * 用来锁人物形象，随时可换。与风格页的 thumb（只给人看的风格示意）
@@ -405,6 +407,11 @@ class NativeImageGenActivity : Activity() {
 
         val steps = stepsInput.text?.toString()?.toIntOrNull() ?: 28
         val cfg = cfgInput.text?.toString()?.toDoubleOrNull() ?: 6.0
+        /*
+         * 本页是"用户自己写标签直接出图"，不经过语言模型，所以提示词预设
+         * （破甲 / 输出约束）在这里没有作用点 —— 那是聊天 🎨 与自动配图的事。
+         * 画风 / 负面 / 参考图仍然只认「风格」，与加预设之前一致。
+         */
         // 采样参数本来挂在风格上，本页改了也写回去，下次进来保持一致
         if (styleUid.isNotBlank()) {
             EngineBridge.command(
@@ -472,6 +479,8 @@ class NativeImageGenActivity : Activity() {
         super.onResume()
         // 从「运营商」页返回时可能新增了模型，刷新选择器
         runCatching { loadSelectors() }
+        // 插件可能在设置页被装/卸过：状态缓存要重读，整条也可能要隐藏
+        runCatching { com.dbpg.duihuazhushou.chat.render.plugin.PluginStore.invalidate() }
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
@@ -645,6 +654,7 @@ class NativeImageGenActivity : Activity() {
             val arr = obj.optJSONArray("styles") ?: JSONArray()
             styleList = (0 until arr.length()).map { arr.getJSONObject(it) }
             styleUid = obj.optString("styleUid")
+            styleName = obj.optString("styleName").ifBlank { "默认风格" }
             styleSelect.text = "风格：" + obj.optString("styleName").ifBlank { "默认" }
             styleArtist = obj.optString("artistTags")
             styleQuality = obj.optString("qualityTags")
@@ -781,6 +791,8 @@ class NativeImageGenActivity : Activity() {
             .setNegativeButton("取消", null)
             .show()
     }
+
+    // ------------------------------------------------------------ 生图预设（插件）
 
     /** 小图快捷档位：点一下即写入配置，风格页与对话生图设置页同步。 */
     private fun buildSizeChips() {

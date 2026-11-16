@@ -33,6 +33,22 @@ enum class PluginSource(val label: String) {
     EXTERNAL("外部"),
 }
 
+/**
+ * 插件类别。
+ *
+ * 同一个挂载状态（[PluginStore]）管两类插件：它们的共同点是「装上才生效、
+ * 卸载立刻回到主 App 原来的行为」，区别只在插在哪一环。
+ *
+ * - [RENDER]：消息渲染。把卡片 HTML 补成可渲染的隔离文档。
+ * - [IMAGE_GEN]：生图支线。给「剧情 → 标签」那一步挑一套资产预设。
+ *   画风 / 负面 / 采样不在这里（那是「风格」的事）。属于「生图」这条支线，
+ *   不该长在聊天主链路上，所以单独成类、可整块卸载。
+ */
+enum class PluginKind(val label: String) {
+    RENDER("渲染"),
+    IMAGE_GEN("生图"),
+}
+
 /** 一条消息交给插件时的上下文，只读。 */
 data class PluginRenderMeta(
     val messageId: String,
@@ -82,6 +98,11 @@ data class PluginDescriptor(
     val scope: PluginScope = PluginScope.Global,
     /** 来源：内置恒在、可恢复；外部为将来预留。设置页据此决定是否显示「不可删除」。 */
     val source: PluginSource = PluginSource.BUILTIN,
+    /**
+     * 类别。渲染插件与生图插件共用同一份描述符与挂载状态，
+     * 设置页按这个字段分组，仲裁器按它挑自己要的那一类。
+     */
+    val kind: PluginKind = PluginKind.RENDER,
 )
 
 interface RenderPlugin {

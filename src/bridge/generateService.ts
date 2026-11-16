@@ -625,8 +625,11 @@ function imageConfig(): string {
       temperature: llm.temperature ?? 0.7,
       maxTokens: llm.maxTokens || 900,
     },
-    // 预设里跟画面相关的片段（可选）。原生只在 usePreset 时拼进提示词。
-    presetBlock: auto.usePreset ? presetSnippet(auto.presetMaxChars) : '',
+    // 当前对话预设里跟画面相关的片段。
+    // 恒下发、不再受 auto.usePreset 控制：要不要用由原生侧的三态决定
+    // （不带预设 / 跟随当前对话 / 专用预设）。这里再拦一道的话，
+    // 「跟随当前对话」永远拿到空串，等于把这个模式废掉。
+    presetBlock: presetSnippet(auto.presetMaxChars),
     dnaTags: '',
   });
 }

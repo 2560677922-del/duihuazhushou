@@ -479,7 +479,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="渲染插件"
+                    android:text="插件"
                     android:textColor="#1A2230"
                     android:textSize="15sp" />
 
@@ -487,7 +487,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:text="内置插件库：随时安装 / 卸载，插件本体不可删除"
+                    android:text="渲染 / 生图预设：随时安装卸载，插件本体不可删除"
                     android:textColor="#66707F"
                     android:textSize="12sp" />
             </LinearLayout>

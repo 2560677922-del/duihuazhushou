@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 图片库单格：外层留 2dp 缝，内层正方形裁圆角 -->
+<!-- 图片库单格：外层留 2dp 缝，内层正方形裁圆角；多选时右上角出勾选圈 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -13,4 +13,26 @@
         android:clipToOutline="true"
         android:contentDescription="生成的图片"
         android:scaleType="centerCrop" />
+
+    <!-- 选中蒙层：多选模式下未选中的格子压暗，选中的打勾 -->
+    <View
+        android:id="@+id/gallery_mask"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#80000000"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/gallery_check"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="6dp"
+        android:background="@drawable/gallery_cell_bg"
+        android:gravity="center"
+        android:text=""
+        android:textColor="#FFFFFFFF"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
 </FrameLayout>

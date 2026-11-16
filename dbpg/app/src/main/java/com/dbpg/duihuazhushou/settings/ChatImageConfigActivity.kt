@@ -2,6 +2,7 @@ package com.dbpg.duihuazhushou.settings
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
 import android.os.Bundle
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -85,6 +86,9 @@ class ChatImageConfigActivity : Activity() {
         steps = findViewById(R.id.cimg_steps)
         cfg = findViewById(R.id.cimg_cfg)
         samplerSelect = findViewById(R.id.cimg_sampler_select)
+        // 「提示词预设」已封印，这一页不再挂它的卡片。
+        // 布局里的 cimg_preset_host 留着不删：复活插件时把上面两行加回来即可。
+        findViewById<LinearLayout>(R.id.cimg_preset_host).visibility = android.view.View.GONE
 
         findViewById<TextView>(R.id.cimg_back).setOnClickListener { finish() }
         findViewById<TextView>(R.id.cimg_reload).setOnClickListener { load() }
@@ -104,6 +108,10 @@ class ChatImageConfigActivity : Activity() {
     override fun onResume() {
         super.onResume()
         NativeBridge.setApiResultListener(listener)
+        // 插件可能刚在设置页被装/卸过：缓存要失效（提示词预设已封印，这里不再刷新它）
+        runCatching {
+            com.dbpg.duihuazhushou.chat.render.plugin.PluginStore.invalidate()
+        }
         load()
     }
 

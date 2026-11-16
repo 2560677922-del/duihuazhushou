@@ -73,6 +73,23 @@ data class NativeLlmConfig(
     val usable: Boolean get() = baseUrl.isNotBlank() && apiKey.isNotBlank() && model.isNotBlank()
 }
 
+/**
+ * 「文字 → 标签」这一步的判定结果。
+ *
+ * [ok] 为 false 时**不要出图**：宁可这次不画，也不拿一段拒答文本去生成废图。
+ * [reason] 是给用户看的一句话原因，界面直接显示即可。
+ */
+data class OptimizeCheck(
+    val ok: Boolean,
+    val tags: String,
+    val reason: String,
+) {
+    companion object {
+        fun pass(tags: String) = OptimizeCheck(true, tags, "")
+        fun fail(reason: String) = OptimizeCheck(false, "", reason)
+    }
+}
+
 /** 网页一次下发的整套生图环境（配置 + 开关 + 可选的预设/DNA 片段）。 */
 data class AutoImageEnv(
     val config: NativeImageConfig = NativeImageConfig(),
@@ -164,6 +181,24 @@ object AutoImageSupport {
         "best anatomy", "perfect anatomy",
     )
 
+    /**
+     * 拒答口吻的特征串（小写比较）。
+     *
+     * 只收"几乎不可能出现在画面标签里"的短语，宁可漏判也不要误杀：
+     * 误杀 = 明明能出图却被拦下，用户会觉得功能坏了；漏判最多是出一张废图，
+     * 还有下面的"没有英文标签 / 中文长句"两道兜底。
+     */
+    private val REFUSAL_MARKERS = listOf(
+        "i'm sorry", "i am sorry", "i cannot", "i can't", "i won't",
+        "i'm unable", "i am unable", "unable to assist", "unable to help",
+        "as an ai", "as a language model", "cannot assist", "cannot help",
+        "must decline", "not appropriate", "against my guidelines",
+        "抱歉", "对不起", "无法协助", "无法提供", "无法满足", "无法完成",
+        "不能协助", "不能提供", "作为人工智能", "作为一个ai", "作为一个 ai",
+        "我不能", "我不会", "恕难", "不便提供", "拒绝生成",
+    )
+
+
     // ------------------------------------------------------------ 标记
 
     /**
@@ -204,6 +239,30 @@ object AutoImageSupport {
         val user = "以下是${contextLabel}内容：\n\n$contextText\n\n请提炼视觉要素并输出提示词（严格 JSON）。"
         return system to user
     }
+
+    /**
+     * 组装提示词优化的 system。
+     *
+     * 顺序是硬约定，写错过一次：`presetBlock` 曾被拼进 user 的 contextText，
+     * 而网页版是拼在 system 末尾 —— 同一份预设两边效果不同，排查了半天。
+     *
+     * ```
+     * 破甲 → 任务模板 → 当前对话预设片段 → 角色 DNA → 输出约束
+     * ```
+     *
+     * 破甲放最前（先立住"这是创作、别拒答"），输出约束放最后
+     * （离输出最近，约束力最强）。空段直接丢掉，不留空行。
+     */
+    fun composeSystem(
+        jailbreak: String = "",
+        task: String = "",
+        presetBlock: String = "",
+        dnaBlock: String = "",
+        suffix: String = "",
+    ): String = listOf(jailbreak, task, presetBlock, dnaBlock, suffix)
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .joinToString("\n\n")
 
     /**
      * 拼最终正向提示词：画师串 → 质量标签 → 主体标签，逗号切分并去重。
@@ -305,10 +364,83 @@ object AutoImageSupport {
     }
 
     /**
+     * 判定模型这次给的是不是"能拿去出图"的标签。
+     *
+     * ## 为什么必须判
+     *
+     * 一句「抱歉，我无法协助…」如果被当成 prompt 送进生图模型，出来的是一张
+     * 和剧情毫无关系的废图 —— 画一张要几十秒、要额度，用户看到的是
+     * "图生成了，但完全不对"。所以这一步**宁可不画**：判不过就不出图，
+     * 把原因原样交回界面（换预设 / 换模型再试），比默默出一张废图好得多。
+     *
+     * 判定只认三条，都能对用户解释：
+     * 1. 空 → 模型没给东西（超时、被截断）；
+     * 2. 出现拒答口吻 → 这段文字是"拒绝"而不是"描述"；
+     * 3. 没有拉丁字母 / 主要是中文长句 → 模型写成了散文，不是标签。
+     *
+     * ★ 这三条都建立在"出图要的是英文标签"这个前提上：正常输出形如
+     * `1girl, solo, long hair, ...`。判据刻意宽松，只拦"明显不是标签"，
+     * 不追求把标签质量分级 —— 那属于模型能力问题，不该由这里裁掉。
+     */
+    fun judgeOptimized(reply: String): OptimizeCheck {
+        val text = reply.trim()
+        if (text.isEmpty()) return OptimizeCheck.fail("模型返回空内容")
+        if (looksLikeRefusal(text)) return OptimizeCheck.fail("模型拒答")
+
+        val tags = tagsOf(text).replace(Regex("\\s+"), " ").trim()
+        if (tags.isEmpty()) return OptimizeCheck.fail("模型没给出提示词")
+        if (looksLikeRefusal(tags)) return OptimizeCheck.fail("模型拒答")
+
+        val visible = tags.count { !it.isWhitespace() }
+        val latin = tags.count { it in 'a'..'z' || it in 'A'..'Z' }
+        if (latin < 2) return OptimizeCheck.fail("输出里没有英文标签")
+
+        // 中文占三成以上：说明模型在"翻译/复述剧情"，不是在打标签
+        val cjk = tags.count { it.isCjk() }
+        if (visible > 0 && cjk * 10 > visible * 3) {
+            return OptimizeCheck.fail("模型写成了中文句子，不是标签")
+        }
+        return OptimizeCheck.pass(tags)
+    }
+
+    /**
+     * 从回复里取标签。
+     *
+     * 整个回复就是一个 JSON 对象时，**只认它里面的 prompt / tags**：
+     * `{"prompt":""}` 这种"格式对了但内容是空的"如果被当成整段文本，
+     * 生图模型拿到的就是一段 JSON 字面量（判据里那些英文字母刚好够过检查），
+     * 出来又是一张废图。不是 JSON 才退回 [parseOptimizedPrompt] 的宽松解析。
+     */
+    private fun tagsOf(reply: String): String {
+        val obj = runCatching { JSONObject(reply) }.getOrNull() ?: return parseOptimizedPrompt(reply)
+        val p = obj.optString("prompt", "").trim()
+        if (p.isNotEmpty()) return p
+        val arr = obj.optJSONArray("tags")
+        if (arr != null) {
+            val joined = (0 until arr.length())
+                .map { arr.optString(it, "").trim() }
+                .filter { it.isNotEmpty() }
+            if (joined.isNotEmpty()) return joined.joinToString(", ")
+        }
+        return ""
+    }
+
+    /** 模型在"拒绝"而不是在"描述"——中英两种口吻都认。 */
+    private fun looksLikeRefusal(text: String): Boolean {
+        val t = text.lowercase()
+        return REFUSAL_MARKERS.any { t.contains(it) }
+    }
+
+    private fun Char.isCjk(): Boolean = this in '\u4e00'..'\u9fff' ||
+        this in '\u3400'..'\u4dbf' ||
+        this in '\u3000'..'\u303f' ||
+        this in '\uff00'..'\uffef'
+
+    /**
      * 从模型回复里抠出 `prompt`。
      *
      * 优先取 JSON 里的 prompt 字段；模型没按格式回（或返回被截断）时，
-     * 把整段当标签用 —— 总比一滴提示词都没有强。
+     * 把整段当标签用 —— 是否真能用由 [judgeOptimized] 决定。
      */
     fun parseOptimizedPrompt(reply: String): String {
         val text = reply.trim()

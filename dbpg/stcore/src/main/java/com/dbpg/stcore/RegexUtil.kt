@@ -157,7 +157,8 @@ class JsRegex(val source: String, val flags: String) {
             pos = if (start == end) end + 1 else end
             if (++guard >= 10000) break // 防御性上限，避免极端数据卡死
         }
-        sb.append(input, pos, input.length)
+        // 零宽匹配落在末尾时 pos 会 +1 越界（`(?s).*` 这种规则很常见），钳一下
+        sb.append(input, pos.coerceAtMost(input.length), input.length)
         return sb.toString()
     }
 
