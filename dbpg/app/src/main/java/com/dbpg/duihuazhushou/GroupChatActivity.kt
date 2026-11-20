@@ -65,6 +65,7 @@ class GroupChatActivity : Activity() {
 
     companion object {
         const val EXTRA_GROUP_ID = "group_id"
+        private const val REQ_VIEW_IMG = 8801
     }
 
     private val ui by lazy { ProviderUi(this) }
@@ -1325,9 +1326,12 @@ class GroupChatActivity : Activity() {
 
     private val listener = object : ChatAdapter.Listener {
         override fun onImageClick(item: ChatItem, path: String) {
-            startActivity(
+            // 用 forResult：看图页把文件真删了，回来要把消息里的引用一起摘掉
+            @Suppress("DEPRECATION")
+            startActivityForResult(
                 Intent(this@GroupChatActivity, ImageViewerActivity::class.java)
                     .putExtra(ImageViewerActivity.EXTRA_PATH, path),
+                REQ_VIEW_IMG,
             )
         }
 
@@ -1430,6 +1434,15 @@ class GroupChatActivity : Activity() {
             input.setText(text)
             submit()
         }
+    }
+
+    /** 看图页删了图：文件已经没了，把当前频道里对它的引用也摘掉（单聊同款）。 */
+    @Deprecated("Activity#onActivityResult 仍可用；不为一个入口引入 ActivityResult 依赖")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_VIEW_IMG || resultCode != RESULT_OK) return
+        val deleted = data?.getStringExtra(ImageViewerActivity.EXTRA_DELETED_PATH).orEmpty()
+        if (deleted.isNotBlank()) controllerFor(activeSessionId).removeImageByPath(deleted)
     }
 
     // ------------------------------------------------------------ 小工具

@@ -3,7 +3,7 @@ import type { ChatMessage, WorldbookHit } from './types';
 // 世界书触发逻辑：参考 GengBi 的注入逻辑 + parsecard 的 WorldBook/WorldBookEntry。
 //
 // 算法：
-//   1. 收集搜索文本 = 最近 N 条消息内容 + 当前用户输入（默认 N=10）
+//   1. 收集搜索文本 = 最近 N 条消息内容 + 当前用户输入（每本书可设，默认 N=2）
 //   2. 遍历所有世界书的所有条目：
 //      - 常驻条目（constant）→ 直接触发
 //      - 否则按主关键词命中（caseSensitive / wholeWord 由条目决定）
@@ -17,7 +17,7 @@ import type { ChatMessage, WorldbookHit } from './types';
 // 兼容 parsecard 输出与原始 ST JSON。
 
 export interface WorldbookTriggerOptions {
-  /** 最近 N 条消息进入扫描（默认 10） */
+  /** 最近 N 条消息进入扫描（默认 2，与 SillyTavern 一致） */
   scanDepth?: number;
   /** 是否把 currentUserInput 纳入扫描文本（默认 true） */
   includeUserInput?: boolean;
@@ -71,24 +71,54 @@ export function isEntryDisabled(entry: any): boolean {
   return false;
 }
 
+/**
+ * 把"扫描深度"字段归一成数字。
+ *
+ * `null` / `undefined` / 空串 → null，表示"没单独设，跟随上一层"。
+ * 必须显式判空：`Number(null) === 0`，直接转会把手滑当成"只看本次输入"。
+ */
+function depthOf(v: any): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
+
 export function triggerWorldbook(
   worldBooks: any[],
   chatHistory: ChatMessage[],
   currentUserInput?: string,
   options: WorldbookTriggerOptions = {},
 ): { hits: WorldbookHit[] } {
-  const scanDepth = options.scanDepth ?? 10;
+  const scanDepth = options.scanDepth ?? 2;
   const rng = options.rng ?? Math.random;
   const hits: WorldbookHit[] = [];
+  const includeInput = options.includeUserInput !== false;
 
-  const recent = chatHistory.slice(-scanDepth);
-  const searchText = [
-    ...recent.map((m) => m.content),
-    ...(options.includeUserInput === false ? [] : [currentUserInput || '']),
-  ].join('\n');
+  /*
+   * 同一个扫描深度只需拼一次文本：一本书里几十条条目大多用同一个深度，
+   * 按深度缓存比每条目都 slice+join 便宜，也不用在循环外假定只有一个深度。
+   */
+  const textCache = new Map<number, string>();
+  const textAt = (depth: number): string => {
+    const cached = textCache.get(depth);
+    if (cached !== undefined) return cached;
+    /*
+     * 0 单独判：`slice(-0)` 等于 `slice(0)`，会把**整个历史**都塞进扫描文本，
+     * 正好是"只看这次输入"的反面。ST 里 0 的语义就是"不扫历史"。
+     */
+    const recent = depth <= 0 ? [] : chatHistory.slice(-depth);
+    const text = [
+      ...recent.map((m) => m.content),
+      ...(includeInput ? [currentUserInput || ''] : []),
+    ].join('\n');
+    textCache.set(depth, text);
+    return text;
+  };
 
   for (const book of worldBooks) {
     const bookName = book?.name || 'WorldBook';
+    // 书级默认值：这本书里没单独设扫描深度的条目都用它
+    const bookScan = depthOf(book?.scanDepth) ?? scanDepth;
     const entriesRaw = book?.entries;
     const list: any[] = Array.isArray(entriesRaw)
       ? entriesRaw
@@ -117,6 +147,13 @@ export function triggerWorldbook(
 
       // 没关键词且非常驻 → 跳过（Phase 1 不实现 vectorized）
       if (keys.length === 0 && !isConstant) continue;
+
+      /*
+       * 条目级扫描深度优先：不同条目重要性不一样，有的希望"最近 2 条就算"，
+       * 有的背景设定希望"最近 20 条都算"。没单独设就跟随本书。
+       */
+      const entryScan = depthOf(entry.scanDepth ?? ext.scanDepth) ?? bookScan;
+      const searchText = textAt(entryScan);
 
       const caseSensitive = ext.case_sensitive ?? entry.case_sensitive ?? false;
       const wholeWord = ext.whole_word ?? entry.whole_word ?? false;

@@ -1707,8 +1707,13 @@ class ChatController(
                 // 查看器里删图 = 真删文件，正文里的占位符也一起清 ——
                 // 留着的话下次渲染会在这里留一个"图片不存在"的空位
                 var text = a.ai
-                hits.forEach { h -> text = stripMarkerOf(text, a.images, h) }
-                a.copy(images = a.images.filterNot { it in hits }, ai = text)
+                var rest = a.images
+                hits.forEach { h ->
+                    // 每摘一张就从列表里减掉，后续同描述图片的"第几张"才数得准
+                    text = stripMarkerOf(text, rest, h)
+                    rest = rest.filterNot { it === h }
+                }
+                a.copy(images = rest, ai = text)
             }
         }
         if (!changed) return

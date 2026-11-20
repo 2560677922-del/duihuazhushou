@@ -45,7 +45,7 @@ export function assemblePrompt(opts: AssemblyOptions): AssemblyResult {
     currentUserInput,
     authorNote,
     authorNoteDepth = 4,
-    worldBookScanDepth = 10,
+    worldBookScanDepth = 2,
     contextWindowTokens,
     userLookbackTokens,
   } = opts;

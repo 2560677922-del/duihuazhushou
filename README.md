@@ -2,8 +2,8 @@
 
 > 移动端的傻酒馆 —— 一个轻量、本地的 Android AI 互动叙事 / 写作客户端，兼容 SillyTavern 的一部分生态。
 
-<a href="https://github.com/2560677922-del/duihuazhushou/releases/download/apk-v1.8.3/duihuazhushou-v1.8.3-debug.apk"><img alt="下载 APK" src="https://img.shields.io/badge/下载-APK%20v1.8.3-blue?logo=android"></a>
-&nbsp; **[⬇️ 下载 APK（v1.8.3，debug 签名）](https://github.com/2560677922-del/duihuazhushou/releases/download/apk-v1.8.3/duihuazhushou-v1.8.3-debug.apk)**
+<a href="https://github.com/2560677922-del/duihuazhushou/releases/download/apk-v1.8.7/duihuazhushou-v1.8.7-debug.apk"><img alt="下载 APK" src="https://img.shields.io/badge/下载-APK%20v1.8.7-blue?logo=android"></a>
+&nbsp; **[⬇️ 下载 APK（v1.8.7，debug 签名）](https://github.com/2560677922-del/duihuazhushou/releases/download/apk-v1.8.7/duihuazhushou-v1.8.7-debug.apk)**
 
 > **⚠️ 已知问题：「提示词预设」插件已临时封印（v1.8.1 起）**
 >

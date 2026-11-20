@@ -1033,6 +1033,12 @@ class AssetsHomeActivity : Activity() {
         val keys = input(keysOf(e.optJSONArray("keys")))
         label("次要关键词（选择性触发时与主关键词配合）")
         val secondary = input(keysOf(e.optJSONArray("secondary")))
+        /*
+         * 条目级扫描深度。留空 = 跟随世界书，0 = 只看本次输入。
+         * 引擎按条目取：同一条消息里，不同条目可以有不同的"记忆长度"。
+         */
+        label("关键词扫描（最近几条消息，0 = 只看本次输入）")
+        val scan = input(e.optInt("scanDepth", 2).toString(), numeric = true)
         label("内容")
         val content = input(e.optString("content"), multiline = true)
 
@@ -1103,6 +1109,12 @@ class AssetsHomeActivity : Activity() {
             .setTitle("编辑条目")
             .setView(scroll)
             .setPositiveButton("保存") { _, _ ->
+                val scanText = scan.text?.toString()?.trim().orEmpty()
+                val scanValue = scanText.toIntOrNull()
+                if (scanValue == null || scanValue < 0) {
+                    toast("扫描深度请填不小于 0 的整数")
+                    return@setPositiveButton
+                }
                 val entry = JSONObject()
                     .put("comment", comment.text?.toString() ?: "")
                     .put("keys", keys.text?.toString() ?: "")
@@ -1116,6 +1128,7 @@ class AssetsHomeActivity : Activity() {
                     .put("role", role.selectedItemPosition - 1)
                     .put("probability", probability.text?.toString()?.toIntOrNull() ?: 100)
                     .put("useProbability", useProbability.isChecked)
+                    .put("scanDepth", scanValue)
                 EngineBridge.command(
                     JSONObject()
                         .put("cmd", "wbSaveEntry")
@@ -1127,6 +1140,32 @@ class AssetsHomeActivity : Activity() {
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    /**
+     * 世界书级「批量扫描深度」。
+     *
+     * 不是继承关系的默认值，而是一个**批量命令**：确认后把本书所有条目
+     * 统一写成 N。所以各条不一致时 current 传 -1，输入框预填 2。
+     * 0 = 只看本次输入。
+     */
+    private fun editScanDepthDialog(bookId: String, name: String, current: Int, count: Int) {
+        editDialog(
+            "批量设置扫描深度",
+            listOf(
+                "「$name」$count 条条目统一为：扫描最近几条消息（0 = 只看本次输入）" to
+                    (if (current >= 0) current else 2).toString(),
+            ),
+        ) { v ->
+            val n = v[0].trim().toIntOrNull()
+            if (n == null || n < 0) {
+                toast("请输入不小于 0 的整数")
+                return@editDialog
+            }
+            EngineBridge.command(
+                JSONObject().put("cmd", "wbSetScanDepth").put("bookId", bookId).put("depth", n),
+            )
+        }
     }
 
     // ------------------------------------------------------------ 世界书
@@ -1141,6 +1180,8 @@ class AssetsHomeActivity : Activity() {
             val current = b.optBoolean("current")
             val entries = b.optJSONArray("entries") ?: JSONArray()
             val open = openBooks.contains(id)
+            // 全书统一 → 具体数字；-1 = 各条不一致（引擎返回 null）
+            val bookScan = b.optInt("scanDepth", -1)
 
             val head = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -1176,7 +1217,8 @@ class AssetsHomeActivity : Activity() {
                 if (current) setTypeface(typeface, Typeface.BOLD)
             }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             head.addView(TextView(this).apply {
-                text = "${entries.length()} 条"
+                text = "${entries.length()} 条 · " +
+                    if (bookScan >= 0) "扫 $bookScan" else "扫描不统一"
                 setTextColor(0xFF66707F.toInt())
                 textSize = 11f
             })
@@ -1210,6 +1252,21 @@ class AssetsHomeActivity : Activity() {
             box.addView(toggle)
 
         if (!open) continue
+
+        // 世界书级设置：关键词只在这几条消息里找（ST 的 Scan Depth）
+        box.addView(
+            actionRow(
+                (b.optInt("scanDepth", -1).takeIf { it >= 0 }
+                    ?.let { "批量扫描：全书最近 $it 条 · 点此统一修改" }
+                    ?: "批量扫描：各条不一致 · 点此统一修改"),
+            ) {
+                editScanDepthDialog(id, name, b.optInt("scanDepth", -1), entries.length())
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(6) },
+        )
 
         // 新建条目
         box.addView(
@@ -1274,6 +1331,9 @@ class AssetsHomeActivity : Activity() {
                                 append((0 until sec.length()).joinToString("、") { sec.optString(it) })
                                 append("）")
                             }
+                            // 每条都显示自己的扫描值：用户要能直接看到"这条是 2"
+                            val own = e.optInt("scanDepth", -1)
+                            if (own >= 0) append(" · 扫 $own 条")
                         }
                         setTextColor(0xFF66707F.toInt())
                         textSize = 11f
@@ -1314,6 +1374,15 @@ class AssetsHomeActivity : Activity() {
                                 .put("entry", JSONObject().put("constant", !e.optBoolean("constant"))),
                         )
                     }
+                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6) })
+                // 展开前也能进编辑器：改关键词 / 内容 / 扫描深度都不用先展开
+                quick.addView(TextView(this).apply {
+                    text = "✏️ 编辑"
+                    setTextColor(0xFF2F66D8.toInt())
+                    textSize = 11f
+                    background = getDrawable(R.drawable.bg_btn_soft)
+                    setPadding(dp(10), dp(5), dp(10), dp(5))
+                    setOnClickListener { editEntryDialog(id, e) }
                 })
                 row.addView(quick)
 

@@ -49,7 +49,7 @@ export interface AssemblyOptions {
   /** 作者注释，作为 user 消息按 depth 回溯注入 */
   authorNote?: string;
   authorNoteDepth?: number;
-  /** 世界书扫描深度：最近 N 条消息（默认 10） */
+  /** 世界书扫描深度：最近 N 条消息（默认 2，与 SillyTavern 一致） */
   worldBookScanDepth?: number;
   /** 模型上下文窗口 */
   contextWindowTokens?: number;

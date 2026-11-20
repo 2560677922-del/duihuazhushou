@@ -310,7 +310,11 @@ function buildMessages(
     const want = assetBinding.worldBookIds.filter((id) => enabledBookIds.includes(id));
     worldBooks = worldBooks.filter((w: any) => want.includes(w._uid));
   }
-  const worldBookJsons = worldBooks.map((w: any) => WorldBook.fromJSON(w).toStandaloneJSON());
+  // scanDepth 是书级设置，parsecard 的 toStandaloneJSON 不认识它，这里显式挂回去
+  const worldBookJsons = worldBooks.map((w: any) => ({
+    ...WorldBook.fromJSON(w).toStandaloneJSON(),
+    scanDepth: scanDepthOf(w),
+  }));
   const storageSettings = useStorageSettingsStore();
   let regexScripts = storageSettings.llmContextRaw ? [] : assets.getCurrentRegexScripts();
   if (assetBinding?.regexGroupIds && !storageSettings.llmContextRaw) {
@@ -1358,6 +1362,12 @@ async function apiCommand(raw: string): Promise<void> {
         if (p.position !== undefined) e.position = Number(p.position);
         if (p.role !== undefined) e.role = p.role === null ? null : Number(p.role);
         if (p.insertion_order !== undefined) e.insertion_order = Number(p.insertion_order);
+        // 条目级扫描深度：只认数字；null / 空串直接忽略，别被 Number(null)=0 骗了
+        if (p.scanDepth !== undefined && p.scanDepth !== null && p.scanDepth !== '') {
+          const n = Number(p.scanDepth);
+          if (!Number.isFinite(n) || n < 0) throw new Error('扫描深度必须是不小于 0 的整数');
+          e.scanDepth = Math.floor(n);
+        }
         await a.save();
         break;
       }
@@ -1369,6 +1379,22 @@ async function apiCommand(raw: string): Promise<void> {
         const name = String(req.name ?? '').trim();
         if (!name) throw new Error('名称不能为空');
         setAssetName(book, name);
+        await a.save();
+        break;
+      }
+      /**
+       * 批量设置：把这本书下**所有条目**的扫描深度统一成 N（0 = 只看本次输入）。
+       * 书上的字段一并写，新建条目按它初始化。
+       */
+      case 'wbSetScanDepth': {
+        const a = useAssetsStore();
+        const book: any = (a.worldBooks || []).find((w: any) => w._uid === req.bookId);
+        if (!book) throw new Error('找不到世界书');
+        const n = Number(req.depth);
+        if (!Number.isFinite(n) || n < 0) throw new Error('扫描深度必须是不小于 0 的整数');
+        const depth = Math.floor(n);
+        for (const e of entriesListOf(book)) e.scanDepth = depth;
+        book.scanDepth = depth;
         await a.save();
         break;
       }
@@ -1393,6 +1419,8 @@ async function apiCommand(raw: string): Promise<void> {
           depth: 4,
           probability: 100,
           useProbability: false,
+          // 新条目直接拿书级默认值，不再留空
+          scanDepth: scanDepthOf(book),
         });
         await a.save();
         break;
@@ -1761,35 +1789,97 @@ function setAssetName(obj: any, name: string): void {
 }
 
 /**
+ * 世界书的关键词扫描深度（SillyTavern 的 Scan Depth）。
+ *
+ * 语义：在最近 N 条消息 + 本次输入里找关键词。0 = 只看本次输入。
+ * 缺省 2，跟 ST 一致 —— 以前固定写死 10，等于用户很久前提过的词
+ * 还能一直触发，关键词就失去"当前场景"的意义了。
+ */
+function scanDepthOf(book: any): number {
+  const n = Number(book?.scanDepth ?? book?.data?.scanDepth);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 2;
+}
+
+/**
+ * 条目级扫描深度。null = 这条还没有值（读取端要补）。
+ * 空串和 JSON null 都算"没设"——Number(null) 是 0，不能直接转。
+ */
+function entryScanDepth(entry: any): number | null {
+  const v = entry?.scanDepth ?? entry?.extensions?.scanDepth;
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
+
+/**
+ * 给还没设扫描深度的条目补上"这本书的默认值"（书没设就 2）。
+ *
+ * 以前条目级字段是可选的，缺了就是空 —— 用户得一条一条填。现在统一补成
+ * 具体数字，编辑器一打开就是 2，书级也能做"全不一致"的汇总。
+ * 返回是否有改动，调用方决定要不要落盘。
+ */
+function normalizeWorldBookScanDepths(books: any[]): boolean {
+  let changed = false;
+  for (const book of books) {
+    const fallback = scanDepthOf(book);
+    for (const e of entriesListOf(book)) {
+      if (entryScanDepth(e) === null) {
+        e.scanDepth = fallback;
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
+/**
  * 引擎资产明细：预设 / 世界书（含全部条目）/ 正则组，供原生浏览。
  * 数据原样来自 assets store（ST 兼容层），原生只读不复制。
  */
 function assetsDetail(): string {
   const a = useAssetsStore();
-  const books = (a.worldBooks || []).map((w: any) => ({
-    id: w._uid || '',
-    name: w.name || w.data?.name || '未命名世界书',
-    current: a.currentWorldBookIds.includes(w._uid),
-    // entriesListOf：数组 / 对象索引 / data 包装全都能读，绝不在读端直接 .map
-    entries: entriesListOf(w).map((e: any) => ({
-      uid: e.uid,
-      comment: e.comment || '',
-      keys: e.keys || [],
-      secondary: e.secondary_keys || [],
-      content: e.content || '',
-      constant: !!e.constant,
-      enabled: e.enabled !== false && e.disable !== true,
-      // ST 触发字段全集（原生编辑器要能原样展示与回写）
-      selective: e.selective !== false,
-      selectiveLogic: e.selectiveLogic ?? 0,
-      probability: e.probability ?? 100,
-      useProbability: !!e.useProbability,
-      depth: e.depth ?? 4,
-      position: e.position ?? 0,
-      role: e.role === null || e.role === undefined ? -1 : e.role,
-      insertion_order: e.insertion_order ?? 100,
-    })),
-  }));
+  /*
+   * 旧数据（1.8.6 及以前）的条目没有 scanDepth。这里补成"这本书的默认值"
+   * （书没设就 2）并落盘一次 —— 用户明确要求别让他一个一个填。
+   * 读时补值 + fire-and-forget 保存，不阻塞清单返回。
+   */
+  if (normalizeWorldBookScanDepths(a.worldBooks || [])) void a.save();
+
+  const books = (a.worldBooks || []).map((w: any) => {
+    const list = entriesListOf(w);
+    // 全书条目是否统一：统一给具体值，不统一给 null（原生显示"不统一"）
+    const values = list.map((e: any) => entryScanDepth(e) ?? 2);
+    const uniform =
+      values.length === 0 || new Set(values).size <= 1 ? (values[0] ?? 2) : null;
+    return {
+      id: w._uid || '',
+      name: w.name || w.data?.name || '未命名世界书',
+      current: a.currentWorldBookIds.includes(w._uid),
+      // 汇总值：数字 = 全书统一用这个；null = 各条目不一致
+      scanDepth: uniform,
+      // entriesListOf：数组 / 对象索引 / data 包装全都能读，绝不在读端直接 .map
+      entries: list.map((e: any) => ({
+        uid: e.uid,
+        comment: e.comment || '',
+        keys: e.keys || [],
+        secondary: e.secondary_keys || [],
+        content: e.content || '',
+        constant: !!e.constant,
+        enabled: e.enabled !== false && e.disable !== true,
+        // ST 触发字段全集（原生编辑器要能原样展示与回写）
+        selective: e.selective !== false,
+        selectiveLogic: e.selectiveLogic ?? 0,
+        probability: e.probability ?? 100,
+        useProbability: !!e.useProbability,
+        depth: e.depth ?? 4,
+        position: e.position ?? 0,
+        role: e.role === null || e.role === undefined ? -1 : e.role,
+        insertion_order: e.insertion_order ?? 100,
+        // 条目自己的扫描深度；补值之后这里一定是数字
+        scanDepth: entryScanDepth(e) ?? 2,
+      })),
+    };
+  });
   const presets = (a.presets || []).map((p: any) => ({
     id: p._uid || '',
     name: p.name || p.data?.name || '未命名',
