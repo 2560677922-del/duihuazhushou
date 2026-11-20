@@ -17,8 +17,8 @@ android {
         applicationId = "com.dbpg.duihuazhushou"
         minSdk = 24      // Android 7.0 起；图标用自适应图标，24~25 走 PNG 兜底
         targetSdk = 37
-        versionCode = 23
-        versionName = "1.8.7"
+        versionCode = 24
+        versionName = "1.8.8"
     }
 
     // -----------------------------------------------------------------------

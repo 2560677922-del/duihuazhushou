@@ -75,7 +75,7 @@ async function boot(): Promise<void> {
   });
 
   /*
-   * 3) 世界书 / 正则组改为原生权威存储。
+   * 3) 世界书 / 正则组 / 预设改为原生权威存储。
    *
    * 必须在 assets.load() 之后：load 从 app-data.json 读的是旧副本，
    * 这里用原生快照覆盖（首次升级则反过来把旧数据交给原生）。

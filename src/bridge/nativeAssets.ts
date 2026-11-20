@@ -15,8 +15,9 @@
 // ST 字段补齐）全在 engine/stImport.ts，那里是被真实预设验证过的。原生只做存储，
 // 归一化仍由引擎完成，提示词组装看到的数据与改造前**逐字节一致**，风险最小。
 //
-// 预设**不在此列**（prompt_order 语义最重，继续走 app-data.json）；
-// 角色卡也不在此列（文件库本来就是权威，网页那份是开聊时派生的）。
+// 预设 1.8.8 起也进这里：它和世界书一样是"改一次全量、平时只读"的数据，
+// 语义本身不用原生理解（prompt_order、settings 原样搬），只是换个落盘位置。
+// 角色卡仍不在此列（图片库本来就是权威，网页那份是开聊时派生的缓存）。
 import { store } from '../lib/storage';
 import { persist } from '../lib/persist';
 import { useAssetsStore } from '../stores/assets';
@@ -37,11 +38,15 @@ export function snapshotNativeAssets(): string {
   const a = useAssetsStore();
   try {
     return JSON.stringify({
-      version: 1,
+      // version 2 = 多了 presets。读取端不按版本分支，只看字段在不在，
+      // 所以 version 1 的旧快照照样能读（缺的字段不覆盖内存）。
+      version: 2,
       worldBooks: a.worldBooks,
       currentWorldBookIds: a.currentWorldBookIds,
       regexGroups: a.regexGroups,
       currentRegexGroupIds: a.currentRegexGroupIds,
+      presets: a.presets,
+      currentPresetId: a.currentPresetId,
     });
   } catch (e) {
     console.warn('[原生资产] 快照序列化失败', e);
@@ -77,16 +82,33 @@ export async function adoptNativeAssets(raw: string): Promise<boolean> {
     return false;
   }
   if (!obj || typeof obj !== 'object') return false;
-  if (!Array.isArray(obj.worldBooks) && !Array.isArray(obj.regexGroups)) return false;
+  const hasAny =
+    Array.isArray(obj.worldBooks) ||
+    Array.isArray(obj.regexGroups) ||
+    Array.isArray(obj.presets);
+  if (!hasAny) return false;
 
+  /*
+   * 只覆盖**快照里真的有**的字段。
+   *
+   * 1.8.7 存的快照没有 presets，而升级后 store 里还躺着老预设；
+   * 要是这里无脑 `a.presets = obj.presets`，就变成 undefined，
+   * 紧接着 purge 又把 app-data.json 清掉 —— 预设直接蒸发。
+   */
   const a = useAssetsStore();
   if (Array.isArray(obj.worldBooks)) a.worldBooks = obj.worldBooks;
   if (Array.isArray(obj.regexGroups)) a.regexGroups = obj.regexGroups;
   if (Array.isArray(obj.currentWorldBookIds)) a.currentWorldBookIds = obj.currentWorldBookIds;
   if (Array.isArray(obj.currentRegexGroupIds)) a.currentRegexGroupIds = obj.currentRegexGroupIds;
+  if (Array.isArray(obj.presets)) a.presets = obj.presets;
+  if (typeof obj.currentPresetId === 'string') a.currentPresetId = obj.currentPresetId;
 
   managed = true;
   lastSent = raw;
+
+  // 老快照没有预设 → 把内存里那份补写进原生，之后才好清旧副本
+  if (!Array.isArray(obj.presets)) notifyNativeAssets();
+
   await purgeOldCopies();
   return true;
 }
@@ -106,6 +128,8 @@ async function purgeOldCopies(): Promise<void> {
       store.setItem('regexGroups', []),
       store.setItem('currentWorldBookIds', []),
       store.setItem('currentRegexGroupIds', []),
+      store.setItem('presets', []),
+      store.setItem('currentPresetId', undefined),
     ]);
     await persist.flush();
   } catch (e) {

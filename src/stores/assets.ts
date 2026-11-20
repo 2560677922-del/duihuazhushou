@@ -113,17 +113,15 @@ export const useAssetsStore = defineStore('assets', {
     },
     async save() {
       /*
-       * 世界书 / 正则组由原生托管（见 bridge/nativeAssets.ts）。
-       * 接管后这两类只留在内存工作副本里，落盘交给原生 —— 不再写
-       * worldBooks / regexGroups 及其启用项，避免 app-data.json 又长出一份。
-       * 预设与角色卡保持原样。
+       * 世界书 / 正则组 / 预设由原生托管（见 bridge/nativeAssets.ts）。
+       * 接管后这三类只留在内存工作副本里，落盘交给原生 —— 不再写
+       * app-data.json，避免又长出一份。
+       * 角色卡保持原样：图片库是权威，这里那份是开聊时的派生缓存。
        */
       if (nativeManaged()) {
         await Promise.all([
           store.setItem('characters', this.characters),
-          store.setItem('presets', this.presets),
           store.setItem('currentCharacterId', this.currentCharacterId),
-          store.setItem('currentPresetId', this.currentPresetId),
         ]);
         notifyNativeAssets();
         return;

@@ -6,7 +6,7 @@ import java.io.File
 import java.util.concurrent.Executors
 
 /**
- * 世界书 / 正则组的原生权威存储。
+ * 世界书 / 正则组 / 预设的原生权威存储。
  *
  * ## 为什么要有它（2026-11-09）
  *
@@ -22,7 +22,7 @@ import java.util.concurrent.Executors
  *
  * ## 为什么不在原生解析 ST 资产
  *
- * 世界书 / 正则的归一化（entries 对象索引→数组、key 对象、ST 字段补齐）
+ * 世界书 / 正则 / 预设的归一化（entries 对象索引→数组、key 对象、ST 字段补齐）
  * 全在网页的 `engine/stImport.ts`，那里被真实预设验证过。原生只存**引擎
  * 已经归一化好的 JSON**，提示词组装看到的数据与改造前逐字节一致。
  * 换句话说：本类不解释数据，只保证它完整、原子地留在手机上。
@@ -31,9 +31,12 @@ import java.util.concurrent.Executors
  *
  * `filesDir/data/assets/assets.json`：
  * ```json
- * { "version": 1, "worldBooks": [...], "regexGroups": [...],
- *   "currentWorldBookIds": [...], "currentRegexGroupIds": [...] }
+ * { "version": 2, "worldBooks": [...], "regexGroups": [...], "presets": [...],
+ *   "currentWorldBookIds": [...], "currentRegexGroupIds": [...],
+ *   "currentPresetId": "p_xxx" }
  * ```
+ * 本类不校验收哪些字段 —— 引擎给什么存什么，所以 1.8.7 的 version 1
+ * 快照（没有 presets）照样读得出来，不需要迁移代码。
  * 原子写（临时文件 + rename），崩溃最多丢最后一次编辑，不会写出半个 JSON。
  */
 object NativeAssetsStore {
