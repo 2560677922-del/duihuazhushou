@@ -30,6 +30,7 @@ import com.dbpg.duihuazhushou.chat.ChatItem
 import com.dbpg.duihuazhushou.chat.GenBridge
 import com.dbpg.duihuazhushou.chat.ImageFileCache
 import com.dbpg.duihuazhushou.chat.QuickImage
+import com.dbpg.duihuazhushou.chat.SummaryPanel
 import com.dbpg.duihuazhushou.character.CharacterAvatar
 import com.dbpg.duihuazhushou.character.CharacterJson
 import com.dbpg.duihuazhushou.character.CharacterRepository
@@ -152,7 +153,7 @@ class GroupChatActivity : Activity() {
         findViewById<View>(R.id.gc_more).setOnClickListener { showGroupMenu() }
         findViewById<View>(R.id.gc_add_member).setOnClickListener { inviteMembers() }
         findViewById<View>(R.id.gc_search).setOnClickListener { searchInChannel() }
-        findViewById<View>(R.id.gc_summary).setOnClickListener { summarizeNow() }
+        findViewById<View>(R.id.gc_summary).setOnClickListener { openSummaryPanel() }
 
         sendBtn.setOnClickListener { submit() }
         stopBtn.setOnClickListener { controllerFor(activeSessionId).stop() }
@@ -1183,20 +1184,26 @@ class GroupChatActivity : Activity() {
             .show()
     }
 
-    private fun summarizeNow() {
+    /**
+     * 摘要面板：与私聊共用 [SummaryPanel]。
+     *
+     * 群聊按频道分开：面板只认当前 activeSessionId 那个 controller，
+     * 所以模型绑定、替换范围、正文都只影响这个频道，公共区和其他成员不动。
+     * 成员频道点「立即浓缩」时多一次确认 —— 用户容易以为会压整个群。
+     */
+    private fun openSummaryPanel() {
         if (activeSessionId.isBlank()) return
         val c = controllerFor(activeSessionId)
         val name = group.members.firstOrNull { it.sessionId == activeSessionId }?.name
-        if (name != null) {
-            AlertDialog.Builder(this)
-                .setTitle("压缩这页的历史")
-                .setMessage("只压缩「$name」这个频道，公共区和其他成员的摘要不受影响。")
-                .setPositiveButton("开始") { _, _ -> c.summarizeNow() }
-                .setNegativeButton("取消", null)
-                .show()
-        } else {
-            c.summarizeNow()
-        }
+        SummaryPanel.show(
+            this,
+            c,
+            runConfirm = if (name != null) {
+                "只压缩「$name」这个频道，公共区和其他成员的摘要不受影响。"
+            } else {
+                null
+            },
+        )
     }
 
     // ------------------------------------------------------------ 面板

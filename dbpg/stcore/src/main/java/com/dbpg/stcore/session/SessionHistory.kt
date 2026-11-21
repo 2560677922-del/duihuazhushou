@@ -75,31 +75,43 @@ object SessionHistory {
         /*
          * 摘要生效条件：
          *   1) 摘要在当前 actions 上仍然有效（锚点没被删/改，见 SummaryPlanner）
-         *   2) 这次导出的是"摘要区间之后"的内容
+         *   2) 这次导出跨过了摘要区间的末尾
          *
-         * 反过来：如果用户对一条**早于摘要区间**的消息点"重新生成"，就必须
+         * 反过来：如果用户对一条**摘要区间内**的消息点"重新生成"，就必须
          * 退回原文 —— 否则模型只知道"前情提要"，却看不到那一轮的具体细节。
+         *
+         * ★ 摘要替换的是 [fromIndex..toIndex] 这一段，不是"从头到 toIndex"：
+         *   用户可以在聊天界面把起点往后改，起点之前的原文要照常发。
          */
-        val (blocks, firstRaw) = SummaryPlanner.effective(summaries, doc.actions)
-        val useSummary = blocks.isNotEmpty() && firstRaw > 0 && (stop < 0 || stop >= firstRaw)
-        var rawStart = 0
-        if (useSummary) {
-            rawStart = firstRaw
-            out.add(
-                PromptMessage(
-                    summaryRole,
-                    "【前情提要（自动摘要，不是当前场景）】\n" +
-                        blocks.joinToString("\n") { it.text.trim() },
-                ),
-            )
+        val (blocks, _) = SummaryPlanner.effective(summaries, doc.actions)
+        val summaryFrom = blocks.firstOrNull()?.fromIndex ?: -1
+        val summaryTo = blocks.lastOrNull()?.toIndex ?: -1
+        val useSummary = blocks.isNotEmpty() && (stop < 0 || stop > summaryTo)
+
+        // 场景描述是"故事的开场白"。
+        // 摘要从第 1 条开始时，scene 仍排在摘要之后（保持原有顺序）；
+        // 摘要从中间开始时，scene 是整段故事的开场，放在最前。
+        val scene = clean(doc.sceneDescription)
+        if (scene.isNotEmpty() && (!useSummary || summaryFrom > 0)) {
+            out.add(PromptMessage(ROLE_ASSISTANT, scene))
         }
 
-        // 场景描述是"故事的开场白"。放在摘要之后、原文之前：
-        // 摘要交代"之前发生了什么"，场景交代"这是一个什么故事"，顺序符合阅读习惯。
-        val scene = clean(doc.sceneDescription)
-        if (scene.isNotEmpty()) out.add(PromptMessage(ROLE_ASSISTANT, scene))
-
-        for (i in rawStart until end) {
+        var i = 0
+        while (i < end) {
+            if (useSummary && i == summaryFrom) {
+                out.add(
+                    PromptMessage(
+                        summaryRole,
+                        "【前情提要（自动摘要，不是当前场景）】\n" +
+                            blocks.joinToString("\n") { it.text.trim() },
+                    ),
+                )
+                if (summaryFrom == 0 && scene.isNotEmpty()) {
+                    out.add(PromptMessage(ROLE_ASSISTANT, scene))
+                }
+                i = summaryTo + 1
+                continue
+            }
             val a = doc.actions[i]
             val user = clean(a.user)
             if (user.isNotEmpty()) out.add(PromptMessage(ROLE_USER, user))
@@ -116,6 +128,7 @@ object SessionHistory {
                     ),
                 )
             }
+            i++
         }
         return out
     }

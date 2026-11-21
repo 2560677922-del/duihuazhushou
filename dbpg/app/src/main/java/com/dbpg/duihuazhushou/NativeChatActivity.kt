@@ -159,7 +159,10 @@ class NativeChatActivity : Activity(), ChatController.Sink {
         val close = findViewById<View>(R.id.chat_close)
         val more = findViewById<TextView>(R.id.chat_more)
         summaryBtn = findViewById(R.id.chat_summary)
-        summaryBtn.setOnClickListener { showSummaryDialog() }
+        summaryBtn.setOnClickListener {
+            val c = controller ?: return@setOnClickListener
+            com.dbpg.duihuazhushou.chat.SummaryPanel.show(this, c)
+        }
 
         /*
          * 本对话资产：一页式面板，勾完一次保存。
@@ -921,120 +924,6 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             .setPositiveButton("保存") { _, _ -> controller?.rename(input.text?.toString().orEmpty()) }
             .setNegativeButton("取消", null)
             .show()
-    }
-
-    /**
-     * 「前情提要」入口（右上角）。
-     *
-     * 把模型真正会收到的那段提要原样摆出来，允许直接改 —— 这是"用户可
-     * 查看并更改摘要"的落点。改完保存即生效（下一次发送就用新版）。
-     */
-    private fun showSummaryDialog() {
-        val c = controller ?: return
-        val current = c.summaries().joinToString("\n") { it.text.trim() }
-        val covered = c.summarizedUpTo()
-        val total = c.doc?.actions?.size ?: 0
-
-        val box = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(dp(20), dp(4), dp(20), 0)
-        }
-        val tip = TextView(this).apply {
-            setText(
-                when {
-                    current.isNotBlank() && covered > 0 ->
-                        "已覆盖前 $covered 条（共 $total 条）。发消息时这段提要替代那几条原文，省下的上下文留给新剧情。可以直接改。"
-                    current.isNotBlank() ->
-                        "这段提要会替代已覆盖的原文发送给模型。可以直接改。"
-                    else ->
-                        "把早期对话压成一段提要，发消息时替代原文，长会话才跑得动。点「立即浓缩」压最早的一批；也可以在设置里开自动摘要。"
-                },
-            )
-            setTextSize(12f)
-            setTextColor(0xFF66707F.toInt())
-            setLineSpacing(dp(2).toFloat(), 1f)
-        }
-        val input = EditText(this).apply {
-            setText(current)
-            hint = "还没有摘要，点下面「立即浓缩」生成"
-            setTextSize(14f)
-            setTextColor(0xFF1A2230.toInt())
-            setBackgroundResource(R.drawable.bg_input)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            gravity = android.view.Gravity.TOP
-            minLines = 6
-            maxLines = 12
-        }
-        val row = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.HORIZONTAL
-            setPadding(0, dp(10), 0, 0)
-        }
-        val runBtn = TextView(this).apply {
-            setText("立即浓缩")
-            setTextSize(13f)
-            setTextColor(0xFF2F66D8.toInt())
-            background = getDrawable(R.drawable.bg_btn_soft)
-            setPadding(dp(14), dp(8), dp(14), dp(8))
-        }
-        val clearBtn = TextView(this).apply {
-            setText("清除摘要")
-            setTextSize(13f)
-            setTextColor(0xFFA33A3A.toInt())
-            background = getDrawable(R.drawable.bg_btn_soft)
-            setPadding(dp(14), dp(8), dp(14), dp(8))
-        }
-
-        box.addView(tip)
-        box.addView(
-            input,
-            android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(170),
-            ).apply { topMargin = dp(8) },
-        )
-        row.addView(runBtn)
-        row.addView(
-            clearBtn,
-            android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply { leftMargin = dp(8) },
-        )
-        box.addView(row)
-
-        val dlg = android.app.AlertDialog.Builder(this)
-            .setTitle("前情提要")
-            .setView(box)
-            .setPositiveButton("保存", null)
-            .setNegativeButton("关闭", null)
-            .create()
-        dlg.setOnShowListener {
-            dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val t = input.text?.toString().orEmpty().trim()
-                if (t.isNotEmpty()) c.updateSummaryText(t)
-                dlg.dismiss()
-            }
-        }
-        runBtn.setOnClickListener {
-            dlg.dismiss()
-            c.summarizeNow()
-        }
-        clearBtn.setOnClickListener {
-            if (current.isBlank()) {
-                toast("还没有摘要")
-                return@setOnClickListener
-            }
-            android.app.AlertDialog.Builder(this)
-                .setTitle("清除摘要")
-                .setMessage("清除后会把全文发给模型（原文一直没删，随时可以再压一次）。")
-                .setPositiveButton("清除") { _, _ ->
-                    c.clearSummaries()
-                    dlg.dismiss()
-                }
-                .setNegativeButton("取消", null)
-                .show()
-        }
-        dlg.show()
     }
 
     /**

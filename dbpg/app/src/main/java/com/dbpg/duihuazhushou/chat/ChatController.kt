@@ -1463,6 +1463,34 @@ class ChatController(
         return SummaryPlanner.effective(d.summaries, d.actions).second
     }
 
+    /** 「跟随对话」时实际用的模型名：面板上要让用户看见跟的是谁。 */
+    fun chatModelName(): String {
+        val d = doc ?: return ""
+        return ConnectionStore.llmRuntime(apiConfigFor(d)).optString("model")
+    }
+
+    /** 摘要专用模型 uid；空 = 跟随对话。 */
+    fun summaryModelId(): String =
+        SessionBindingStore.load(appContext, doc?.id.orEmpty()).summaryModelId.orEmpty()
+
+    /** 摘要模型显示名（"运营商 · 模型"）；没绑定时为空。 */
+    fun summaryModelLabel(): String =
+        SessionBindingStore.load(appContext, doc?.id.orEmpty()).summaryModelLabel.orEmpty()
+
+    /** 设置摘要模型；uid 传空 = 恢复「跟随对话」。 */
+    fun setSummaryModel(uid: String, label: String) {
+        val d = doc ?: return
+        val b = SessionBindingStore.load(appContext, d.id)
+        SessionBindingStore.save(
+            appContext,
+            d.id,
+            b.copy(
+                summaryModelId = uid.ifBlank { null },
+                summaryModelLabel = if (uid.isBlank()) null else label.ifBlank { uid },
+            ),
+        )
+    }
+
     /**
      * 生成结束后检查一次：攒够了就自动摘要。
      *
@@ -1541,7 +1569,8 @@ class ChatController(
             cfg = cfg,
             prior = prior,
             presetId = summaryPresetId,
-            apiConfigId = apiConfigFor(d),
+            // 摘要模型优先于对话模型：显式绑过就一路用它，切对话模型也不跟着变
+            apiConfigId = summaryModelId().ifBlank { apiConfigFor(d) },
         ) { block ->
             summarizing = false
             sink.onSummaryState(false)
@@ -1567,15 +1596,30 @@ class ChatController(
         }
     }
 
-    /** 用户改摘要正文（空串视为不改；要删请用 [clearSummaries]）。 */
-    fun updateSummaryText(text: String) {
+    /**
+     * 用户改摘要：正文与「替换哪几条」一起保存。
+     *
+     * 区间用 0 基下标（UI 显示时 +1）。越界/填反在这里夹正，末条锚点
+     * [SummaryBlock.toActionId] 必须跟着重算 —— 否则下次读取会被
+     * [SummaryPlanner] 判成"错位"直接作废，用户改完等于没改。
+     */
+    fun updateSummary(text: String, fromIndex: Int, toIndex: Int) {
         val d = doc ?: return
-        val blocks = SummaryPlanner.effective(d.summaries, d.actions).first
-        if (blocks.isEmpty()) return
+        val old = SummaryPlanner.effective(d.summaries, d.actions).first.firstOrNull() ?: return
         val t = text.trim()
         if (t.isEmpty()) return
+        val last = (d.actions.size - 1).coerceAtLeast(0)
+        val from = minOf(fromIndex, toIndex).coerceIn(0, last)
+        val to = maxOf(fromIndex, toIndex).coerceIn(0, last)
         val next = d.copy(
-            summaries = listOf(blocks.first().copy(text = t)),
+            summaries = listOf(
+                old.copy(
+                    text = t,
+                    fromIndex = from,
+                    toIndex = to,
+                    toActionId = d.actions[to].id,
+                ),
+            ),
             updatedAt = System.currentTimeMillis(),
         )
         doc = next

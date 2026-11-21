@@ -63,10 +63,23 @@ object SessionBindingStore {
          * 想单独改的时候留个口子」，所以只有显式选过才会写进来。
          */
         val apiConfigId: String? = null,
+        /**
+         * 摘要专用模型（`llm.configs[]._uid`）。
+         *
+         * null = 跟随当前对话的模型（对话换模型，摘要跟着换）；
+         * 非 null = 强行绑定，对话模型怎么切都不影响摘要。
+         *
+         * 为什么记在会话而不是全局设置：摘要面板就在这个对话里，
+         * 用户对"这段对话用便宜/长上下文模型压缩"的预期是按会话走的。
+         */
+        val summaryModelId: String? = null,
+        /** 摘要模型显示名（"运营商 · 模型"），配置被删后还能告诉用户原来选的是什么。 */
+        val summaryModelLabel: String? = null,
     ) {
         val isDefault: Boolean
             get() = characterId == null && characterName == null && worldBookIds == null && presetId == null &&
-                personaId == null && regexGroupIds == null && dnaIds == null && apiConfigId == null
+                personaId == null && regexGroupIds == null && dnaIds == null && apiConfigId == null &&
+                summaryModelId == null && summaryModelLabel == null
     }
 
     private val lock = Any()
@@ -84,6 +97,8 @@ object SessionBindingStore {
             regexGroupIds = o.optJSONArray("regexGroupIds")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } },
             dnaIds = o.optJSONArray("dnaIds")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } },
             apiConfigId = if (o.has("apiConfigId")) o.optString("apiConfigId").ifEmpty { null } else null,
+            summaryModelId = if (o.has("summaryModelId")) o.optString("summaryModelId").ifEmpty { null } else null,
+            summaryModelLabel = if (o.has("summaryModelLabel")) o.optString("summaryModelLabel").ifEmpty { null } else null,
         )
     }
 
@@ -99,6 +114,8 @@ object SessionBindingStore {
         b.regexGroupIds?.let { o.put("regexGroupIds", JSONArray(it)) }
         b.dnaIds?.let { o.put("dnaIds", JSONArray(it)) }
         b.apiConfigId?.let { o.put("apiConfigId", it) }
+        b.summaryModelId?.let { o.put("summaryModelId", it) }
+        b.summaryModelLabel?.let { o.put("summaryModelLabel", it) }
         root.put(sessionId, o)
         runCatching { file(ctx).writeText(root.toString()) }
     }

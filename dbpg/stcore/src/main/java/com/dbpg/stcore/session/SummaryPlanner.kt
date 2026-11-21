@@ -74,17 +74,20 @@ object SummaryPlanner {
         return block.toActionId.isEmpty() || anchor.id == block.toActionId
     }
 
-    /** 有效的摘要按时间顺序排列，并算出"原文从第几条开始"。 */
+    /** 有效的摘要按时间顺序排列，并算出"摘要覆盖到第几条（不含）"。 */
     fun effective(
         summaries: List<SummaryBlock>,
         actions: List<SessionAction>,
     ): Pair<List<SummaryBlock>, Int> {
         val ok = summaries.filter { valid(it, actions) }.sortedBy { it.fromIndex }
         if (ok.isEmpty()) return emptyList<SummaryBlock>() to 0
-        // 只保留连续覆盖到最新的一段：中间断档时，断档之前的摘要是可信的，
-        // 之后的摘要如果 fromIndex 对不上就丢弃（避免覆盖区间重叠/跳跃）
+        /*
+         * 第一块允许从任意位置开始：用户在聊天界面里可以把"替换第几条"
+         * 改成后面的区间（前面的原文照常发送，见 SessionHistory）。
+         * 后续块必须紧接前一块 —— 中间断档就停在断档前，断档后的摘要不可信。
+         */
         val kept = ArrayList<SummaryBlock>()
-        var expect = 0
+        var expect = ok.first().fromIndex
         for (b in ok) {
             if (b.fromIndex > expect) break
             kept.add(b)

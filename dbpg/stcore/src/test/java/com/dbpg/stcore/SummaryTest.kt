@@ -143,4 +143,55 @@ class SummaryTest {
         val bad = SummaryBlock(id = "s", text = "x", fromIndex = 0, toIndex = 99, toActionId = "a2")
         assertTrue(!SummaryPlanner.valid(bad, d.actions))
     }
+
+    // ------------------------------------------------------------ 用户手改区间
+
+    @Test
+    fun `摘要可以从中间开始 之前的原文照常发送`() {
+        val d = doc(10)
+        val block = SummaryBlock(
+            id = "mid",
+            text = "第4到6条的提要",
+            fromIndex = 3,
+            toIndex = 5,
+            toActionId = "a5",
+        )
+        val msgs = SessionHistory.export(d, summaries = listOf(block))
+        // 起点之前的原文不能被吞掉（以前 firstRaw 会从 6 开始发）
+        assertTrue(msgs.any { it.content == "问0" })
+        assertTrue(msgs.any { it.content == "问2" })
+        // 被覆盖的 3..5 不出现
+        assertTrue(msgs.none { it.content == "问3" })
+        assertTrue(msgs.none { it.content.startsWith("答5") })
+        // 6 之后照常
+        assertTrue(msgs.any { it.content == "问6" })
+        // 摘要插在它替换的位置，不是硬塞到最前面
+        val idx = msgs.indexOfFirst { it.content.contains("前情提要") }
+        assertTrue(idx > msgs.indexOfFirst { it.content == "问0" })
+        assertTrue(idx < msgs.indexOfFirst { it.content == "问6" })
+    }
+
+    @Test
+    fun `重新生成摘要区间内的消息 退回原文`() {
+        val d = doc(10)
+        val block = SummaryBlock(
+            id = "mid",
+            text = "第4到6条的提要",
+            fromIndex = 3,
+            toIndex = 5,
+            toActionId = "a5",
+        )
+        val msgs = SessionHistory.export(d, uptoActionId = "a4", summaries = listOf(block))
+        assertTrue(msgs.none { it.content.contains("前情提要") })
+        assertTrue(msgs.any { it.content == "问3" })
+    }
+
+    @Test
+    fun `摘要起点后移不会被当成断档丢弃`() {
+        val d = doc(10)
+        val block = SummaryBlock(id = "mid", text = "x", fromIndex = 3, toIndex = 5, toActionId = "a5")
+        val (blocks, upTo) = SummaryPlanner.effective(listOf(block), d.actions)
+        assertEquals(1, blocks.size)
+        assertEquals(6, upTo)
+    }
 }
