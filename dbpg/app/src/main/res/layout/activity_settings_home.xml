@@ -670,4 +670,5 @@
             android:text="预设 / 世界书 / 角色卡 / 正则在底部「资产」页。"
             android:textColor="#9AA4B2"
             android:textSize="11sp" />
-    </LinearLayout></ScrollView>
+    </LinearLayout>
+</ScrollView>
