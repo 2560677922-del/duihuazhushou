@@ -204,24 +204,36 @@ export function detectKind(raw: any): DetectResult {
  *
  * 条件收紧到"每一项都有非空正文和关键词"，避免把备忘录之类的数组误吞成世界书。
  */
+/** 单个条目形态：有非空正文 + 关键词，且不像其它资产 */
+function isEntryShaped(e: any): boolean {
+  if (!e || typeof e !== 'object' || Array.isArray(e)) return false;
+  if (typeof e.content !== 'string' || !e.content.trim()) return false;
+  if (e.key === undefined && e.keys === undefined) return false;
+  // 已经是别的资产形态就别抢
+  return (
+    e.entries === undefined &&
+    e.prompts === undefined &&
+    e.find_regex === undefined &&
+    e.findRegex === undefined
+  );
+}
+
 function isFlatEntryList(items: any[]): boolean {
-  if (items.length === 0) return false;
-  return items.every((e) => {
-    if (!e || typeof e !== 'object' || Array.isArray(e)) return false;
-    if (typeof e.content !== 'string' || !e.content.trim()) return false;
-    if (e.key === undefined && e.keys === undefined) return false;
-    // 已经是别的资产形态就别抢
-    return (
-      e.entries === undefined &&
-      e.prompts === undefined &&
-      e.find_regex === undefined &&
-      e.findRegex === undefined
-    );
-  });
+  return items.length > 0 && items.every(isEntryShaped);
 }
 
 export function splitByKind(value: unknown): { kind: AssetKind; items: any[] }[] {
   const items = Array.isArray(value) ? value : [value];
+  /*
+   * 扁平条目：没有 entries 外壳，直接给条目。
+   *
+   * 单条和数组都要认 —— 用户可能导整份，也可能只复制了一条。单条以前会
+   * 落到 detectKind 的 unknown（"顶层字段：title, key" 就是这么报出来的），
+   * 因为 detectKind 只认带 entries 的世界书。
+   */
+  if (isEntryShaped(value)) {
+    return [{ kind: 'worldbook', items: [{ name: '导入的世界书', entries: [value] }] }];
+  }
   // 扁平条目数组 = 一本世界书，而不是 N 本单条世界书
   if (Array.isArray(value) && isFlatEntryList(value)) {
     return [{ kind: 'worldbook', items: [{ name: '导入的世界书', entries: value }] }];
@@ -445,7 +457,8 @@ export function normalizeWorldBook(raw: any): { value: any; notes: string[] } {
       key: keyObjs,
       keysecondary: e.keysecondary ?? e.secondary_keys ?? [],
       content: e.content ?? '',
-      comment: e.comment ?? '',
+      // 扁平条目的标题在 title 里（{ title, key, content }），不映射的话列表全是无名条目
+      comment: e.comment ?? e.title ?? '',
       constant: e.constant ?? false,
       // 默认 100：ST 里没有 order 的条目通常排在中段
       order: e.order ?? e.insertion_order ?? 100,
