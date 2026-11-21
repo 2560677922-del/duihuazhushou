@@ -52,9 +52,12 @@ class LogActivity : Activity() {
         meta.text = AppLog.header(this) + " · 共 $lines 行"
         text.text = body
         // 最新一条在最下面，进来直接看尾部。
-        // 不用 fullScroll：textIsSelectable 会抢焦点，fullScroll 可能被拉回顶部；
-        // scrollTo 用内容高度，不依赖焦点状态。
-        scroll.post { scroll.scrollTo(0, text.bottom) }
+        // 不用 fullScroll：textIsSelectable 会抢焦点，fullScroll 可能被拉回顶部。
+        // 这里自己算最大偏移并 clamp，不依赖 View.scrollTo 的越界行为。
+        scroll.post {
+            val max = (text.height - scroll.height).coerceAtLeast(0)
+            scroll.scrollTo(0, max)
+        }
     }
 
     private fun copyAll() {
