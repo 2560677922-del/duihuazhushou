@@ -1,6 +1,7 @@
 package com.dbpg.duihuazhushou.imagegen
 
 import android.content.Context
+import com.dbpg.duihuazhushou.AppLog
 import com.dbpg.stcore.imagegen.AutoImageSupport
 import com.dbpg.stcore.imagegen.NativeImageConfig
 import com.dbpg.stcore.imagegen.NativeLlmConfig
@@ -162,11 +163,13 @@ object ImagePromptRunner {
                 continue
             }
             answered = true
-            val check = AutoImageSupport.judgeOptimized(
-                AutoImageSupport.extractCompletionText(reply.text),
-            )
+            val text = AutoImageSupport.extractCompletionText(reply.text)
+            val check = AutoImageSupport.judgeOptimized(text)
             if (check.ok) return Outcome.Ok(check.tags, check.warning)
             lastReason = check.reason
+            // 判定失败时把模型原样回的前 300 字也留下：这段才是"为什么判错"的证据，
+            // 光看"模型只回了中文"没法判断是模板问题还是模型不听话。
+            AppLog.e("标签", "判定失败（${check.reason}）· 模型原文：${text.take(300)}")
         }
         return Outcome.Failed(
             when {

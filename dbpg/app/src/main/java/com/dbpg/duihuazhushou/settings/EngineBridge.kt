@@ -3,6 +3,7 @@ package com.dbpg.duihuazhushou.settings
 import android.app.Activity
 import android.os.Handler
 import android.os.Looper
+import com.dbpg.duihuazhushou.AppLog
 import com.dbpg.duihuazhushou.MainActivity
 import com.dbpg.duihuazhushou.NativeBridge
 import org.json.JSONArray
@@ -116,6 +117,9 @@ object EngineBridge {
 
     private fun scheduleRetry(activity: Activity, fn: String, tries: Int, cb: (JSONObject?) -> Unit) {
         if (tries >= READY_MAX_TRY) {
+            // 拿到 null 的页面只会显示"读取失败"，看不出是引擎没起来还是命令抛错。
+            // 这里留一条，用户复制日志就能看到具体是哪个 fn 超时。
+            AppLog.e("引擎", "调用 $fn 超时：${READY_MAX_TRY * READY_RETRY_MS}ms 内没有返回")
             cb(null)
             return
         }
@@ -156,6 +160,7 @@ object EngineBridge {
             val extra = ConnectionStore.apply(cmd, body)
             // 本地命令失败时 ConnectionStore 会回 error；别再把 ok 写死成 true，
             // 否则页面会把「没改成」当成「改成了」（世界书导入就踩过这个坑）。
+            if (extra.has("error")) AppLog.e("命令", "$cmd 失败：${extra.optString("error")}")
             val reply = JSONObject(extra.toString())
                 .put("kind", cmd)
                 .put("ok", !extra.has("error"))
@@ -163,7 +168,11 @@ object EngineBridge {
             pushToEngine()
             return
         }
-        val w = MainActivity.getWebView() ?: return
+        val w = MainActivity.getWebView()
+        if (w == null) {
+            AppLog.e("引擎", "命令 $cmd 被丢弃：引擎 WebView 未就绪")
+            return
+        }
         // 像 optimizeImagePrompt 这类仍走桥的命令也要读配置，先补一次镜像，
         // 免得冷启动第一次调用时引擎拿到的是空 store。
         pushToEngine()
@@ -202,6 +211,7 @@ object EngineBridge {
                 body.put("ok", true).put("models", arr)
             } else {
                 body.put("ok", false).put("error", error ?: "拉取失败")
+                AppLog.e("模型列表", "$baseUrl：${error ?: "拉取失败"}")
             }
             NativeBridge.fireLocal(body.toString())
         }

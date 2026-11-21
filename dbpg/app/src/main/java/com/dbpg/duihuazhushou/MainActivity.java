@@ -153,9 +153,13 @@ public final class MainActivity extends Activity {
         // 先装崩溃记录：后面任何一个 Activity 崩了都能留下堆栈，
         // 真机不方便连 adb 时，这是唯一能拿到证据的地方。
         CrashLogger.INSTANCE.install(this);
+        // 应用内日志要在崩溃处理器之后装：崩溃那一刻要往这里补一条，
+        // 用户下次进「运行日志」就能看到，而不是只有 adb 能看。
+        AppLog.INSTANCE.install(this);
         String lastCrash = CrashLogger.INSTANCE.read(this);
         if (lastCrash != null) {
             Log.e(TAG, "上次崩溃记录：\n" + lastCrash);
+            AppLog.INSTANCE.e("崩溃", "上次启动崩溃记录：\n" + lastCrash);
         }
 
         getWindow().setStatusBarColor(bgColor());
@@ -340,6 +344,9 @@ public final class MainActivity extends Activity {
     }
 
     private void showError(String text) {
+        // 白屏是用户最没法描述的一类故障（"打不开"），这里留原文：
+        // 是文件 404、还是 HTTP 500、还是引擎没构建，一眼能分开。
+        AppLog.INSTANCE.e("加载", text.replace("\n", " "));
         errorView.setText(text);
         errorView.setVisibility(View.VISIBLE);
     }
@@ -442,6 +449,25 @@ public final class MainActivity extends Activity {
     // ------------------------------------------------------------ 文件选择器
 
     private final class AppWebChromeClient extends WebChromeClient {
+
+        /**
+         * JS 侧报错收进应用内日志。
+         *
+         * 只收 ERROR：ST 兼容引擎跑的是压缩过的 production bundle，warning 量大
+         * 而价值低，混进来会把真正的错误顶掉。返回 false 保持 WebView 原有行为
+         * （照旧打印到 logcat），这里只是多存一份。
+         */
+        @Override
+        public boolean onConsoleMessage(android.webkit.ConsoleMessage msg) {
+            if (msg.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.ERROR) {
+                String src = msg.sourceId() == null ? "" : msg.sourceId();
+                int slash = src.lastIndexOf('/');
+                if (slash > 0) src = src.substring(slash + 1);
+                AppLog.INSTANCE.e("JS",
+                        msg.message() + (src.isEmpty() ? "" : "（" + src + ":" + msg.lineNumber() + "）"));
+            }
+            return false;
+        }
 
         @Override
         public boolean onShowFileChooser(WebView webView,

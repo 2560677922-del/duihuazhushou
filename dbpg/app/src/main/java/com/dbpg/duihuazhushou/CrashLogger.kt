@@ -66,6 +66,10 @@ object CrashLogger {
                     appendLine(sw.toString())
                 }
                 file(app).writeText(text)
+                // 同一份内容也进应用内日志：用户从设置页复制一次就能给全，
+                // 不用再让他去找 files 目录。install 幂等，早期崩溃也能记上。
+                AppLog.install(app)
+                AppLog.e("崩溃", "未捕获异常，进程即将退出\n$text")
             }
             // 该崩还是崩：交给系统原处理器，不在这里吞掉异常
             if (prev != null) prev.uncaughtException(t, e)

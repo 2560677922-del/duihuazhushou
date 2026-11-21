@@ -7,6 +7,7 @@ import com.dbpg.duihuazhushou.imagegen.ImageGenService
 import com.dbpg.duihuazhushou.imagegen.ImagePromptRunner
 import com.dbpg.duihuazhushou.imagegen.PromptPresetPlugin
 import com.dbpg.duihuazhushou.session.SessionBindingStore
+import com.dbpg.duihuazhushou.AppLog
 import com.dbpg.duihuazhushou.settings.ConnectionStore
 import com.dbpg.duihuazhushou.settings.EngineBridge
 import com.dbpg.stcore.imagegen.ImageEngine
@@ -183,6 +184,9 @@ class QuickImage(
                         contextLabel = "剧情片段",
                     )
                 }.getOrElse {
+                    // 堆栈单独记一条：finish 只会留下人话消息，异常到底是空指针
+                    // 还是 JSON 解析炸了，只有这里有
+                    AppLog.e("生图", "出图异常", it)
                     main.post { finish("出图出错：${it.message ?: it.javaClass.simpleName}") }
                     return@execute
                 }
@@ -439,7 +443,9 @@ class QuickImage(
         onBusy(v)
     }
 
+    /** 所有失败路径的唯一出口（见各调用点），顺手留一条日志。 */
     private fun finish(msg: String) {
+        AppLog.e("生图", msg)
         setBusy(false)
         onToast(msg)
     }

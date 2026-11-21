@@ -63,6 +63,9 @@ class SettingsHomeActivity : Activity() {
                 Intent(this, com.dbpg.duihuazhushou.data.MigrationActivity::class.java),
             )
         }
+        findViewById<View>(R.id.shome_log).setOnClickListener {
+            startActivity(Intent(this, LogActivity::class.java))
+        }
     }
 
     override fun onResume() {

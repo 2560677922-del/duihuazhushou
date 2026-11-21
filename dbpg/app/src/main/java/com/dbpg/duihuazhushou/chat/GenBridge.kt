@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import android.webkit.WebView
 import com.dbpg.duihuazhushou.MainActivity
+import com.dbpg.duihuazhushou.AppLog
 import com.dbpg.duihuazhushou.settings.ConnectionStore
 import com.dbpg.duihuazhushou.settings.EngineBridge
 import com.dbpg.stcore.session.PromptMessage
@@ -179,6 +180,9 @@ object GenBridge {
     }
 
     fun onGenError(requestId: String, message: String) {
+        // 先记再找 sink：用户已经退出界面时 entries 里没有这条了，
+        // 但"这次生成为什么失败"仍要留在日志里，否则复现一次就丢一次证据。
+        AppLog.e("生成", message)
         val h = entries.remove(requestId) ?: return
         main.post { h.sink.onGenError(message) }
     }

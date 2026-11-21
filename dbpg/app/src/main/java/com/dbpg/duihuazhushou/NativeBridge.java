@@ -210,6 +210,27 @@ public final class NativeBridge {
 
     @JavascriptInterface
     public void onApiResult(String json) {
+        logFailedCommand(json);
         fireLocal(json);
+    }
+
+    /**
+     * web 命令失败时留一条日志。
+     *
+     * 导入被拒、改名失败、保存条目出错这类问题，以前只表现为页面弹一句 toast，
+     * 一闪就没了，用户复述给我的只能是"导不进去"。这里把 kind 和 error 原文存下来。
+     */
+    private static void logFailedCommand(String json) {
+        if (json == null) return;
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(json);
+            if (o.has("ok") && !o.optBoolean("ok", true)) {
+                String err = o.optString("error", "");
+                AppLog.INSTANCE.e("桥", o.optString("kind", "?") + " 失败：" +
+                        (err.isEmpty() ? json : err));
+            }
+        } catch (Throwable ignored) {
+            // 不是对象就不是命令回包（也可能是数组），不管
+        }
     }
 }
