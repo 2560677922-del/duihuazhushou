@@ -242,8 +242,35 @@ function needsWordBoundary(key: string): boolean {
   return /[A-Za-z0-9_]/.test(key);
 }
 
+/**
+ * `/pattern/flags` 形式的关键词 → 正则；不是这个形状或编译不了返回 null。
+ *
+ * SillyTavern 原生支持把 key 写成正则（官方文档「Regular Expression (Regex) as Keys」），
+ * 判定规则是"能按 JS 正则编译就按正则处理"。很多状态类世界书靠它按数值区间
+ * 切换描述（`/敏感度[：:]\\s*(3[1-9]|[45][0-9]|60)/`），以前这里一律当字面量，
+ * 整本书一条都不会触发。
+ *
+ * `g` 必须去掉：带 g 的 `RegExp.test` 会记住 `lastIndex`，同一个实例第二次调用
+ * 可能直接返回 false —— 表现为"第一轮命中、之后再也不命中"，很难查。
+ */
+function regexKey(key: string): RegExp | null {
+  // 贪婪 .+ 吃到**最后一个**斜杠，所以 /a\/b/ 这种带转义斜杠的写法也能正确切开
+  const m = /^\/(.+)\/([a-z]*)$/s.exec(key);
+  if (!m) return null;
+  const flags = m[2].replace(/g/g, '').replace(/[^imsuy]/g, '');
+  try {
+    return new RegExp(m[1], flags);
+  } catch {
+    // 写错一个括号不该让条目彻底失效，退回字面量匹配
+    return null;
+  }
+}
+
 function matchKey(text: string, key: string, caseSensitive: boolean, wholeWord: boolean): boolean {
   if (!key) return false;
+  // 正则 key：大小写/词边界由它自己的 flag 决定，不再套外面的设置（ST 同样如此）
+  const asRegex = regexKey(key);
+  if (asRegex) return asRegex.test(text);
   const search = caseSensitive ? text : text.toLowerCase();
   const needle = caseSensitive ? key : key.toLowerCase();
   // wholeWord 仅在关键词含 ASCII 词字符时加 \b，CJK 退化为子串

@@ -33,7 +33,7 @@ import type { ToolRequestOptions } from '../engine/apiClient';
 import { loadSpresetRuntime, stripPrivateDirectives } from '../engine/spresetRuntime';
 import { imageMarkerInstruction } from '../engine/imageMarker';
 import { flattenForEngine } from '../engine/regexGroups';
-import { entriesListOf } from '../engine/stImport';
+import { entriesListOf, splitKeyString } from '../engine/stImport';
 import { ensureCharacterToLibrary } from './characterEntry';
 import {
   activatePromptInOrder,
@@ -1346,8 +1346,9 @@ async function apiCommand(raw: string): Promise<void> {
         const e: any = list.find((x: any) => Number(x.uid) === Number(req.uid));
         if (!e) throw new Error('找不到条目');
         const p = req.entry || {};
-        const splitKeys = (s: string) =>
-          s.split(/[,，\n]/).map((x: string) => x.trim()).filter(Boolean);
+        // 用 splitKeyString：正则里的逗号（`/a{1,3}/`）不能被切开，
+        // 否则用户在安卓端改个深度再保存，正则就变成两条废关键词
+        const splitKeys = (s: string) => splitKeyString(s);
         if (typeof p.comment === 'string') e.comment = p.comment;
         if (typeof p.content === 'string') e.content = p.content;
         if (typeof p.keys === 'string') e.keys = splitKeys(p.keys);

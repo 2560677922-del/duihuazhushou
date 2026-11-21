@@ -195,8 +195,37 @@ export function detectKind(raw: any): DetectResult {
 }
 
 /** 把一批原始对象按类型拆开（一个 JSON 里可能混装多种资产） */
+/**
+ * 扁平条目数组：`[{ title, key, content }, ...]`。
+ *
+ * 不是 ST 的标准导出（ST 是 `{ entries: {0: {...}} }`），但社区里"状态栏 /
+ * 数值分段"这类世界书常常直接给一组条目、没有 entries 外壳。不认的话每一项
+ * 都会落到 unknown，用户看到的是"无法识别"，整份数据白导。
+ *
+ * 条件收紧到"每一项都有非空正文和关键词"，避免把备忘录之类的数组误吞成世界书。
+ */
+function isFlatEntryList(items: any[]): boolean {
+  if (items.length === 0) return false;
+  return items.every((e) => {
+    if (!e || typeof e !== 'object' || Array.isArray(e)) return false;
+    if (typeof e.content !== 'string' || !e.content.trim()) return false;
+    if (e.key === undefined && e.keys === undefined) return false;
+    // 已经是别的资产形态就别抢
+    return (
+      e.entries === undefined &&
+      e.prompts === undefined &&
+      e.find_regex === undefined &&
+      e.findRegex === undefined
+    );
+  });
+}
+
 export function splitByKind(value: unknown): { kind: AssetKind; items: any[] }[] {
   const items = Array.isArray(value) ? value : [value];
+  // 扁平条目数组 = 一本世界书，而不是 N 本单条世界书
+  if (Array.isArray(value) && isFlatEntryList(value)) {
+    return [{ kind: 'worldbook', items: [{ name: '导入的世界书', entries: value }] }];
+  }
   const buckets = new Map<AssetKind, any[]>();
 
   const push = (kind: AssetKind, list: any[]) => {
@@ -252,6 +281,38 @@ export function extractEmbeddedRegex(preset: any): any[] {
   return raw.filter(
     (s) => s && typeof s === 'object' && (s.scriptName || s.findRegex || s.find_regex),
   );
+}
+
+/**
+ * 逗号分隔的关键词串 → 数组，**`/正则/` 内部的逗号不切**。
+ *
+ * ST 明文模式里逗号是分隔符，但正则体内允许逗号（`/a{1,3}/` 很常见）。
+ * 直接 `split(',')` 会把它切成 `/a{1` 和 `3}/` —— 两条都编译不了，
+ * 静默退回字面量，表现为"正则关键词完全不触发"，非常难查。
+ * 反斜杠转义一起跳过，避免 `/a\\,b/` 里的逗号被误判。
+ */
+export function splitKeyString(text: string): string[] {
+  const out: string[] = [];
+  let buf = '';
+  let inRegex = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\\' && i + 1 < text.length) {
+      buf += ch + text[i + 1];
+      i++;
+      continue;
+    }
+    if (ch === '/') inRegex = !inRegex;
+    // 全角逗号、换行也算分隔符（安卓编辑框两种都可能出现）
+    if ((ch === ',' || ch === '，' || ch === '\n') && !inRegex) {
+      if (buf.trim()) out.push(buf.trim());
+      buf = '';
+      continue;
+    }
+    buf += ch;
+  }
+  if (buf.trim()) out.push(buf.trim());
+  return out;
 }
 
 /** 容器对象：{ worldBooks: [...] } 这类 */
@@ -337,10 +398,12 @@ export function normalizeWorldBook(raw: any): { value: any; notes: string[] } {
         .map((k: any) => (typeof k === 'string' ? k : (k?.key ?? '')))
         .filter((v: any) => typeof v === 'string' && v.length);
     } else if (typeof e.keys === 'string') {
-      keys = e.keys
-        .split(',')
-        .map((s: string) => s.trim())
-        .filter(Boolean);
+      keys = splitKeyString(e.keys);
+    }
+    // key 是**单个字符串**：{ title, key, content } 这种扁平条目就是如此。
+    // 以前只认 key 数组，这种写法的条目会得到空关键词，永远不触发。
+    if (keys.length === 0 && typeof e.key === 'string') {
+      keys = splitKeyString(e.key);
     }
     if (keys.length === 0 && Array.isArray(e.key)) {
       keys = e.key
