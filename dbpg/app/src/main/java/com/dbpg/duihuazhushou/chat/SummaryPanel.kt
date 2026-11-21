@@ -67,6 +67,10 @@ object SummaryPanel {
             setTextSize(13f)
             setTextColor(0xFF2F66D8.toInt())
             gravity = Gravity.END
+            isSingleLine = true
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            // 模型名可能很长（带日期后缀），别把左边的「摘要模型」挤掉
+            maxWidth = (activity.resources.displayMetrics.widthPixels * 0.62f).toInt()
         }
         fun refreshModel() {
             val uid = c.summaryModelId()
