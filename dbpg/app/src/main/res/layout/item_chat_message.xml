@@ -91,6 +91,23 @@
             android:visibility="gone" />
 
         <!--
+          通用交互面板入口：<options>/<summary>/<comment> 解析出来后，
+          正文照常显示，这里挂一条「面板」入口，点开弹选项窗。
+          颜色由 ChatAdapter 按主题着色，这里不写死。
+        -->
+        <TextView
+            android:id="@+id/msg_panel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:paddingStart="12dp"
+            android:paddingTop="7dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="7dp"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <!--
           图片容器：一条消息可能挂多张（重复生图 / 正文多个 [[IMG:]]）。
           改成横向滑动后，默认停在"当前那张"，其余左右滑看，不再纵向堆一整屏。
         -->

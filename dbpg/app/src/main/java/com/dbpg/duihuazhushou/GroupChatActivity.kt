@@ -29,6 +29,7 @@ import com.dbpg.duihuazhushou.chat.ChatImageRef
 import com.dbpg.duihuazhushou.chat.ChatItem
 import com.dbpg.duihuazhushou.chat.GenBridge
 import com.dbpg.duihuazhushou.chat.ImageFileCache
+import com.dbpg.duihuazhushou.chat.OptionPanelSheet
 import com.dbpg.duihuazhushou.chat.QuickImage
 import com.dbpg.duihuazhushou.chat.SummaryPanel
 import com.dbpg.duihuazhushou.character.CharacterAvatar
@@ -1440,6 +1441,22 @@ class GroupChatActivity : Activity() {
         override fun onMessageSend(text: String) {
             input.setText(text)
             submit()
+        }
+
+        /** 通用交互面板：点选后按模式落到输入框/发送（与单聊同一套语义）。 */
+        override fun onPanelOpen(item: ChatItem) {
+            val panel = item.panel ?: return
+            OptionPanelSheet.show(this@GroupChatActivity, Appearance.load(this@GroupChatActivity), panel) { text, mode ->
+                when (mode) {
+                    OptionPanelSheet.Mode.SEND -> onMessageSend(text)
+                    OptionPanelSheet.Mode.REPLACE -> onMessageInput(text)
+                    OptionPanelSheet.Mode.APPEND -> {
+                        val cur = input.text?.toString().orEmpty()
+                        val sep = if (cur.isNotEmpty() && !cur.endsWith("\n")) "\n" else ""
+                        onMessageInput(cur + sep + text)
+                    }
+                }
+            }
         }
     }
 

@@ -80,6 +80,8 @@ class ChatAdapter(
         fun onMessageInput(text: String)
         /** 卡片要求直接发送（点了选项、模式为「发送」）。 */
         fun onMessageSend(text: String)
+        /** 消息带通用交互面板（<options> 等）：请打开选项弹窗。 */
+        fun onPanelOpen(item: ChatItem)
     }
 
     /** 气泡最大宽度：按屏宽百分比算，改设置不用重建 Adapter。 */
@@ -170,6 +172,7 @@ class ChatAdapter(
         val speaker: TextView,
         val text: TextView,
         val blocks: LinearLayout,
+        val panel: TextView,
         val webHost: FrameLayout,
         val card: ImageView,
         val images: LinearLayout,
@@ -221,6 +224,7 @@ class ChatAdapter(
             v.findViewById(R.id.msg_speaker),
             v.findViewById(R.id.msg_text),
             v.findViewById(R.id.msg_blocks),
+            v.findViewById(R.id.msg_panel),
             v.findViewById(R.id.msg_web),
             v.findViewById(R.id.msg_card),
             v.findViewById(R.id.msg_images),
@@ -484,6 +488,30 @@ class ChatAdapter(
                     RichTextRenderer.applyTo(holder.text, RichTextParser.parse(content))
                 }
             }
+        }
+
+        // 3) 通用交互面板入口（<options>/<summary>/<comment>）：
+        //    流式中不给（标签可能还没吐完），定稿后才出。
+        val panel = item.panel
+        val panelView = holder.panel
+        if (panel != null && !panel.isEmpty && !item.streaming) {
+            panelView.visibility = View.VISIBLE
+            val parts = ArrayList<String>()
+            if (panel.options.isNotEmpty()) parts.add("${panel.options.size} 个选项")
+            if (panel.comments.isNotEmpty()) parts.add("留言")
+            if (panel.summaries.isNotEmpty()) parts.add("摘要")
+            panelView.text = "📋 " + parts.joinToString(" · ") + " · 打开面板"
+            panelView.setTextColor(tokens.accent)
+            panelView.background = ActionSheet.ripple(
+                holder.itemView.context,
+                ActionSheet.round(holder.itemView.context, tokens.accentSoft, 14f),
+                tokens.accent and 0x40FFFFFF,
+                14f,
+            )
+            panelView.setOnClickListener { listener.onPanelOpen(item) }
+        } else {
+            panelView.visibility = View.GONE
+            panelView.setOnClickListener(null)
         }
 
         // 3) 图片：一条消息可能挂多张，横向滑动；默认停在"当前那张"（最新生成的在最右）。

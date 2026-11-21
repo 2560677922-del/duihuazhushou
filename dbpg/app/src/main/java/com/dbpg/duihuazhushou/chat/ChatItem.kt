@@ -70,6 +70,13 @@ data class ChatItem(
      * 与 [html] 互斥：正常路径下 html 非空、foldHtml 为空。
      */
     val foldHtml: String? = null,
+    /**
+     * 通用交互面板（`<options>` / `<summary>` / `<comment>`）。
+     *
+     * 有它时气泡底部出「面板」入口，点开是选项弹窗。与 [html] 互斥：
+     * 预设自带 HTML 皮肤正则时标签早被换成卡片，不会再有裸标签面板。
+     */
+    val panel: com.dbpg.stcore.panel.PanelData? = null,
     /** 卡片位图文件路径（渲染完成后才有）。空 = 还在渲染 / 降级为纯文本。 */
     val cardPath: String? = null,
     /** 卡片渲染后的高度（px），用来在位图到位前占位，避免滚动跳动。 */

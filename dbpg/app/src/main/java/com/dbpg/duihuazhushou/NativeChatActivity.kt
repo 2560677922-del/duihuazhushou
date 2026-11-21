@@ -26,6 +26,7 @@ import com.dbpg.duihuazhushou.chat.ChatItem
 import com.dbpg.duihuazhushou.chat.ChatLogLoader
 import com.dbpg.duihuazhushou.chat.ChatBackground
 import com.dbpg.duihuazhushou.chat.ImageFileCache
+import com.dbpg.duihuazhushou.chat.OptionPanelSheet
 import com.dbpg.duihuazhushou.settings.EngineBridge
 import com.dbpg.duihuazhushou.gallery.ImageViewerActivity
 import com.dbpg.duihuazhushou.session.SessionRepo
@@ -411,6 +412,27 @@ class NativeChatActivity : Activity(), ChatController.Sink {
             }
             input.setText(body)
             submitInput()
+        }
+
+        /**
+         * 消息带通用交互面板（<options> 等）：弹选项窗。
+         *
+         * 点选后的去向由面板底部的模式开关决定（直接发送 / 仅填入 / 增量填入），
+         * 这里只负责落到输入框或发送链路上。
+         */
+        override fun onPanelOpen(item: ChatItem) {
+            val panel = item.panel ?: return
+            OptionPanelSheet.show(this@NativeChatActivity, appearance, panel) { text, mode ->
+                when (mode) {
+                    OptionPanelSheet.Mode.SEND -> onMessageSend(text)
+                    OptionPanelSheet.Mode.REPLACE -> onMessageInput(text)
+                    OptionPanelSheet.Mode.APPEND -> {
+                        val cur = input.text?.toString().orEmpty()
+                        val sep = if (cur.isNotEmpty() && !cur.endsWith("\n")) "\n" else ""
+                        onMessageInput(cur + sep + text)
+                    }
+                }
+            }
         }
 
     }

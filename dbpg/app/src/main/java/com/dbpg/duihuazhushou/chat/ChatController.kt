@@ -20,6 +20,8 @@ import com.dbpg.stcore.ContentBlock
 import com.dbpg.stcore.NativeImage
 import com.dbpg.stcore.imagegen.AutoImageEnv
 import com.dbpg.stcore.imagegen.AutoImageSupport
+import com.dbpg.stcore.panel.PanelData
+import com.dbpg.stcore.panel.parseOptionPanel
 import com.dbpg.stcore.render.Hashing
 import com.dbpg.stcore.render.RenderKey
 import com.dbpg.stcore.render.StreamPipeline
@@ -593,6 +595,7 @@ class ChatController(
                     // 含 <details> 的消息走原生折叠块：可交互、默认展开状态可配，
                     // 不会像位图卡片那样「默认收起 + 点不动」。
                     foldHtml = rendered.foldHtml,
+                    panel = rendered.panel,
                     cardPath = card?.path,
                     cardHeightPx = card?.heightPx ?: 0,
                 ),
@@ -642,6 +645,7 @@ class ChatController(
      *   rich     —— 跑完正则的完整 HTML（Markdown 未转），也是渲染缓存的存储形态
      *   html     —— 交给 WebView 真渲染；只有「含结构性标记」时非空
      *   foldHtml —— 原生折叠块的降级路径；WebView 不可用时才有用
+     *   panel    —— 通用交互面板（<options>/<summary>/<comment>）；与卡片互斥
      *
      * 为什么 `html` 只判"含不含标记"、不再猜具体标签：
      *   上一版要求「块级标签 ≥2 或含 <style>」才走 WebView，`<details>` 单开
@@ -655,6 +659,7 @@ class ChatController(
         val rich: String,
         val html: String?,
         val foldHtml: String?,
+        val panel: PanelData? = null,
     )
 
     /**
@@ -670,6 +675,18 @@ class ChatController(
         meta: PluginRenderMeta? = null,
     ): RenderedMsg {
         /*
+         * 通用交互面板（<options>/<summary>/<comment>）先从正文剥走。
+         *
+         * 位置必须在显示正则之后：预设自带「前端综合面板」这类正则时，标签
+         * 早已被换成整页 HTML 卡片，这里看不到裸标签、照旧走卡片路径；没有
+         * 正则的预设吐同样的标签，才轮到通用弹窗。缓存里存的是含标签的原始
+         * rich，每次命中都重跑这一步 —— 解析是纯正则扫描，比渲染便宜得多。
+         */
+        val pp = parseOptionPanel(rich)
+        val panel = pp.panel
+        val effRich = if (panel != null) pp.rest else rich
+        val effPlain = if (panel != null) stripHtmlNoise(pp.rest) else plain
+        /*
          * ★ 渲染插件槽（P0）：只在「装了插件、且插件认领这条消息」时介入。
          *   插件只产出一串 HTML，后面 WebView / iframe 整套完全复用现有代码，
          *   主渲染管线一行都没重写。没装插件（或插件放行）时 pluginHtml 为 null，
@@ -680,9 +697,9 @@ class ChatController(
          *     下次命中就会二次改写。返回给界面的内容走 web 字段即可。
          */
         val pluginHtml = if (meta != null) {
-            PluginRegistry.resolveHtml(appContext, rich, meta)
+            PluginRegistry.resolveHtml(appContext, effRich, meta)
         } else null
-        val effective = pluginHtml ?: rich
+        val effective = pluginHtml ?: effRich
 
         /*
          * 先在 Kotlin 侧清洗再判：模型输出可以带 <script>，
@@ -692,8 +709,8 @@ class ChatController(
         val cleaned = HtmlSanitizer.clean(effective, appearance.allowScript)
         val web = if (cleaned.isNotBlank() && appearance.htmlRender && hasMarkup(cleaned)) cleaned else null
         // 用户关掉富渲染时，至少让 <details> 还能用原生折叠块看（只认这一种）
-        val fold = if (web == null && rich.isNotBlank() && FoldParser.hasFold(rich)) rich else null
-        return RenderedMsg(plain, paths, rich, web, fold)
+        val fold = if (web == null && effRich.isNotBlank() && FoldParser.hasFold(effRich)) effRich else null
+        return RenderedMsg(effPlain, paths, rich, web, fold, panel)
     }
 
     /**

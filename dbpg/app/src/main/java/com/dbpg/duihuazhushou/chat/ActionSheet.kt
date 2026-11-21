@@ -43,6 +43,9 @@ import com.dbpg.duihuazhushou.appearance.withAlpha
  */
 object ActionSheet {
 
+    // round / ripple / panelOf / baseDialog / present 是这套底部面板的视觉语言，
+    // OptionPanelSheet（通用交互面板）同包复用 —— 两个弹窗必须像一家人。
+
     /** 危险操作（删除）：用固定的红，不跟主题色走 —— 换主题不该把"删除"变成蓝色。 */
     private val DANGER = 0xFFD9534F.toInt()
 
@@ -229,9 +232,9 @@ object ActionSheet {
     }
 
     /** 面板不透明化：直接叠在聊天背景上时，半透明会让文字发灰、边缘发脏。 */
-    private fun panelOf(t: ThemeTokens): Int = blendOver(t.panel, t.base)
+    internal fun panelOf(t: ThemeTokens): Int = blendOver(t.panel, t.base)
 
-    private fun baseDialog(ctx: Context): Dialog {
+    internal fun baseDialog(ctx: Context): Dialog {
         val d = Dialog(ctx)
         d.requestWindowFeature(Window.FEATURE_NO_TITLE)
         d.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
@@ -239,7 +242,7 @@ object ActionSheet {
         return d
     }
 
-    private fun present(dialog: Dialog, ctx: Context) {
+    internal fun present(dialog: Dialog, ctx: Context) {
         val dm = ctx.resources.displayMetrics
         val width = minOf((dm.widthPixels * 0.94f).toInt(), (520 * dm.density).toInt())
         /*
@@ -262,7 +265,7 @@ object ActionSheet {
         dialog.show()
     }
 
-    private fun round(ctx: Context, color: Int, radiusDp: Float): GradientDrawable =
+    internal fun round(ctx: Context, color: Int, radiusDp: Float): GradientDrawable =
         GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = radiusDp * ctx.resources.displayMetrics.density
@@ -275,6 +278,6 @@ object ActionSheet {
      * 第三个参数（mask）必须给：content 是透明圆角，不指定 mask 的话
      * 系统按 content 的 alpha 算水波范围，结果是"点了没有任何反馈"。
      */
-    private fun ripple(ctx: Context, content: Drawable, color: Int, radiusDp: Float): RippleDrawable =
+    internal fun ripple(ctx: Context, content: Drawable, color: Int, radiusDp: Float): RippleDrawable =
         RippleDrawable(ColorStateList.valueOf(color), content, round(ctx, Color.WHITE, radiusDp))
 }
